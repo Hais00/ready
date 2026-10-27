@@ -88,7 +88,7 @@ class DownloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             d=pathlib.Path(directory).resolve();config=d/'profile';config.mkdir();tool=d/'venv/bin/python';tool.parent.mkdir(parents=True)
             script='''import json,os,pathlib,struct,sys
-args=sys.argv[1:];root=pathlib.Path(args[args.index('--base-path')+1])/args[args.index('--game-folder')+1];root.mkdir()
+args=sys.argv[1:];root=pathlib.Path(args[args.index('--base-path')+1])/args[args.index('--game-folder')+1];root.mkdir(exist_ok=True)
 head=bytearray(0x86);head[:2]=b'MZ';struct.pack_into('<I',head,0x3c,0x80);head[0x80:0x84]=b'PE\\0\\0';struct.pack_into('<H',head,0x84,0x8664);(root/'Actual.exe').write_bytes(head)
 cfg=pathlib.Path(os.environ['LEGENDARY_CONFIG_PATH']);auth=json.loads((cfg/'user.json').read_text());assert auth['access_token']=='private-token';assert (cfg/'user.json').stat().st_mode&0o777==0o600
 (cfg/'installed.json').write_text(json.dumps({'app':{'install_path':str(root),'executable':'Actual.exe','launch_parameters':'--title "a b"','needs_verification':False}}))

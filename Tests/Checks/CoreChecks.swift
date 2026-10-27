@@ -15,7 +15,7 @@ public final class CoreChecks {
       ("Per-prefix locks allow independent sessions", testPrefixLeasePreventsConcurrentMutations),
       (
         "Isolated game/profile prefix paths and persistent profiles",
-        testProfilesPersistAndUseOnePrefix
+        testProfilesPersistWithGamePrefixes
       ),
       (
         "Personal folders persist across prefix recreation",
@@ -24,7 +24,7 @@ public final class CoreChecks {
       ("Path traversal and symlink escape rejection", testSavePathsRejectTraversalAndSymlinkEscape),
       (
         "Literal process arguments and verified engine selection",
-        testLaunchPlanUsesLiteralArgumentsAndTheSharedPrefix
+        testLaunchPlanUsesLiteralArgumentsAndIsolatedPrefix
       ),
       ("Dependencies and registry remain isolated between games", testDependencyIsolation),
       ("Non-destructive legacy migration and rollback source", testLegacyMigration),
@@ -37,6 +37,10 @@ public final class CoreChecks {
       ("Windows registry redirection uses canonical escaping and Unicode", testRegistryEncoding),
       ("PE import detection distinguishes APIs and malformed input", testPEImports),
       ("Built-in provider policy is explicit and scoped", testBuiltinProviderPolicy),
+      (
+        "PE32 builtin and renderer projections isolate writes and restore pure Wine",
+        testBuiltin32Projection
+      ),
     ]
     return cases.map { name, body in
       assertions.removeAll()
@@ -114,7 +118,7 @@ public final class CoreChecks {
     let second = try PrefixLease(paths: p, profile: profile, gameID: "gameA")
     XCTAssertNotNil(second)
   }
-  func testProfilesPersistAndUseOnePrefix() throws {
+  func testProfilesPersistWithGamePrefixes() throws {
     let paths = LauncherPaths(root: temporary)
     let repo = LibraryRepository(paths: paths)
     var state = try repo.load()
@@ -221,6 +225,19 @@ public final class CoreChecks {
     XCTAssertEqual(migrated.status, "copied-awaiting-real-validation-original-retained")
     try Data("new registry".utf8).write(
       to: paths.prefix(profile: profile, gameID: "A").appendingPathComponent("user.reg"))
+    try XCTAssertEqual(try String(contentsOf: registry), "original registry")
+    do {
+      let live = try PrefixLease(paths: paths, profile: profile, gameID: "A")
+      try withExtendedLifetime(live) {
+        XCTAssertThrowsError(try LegacyMigration.rollback(migrated, paths: paths))
+      }
+    }
+    let archive = try LegacyMigration.rollback(migrated, paths: paths)
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: paths.prefix(profile: profile, gameID: "A").path))
+    try XCTAssertEqual(
+      try String(contentsOf: archive.appendingPathComponent(SafePath.key("A") + "/user.reg")),
+      "new registry")
     try XCTAssertEqual(try String(contentsOf: registry), "original registry")
   }
   func testMigrationPreflight() throws {
@@ -358,6 +375,9 @@ public final class CoreChecks {
       id: "A", store: .local, storeID: "A", title: "A", variants: [variant], engine: .d3dMetal)
     var runtime = RuntimeConfiguration(
       wine: "/usr/bin/true", engineDLLs: ["d3dMetal": temporary.path])
+    for name in RendererSelector.requiredDLLs(.d3dMetal) {
+      try Data("Apple fixture".utf8).write(to: temporary.appendingPathComponent(name))
+    }
     runtime.engineOverrides = ["d3dMetal": "d3d11,dxgi=b"]
     runtime.engineSearchPaths = ["d3dMetal": temporary.path]
     let plan = try LaunchPlan.build(
@@ -366,6 +386,68 @@ public final class CoreChecks {
     XCTAssertEqual(plan.environment["WINEDLLOVERRIDES"], "d3d11,dxgi=b")
     XCTAssertEqual(plan.environment["WINEDLLPATH"], temporary.path)
     XCTAssertEqual(plan.environment["WINEPREFIX"], paths.prefix(profile: profile, gameID: "A").path)
+  }
+  func testBuiltin32Projection() throws {
+    let paths = LauncherPaths(root: temporary.appendingPathComponent("data"))
+    let base = temporary.appendingPathComponent("base32")
+    let renderer = temporary.appendingPathComponent("dxmt32")
+    try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: renderer, withIntermediateDirectories: true)
+    for name in ["kernel32.dll", "d3d11.dll", "dxgi.dll", "winemetal.dll"] {
+      try Data(("pure:" + name).utf8).write(to: base.appendingPathComponent(name))
+    }
+    for name in RendererSelector.requiredDLLs(.dxmtMetal) {
+      try Data(("renderer:" + name).utf8).write(to: renderer.appendingPathComponent(name))
+    }
+    var runtime = RuntimeConfiguration(wine: "/usr/bin/true")
+    runtime.runtimeID = "v1"
+    runtime.builtin32Directory = base.path
+    XCTAssertFalse(RendererSelector.available(.dxmtMetal, runtime: runtime, architecture: .x86))
+    runtime.engineDLLs = ["dxmtMetal": renderer.path]
+    runtime.engineDLLs32 = ["dxmtMetal": renderer.path]
+    XCTAssertEqual(
+      RendererSelector.available(.dxmtMetal, runtime: runtime, architecture: .x86), true)
+    try FileManager.default.removeItem(at: renderer.appendingPathComponent("dxgi.dll"))
+    XCTAssertFalse(RendererSelector.available(.dxmtMetal, runtime: runtime, architecture: .x86))
+    try Data("renderer:dxgi.dll".utf8).write(to: renderer.appendingPathComponent("dxgi.dll"))
+    var automatic = Game(id: "32", store: .local, storeID: "32", title: "32")
+    automatic.metadata = ["graphicsAPI": .string("d3d11")]
+    runtime.verifiedEngines = ["dxmtMetal"]
+    runtime.engineAPIs = ["dxmtMetal": ["d3d11"]]
+    XCTAssertThrowsError(
+      try RendererSelector.select(game: automatic, runtime: runtime, rules: [], architecture: .x86))
+    runtime.engineArchitectures = ["dxmtMetal": ["i386"]]
+    try XCTAssertEqual(
+      try RendererSelector.select(game: automatic, runtime: runtime, rules: [], architecture: .x86),
+      .dxmtMetal)
+    let profile = UUID()
+    let a = try PrefixManager(paths: paths).prepare(profile: profile, gameID: "A")
+    let b = try PrefixManager(paths: paths).prepare(profile: profile, gameID: "B")
+    for prefix in [a, b] {
+      try WindowsBuiltinBootstrap.prepare(runtime: runtime, prefix: prefix)
+      try EngineInstaller.configure(.dxmtMetal, runtime: runtime, paths: paths, prefix: prefix)
+    }
+    let relative = "drive_c/windows/syswow64/"
+    try Data("private write".utf8).write(to: a.appendingPathComponent(relative + "d3d11.dll"))
+    try XCTAssertEqual(
+      try String(contentsOf: b.appendingPathComponent(relative + "d3d11.dll")), "renderer:d3d11.dll"
+    )
+    try XCTAssertEqual(
+      try String(contentsOf: renderer.appendingPathComponent("d3d11.dll")), "renderer:d3d11.dll")
+    try EngineInstaller.configure(.wineD3D, runtime: runtime, paths: paths, prefix: a)
+    try XCTAssertEqual(
+      try String(contentsOf: a.appendingPathComponent(relative + "d3d11.dll")), "pure:d3d11.dll")
+    // A runtime update must preserve an installer's custom dependency while updating pure core files.
+    try Data("custom kernel".utf8).write(to: a.appendingPathComponent(relative + "kernel32.dll"))
+    try Data("new pure kernel".utf8).write(to: base.appendingPathComponent("kernel32.dll"))
+    runtime.runtimeID = "v2"
+    try WindowsBuiltinBootstrap.prepare(runtime: runtime, prefix: a)
+    try WindowsBuiltinBootstrap.prepare(runtime: runtime, prefix: b)
+    try XCTAssertEqual(
+      try String(contentsOf: a.appendingPathComponent(relative + "kernel32.dll")), "custom kernel")
+    try XCTAssertEqual(
+      try String(contentsOf: b.appendingPathComponent(relative + "kernel32.dll")), "new pure kernel"
+    )
   }
   func testSavePathsRejectTraversalAndSymlinkEscape() throws {
     let prefix = temporary.appendingPathComponent("prefix")
@@ -376,7 +458,7 @@ public final class CoreChecks {
       at: prefix.appendingPathComponent("escape"), withDestinationURL: temporary)
     XCTAssertThrowsError(try SafePath.resolve("escape/outside", under: prefix))
   }
-  func testLaunchPlanUsesLiteralArgumentsAndTheSharedPrefix() throws {
+  func testLaunchPlanUsesLiteralArgumentsAndIsolatedPrefix() throws {
     let p = LauncherPaths(root: temporary)
     try p.prepare()
     let profile = UUID()

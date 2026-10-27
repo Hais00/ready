@@ -35,9 +35,14 @@ Prefix recreation acquires its lease, moves the old prefix into Backups, and pre
 
 Legacy migration first writes a plan and leaves SharedPrefix untouched. Ownership of old mixed-account data cannot safely be inferred. Execution copies into independently writable per-game prefixes for the assigned owner profile and prepares redirects. The original remains the rollback source; no automatic deletion occurs. A copied prefix is marked **awaiting real validation**, not complete.
 
+`LegacyMigration.rollback` acquires all affected prefix leases and archives the migrated copies with their modified data instead of deleting them. It leaves the original legacy prefix and the persistent profile folders intact. Rollback refuses a running destination or an invalid/replaced source. The migration API is available in LauncherCore; guided migration UI and crash recovery of an interrupted multi-prefix copy remain open.
+
+Wine PE32 builtins are projected separately into each prefix's `syswow64` using APFS copy-on-write (file copies on other volumes); executable Wine/Unix engines remain central. Pure Wine files are bootstrapped before wineboot, while 32-bit and 64-bit renderer DLLs have separate selection/backup manifests. Updating an unmodified core projection cannot write through to another prefix; custom modified core files are preserved. Actual installed payload availability is checked for the requested executable architecture.
+
 ## Scope and unresolved limits
 
 - Profiles are launcher profiles within one macOS account. This is logical data separation, not a sandbox against malicious same-user code.
 - macOS-native apps can ignore HOME or share OS services. Their per-profile save/account isolation still needs game-specific handling; they are not forced into Wine.
+- Shared downloads have a separate installation lease, including overlapping paths and cross-profile requests. Coordinating a store update with every already-running consumer of the same game installation remains an integration gap; the prefix lease protects that prefix's DLL/configuration, not arbitrary shared game files.
 - Domain checks cover independent registry/DLL files, profile-specific AppData, Documents links, recreation survival, lock concurrency, safe paths and original-preserving migration. Separate Windows executables running under Wine also verify registry/folder APIs, private account markers, cross-profile separation and saved-data survival after recreation. Native keeper tests verify independent process termination and retained locks after launcher crashes. Actual game save locations, complete migration crash recovery and real-game multi-session behavior remain integration gates.
 - Prefix separation is not claimed to reduce VRAM. VRAM goals are handled by UI teardown and in-process rendering measurements.

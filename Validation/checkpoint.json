@@ -1,8 +1,8 @@
 {
-  "createdAt": "2026-10-28T00:30:15.476459+01:00",
+  "createdAt": "2026-10-28T00:38:37.649837+01:00",
   "goalComplete": false,
   "core": {
-    "checks": 18,
+    "checks": 19,
     "passed": true,
     "names": [
       "Valve manifests and malformed input",
@@ -22,11 +22,12 @@
       "Renderer failures are scoped by profile, game and runtime",
       "Windows registry redirection uses canonical escaping and Unicode",
       "PE import detection distinguishes APIs and malformed input",
-      "Built-in provider policy is explicit and scoped"
+      "Built-in provider policy is explicit and scoped",
+      "PE32 builtin and renderer projections isolate writes and restore pure Wine"
     ]
   },
   "storeProtocols": {
-    "checks": 44,
+    "checks": 55,
     "passed": true,
     "realAccountsVerified": false
   },
@@ -74,6 +75,27 @@
     },
     "scope": "real-Foundation-Process-and-native-keeper; Wine protocol fixtures, not real game compatibility"
   },
+  "realWineSessions": {
+    "passed": true,
+    "checks": {
+      "bothInitiallyLocked": true,
+      "bothLeasesReleasedAfterExactServerWait": true,
+      "callbacksMainThread": true,
+      "distinctPrefixes": true,
+      "quitADoesNotStopB": true,
+      "realInitializationMarkers": true,
+      "windowsAHeartbeatStops": true,
+      "windowsBHeartbeatStops": true
+    },
+    "scope": "actual SessionManager + native keeper + Wine + compiled Windows WinAPI helper; no protocol mocks, account, or game",
+    "runtimeID": "ready-runtime-b4a90f0d97ce75cdd949+ready-dxmt-24e0d9894971a103e68d"
+  },
+  "winePE32": {
+    "verified": true,
+    "scope": "real Win32 + DXMT DX11 device/buffer readback + 600-frame presentation",
+    "shaderRasterizationVerified": false,
+    "commercialGameVerified": false
+  },
   "winePrefixAPIs": {
     "verified": true,
     "steps": 7,
@@ -102,6 +124,7 @@
     "D3D12 / latest proprietary Apple runtime ABI integration",
     "Physical-controller behavior and in-game input suppression",
     "Native macOS game save/account isolation and complete release packaging",
-    "Real legacy user-data migration beyond synthetic copies"
+    "Real legacy user-data migration beyond synthetic copies; guided UI and interrupted-copy recovery",
+    "Shared game update coordination with already-running consumers"
   ]
 }

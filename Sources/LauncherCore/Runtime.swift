@@ -18,6 +18,9 @@ public struct RuntimeConfiguration: Codable {
   public var engineSearchPaths: [String: String]?
   public var engineWineBinaries: [String: String]?
   public var engineWineServers: [String: String]?
+  public var builtin32Directory: String?
+  public var engineDLLs32: [String: String]?
+  public var engineArchitectures: [String: [String]]?
   public var runtimeIdentity: String { runtimeID ?? wineVersion ?? wine ?? "unknown" }
   public init(
     wine: String? = nil, wineServer: String? = nil, wineBoot: String? = nil,
@@ -80,7 +83,10 @@ public struct LaunchPlan: Codable {
     let failures = RendererFailureLedger(paths: paths).failed(
       profile: profile, gameID: game.id, wineVersion: runtime.runtimeIdentity)
     let engine = try RendererSelector.select(
-      game: game, runtime: runtime, rules: rules, failed: failures)
+      game: game, runtime: runtime, rules: rules, failed: failures,
+      architecture: variant.architecture == .unknown
+        ? ((try? ArchitectureProbe.inspect(URL(fileURLWithPath: target))) ?? .unknown)
+        : variant.architecture)
     let wine = runtime.engineWineBinaries?[engine.rawValue] ?? baseWine
     guard FileManager.default.isExecutableFile(atPath: wine) else {
       throw LauncherError.unavailable("Wine non disponibile per il provider selezionato.")
@@ -162,21 +168,58 @@ public enum EngineInstaller {
       try fm.moveItem(at: originals, to: archive.appendingPathComponent("OriginalDLLs"))
     }
     try AtomicFile.writePrivate(JSONEncoder().encode([String]()), to: state)
+    try reset32ForRuntimeChange(prefix: prefix, archive: archive)
     try AtomicFile.writePrivate(Data(version.utf8), to: marker)
   }
-  /// Must be protected by the global prefix lease. Preserve original DLLs before any swap.
+  private static func reset32ForRuntimeChange(prefix: URL, archive: URL) throws {
+    let fm = FileManager.default
+    let state = prefix.appendingPathComponent(".ready/managed-dlls32.json")
+    let previous = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: state))) ?? []
+    for name in previous {
+      guard managedDLLs.contains(name) else {
+        throw LauncherError.invalid("Manifest DLL32 non valido")
+      }
+      let file = prefix.appendingPathComponent("drive_c/windows/syswow64/" + name)
+      if (try? fm.destinationOfSymbolicLink(atPath: file.path)) != nil {
+        try fm.removeItem(at: file)
+      } else if fm.fileExists(atPath: file.path) {
+        let destination = archive.appendingPathComponent("syswow64")
+        try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+        try fm.moveItem(at: file, to: destination.appendingPathComponent(name))
+      }
+    }
+    let originals = prefix.appendingPathComponent(".ready/OriginalDLLs32")
+    if fm.fileExists(atPath: originals.path) {
+      try fm.createDirectory(at: archive, withIntermediateDirectories: true)
+      try fm.moveItem(at: originals, to: archive.appendingPathComponent("OriginalDLLs32"))
+    }
+    try AtomicFile.writePrivate(JSONEncoder().encode([String]()), to: state)
+  }
+  /// Must be protected by this game's/profile's prefix lease. Preserve originals before any swap.
   public static func configure(
     _ engine: GraphicsEngine, runtime: RuntimeConfiguration, paths: LauncherPaths, prefix: URL
   ) throws {
+    try configureDirectory(
+      source: runtime.engineDLLs[engine.rawValue],
+      system: prefix.appendingPathComponent("drive_c/windows/system32"),
+      backups: prefix.appendingPathComponent(".ready/OriginalDLLs"),
+      state: prefix.appendingPathComponent(".ready/managed-dlls.json"))
+    // A PE32 renderer is independent of its PE64 counterpart. Never place x64 DLLs in syswow64.
+    try configureDirectory(
+      source: runtime.engineDLLs32?[engine.rawValue],
+      system: prefix.appendingPathComponent("drive_c/windows/syswow64"),
+      backups: prefix.appendingPathComponent(".ready/OriginalDLLs32"),
+      state: prefix.appendingPathComponent(".ready/managed-dlls32.json"))
+  }
+  private static func configureDirectory(source: String?, system: URL, backups: URL, state: URL)
+    throws
+  {
     let fm = FileManager.default
-    let system = prefix.appendingPathComponent("drive_c/windows/system32")
-    let backups = prefix.appendingPathComponent(".ready/OriginalDLLs")
     try fm.createDirectory(at: system, withIntermediateDirectories: true)
     try fm.createDirectory(at: backups, withIntermediateDirectories: true)
-    let state = prefix.appendingPathComponent(".ready/managed-dlls.json")
     let previous = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: state))) ?? []
     var incoming = [(String, URL)]()
-    if let source = runtime.engineDLLs[engine.rawValue] {
+    if let source {
       for dll in managedDLLs {
         let url = URL(fileURLWithPath: source).appendingPathComponent(dll)
         if fm.fileExists(atPath: url.path) { incoming.append((dll, url)) }
@@ -214,6 +257,6 @@ public enum EngineInstaller {
       }
       try fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: dest.path)
     }
-    try JSONEncoder().encode(incoming.map { $0.0 }).write(to: state, options: .atomic)
+    try AtomicFile.writePrivate(JSONEncoder().encode(incoming.map { $0.0 }), to: state)
   }
 }

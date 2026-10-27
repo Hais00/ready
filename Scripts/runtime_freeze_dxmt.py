@@ -38,18 +38,45 @@ def main():
     observation = json.loads(present['stdout'].strip())
     if not device['passed'] or not shader['passed'] or present['exitCode'] != 0 or observation['presentedFrames'] < 60 or int(observation['featureLevel'], 0) < 0xb000 or present.get('windowAdapterSHA256') != adapter['moduleSHA256']:
         raise RuntimeError('Real device, shader rasterization, and presentation gates required')
+    native32 = {}
+    for path in sorted((RUNTIME / 'dxvk-3.1.1/x32').glob('*.dll')):
+        native32['dxvk/' + path.name] = path
+    for path in sorted((RUNTIME / 'vkd3d-proton-3.0.1/x86').glob('*.dll')):
+        native32['vkd3d/' + path.name] = path
+    if 'dxvk/dxgi.dll' in native32:
+        native32['vkd3d/dxgi.dll'] = native32['dxvk/dxgi.dll']
+    wow64_path = ROOT / 'Evidence/runtime-wow64-proof.json'
+    wow64 = json.loads(wow64_path.read_text()) if wow64_path.exists() else {}
+    verified32 = wow64.get('verified') is True and all(wow64.get('selectedPayloadSHA256', {}).get(name.replace('i386-windows/', 'i386/')) == sha for name, sha in lock['selectedPayloadFiles'].items() if name.startswith('i386-windows/'))
     manifest = {'format': 1, 'wineVersion': 'wine-11.20', 'dxmtSourceCommit': lock['sourceCommit'],
                 'windowAdapter': adapter, 'baseRuntimeSet': str(base),
                 'recipeSHA256': digest(Path(__file__).resolve()), 'files': {},
                 'verifiedAPIs': ['d3d11'], 'shaderRasterizationVerified': True,
                 'presentationVerified': True, 'directToDisplayVerified': False,
-                'gameCompatibilityVerified': False, 'proprietaryFilesIncluded': False}
+                'gameCompatibilityVerified': False, 'proprietaryFilesIncluded': False,
+                'native32Files': {name: digest(path) for name, path in native32.items()},
+                'verifiedArchitectures': ['x86_64', 'i386'] if verified32 else ['x86_64']}
     for path in sorted(SOURCE.rglob('*')):
         relative = str(path.relative_to(SOURCE))
         if path.is_symlink():
             manifest['files'][relative] = {'symlink': os.readlink(path)}
         elif path.is_file():
             manifest['files'][relative] = {'sha256': digest(path)}
+    # Reusing stale successful probes with unrelated Wine core binaries is not
+    # sufficient. The provider is exactly the tested base plus the pinned DXMT
+    # payload, explicit window adapter, and its preparation record.
+    allowed_changes = {'dxmt-prepared.json', 'lib/wine/x86_64-unix/winemac.so'}
+    allowed_changes.update('lib/wine/' + name for name in lock['selectedPayloadFiles'])
+    for path in sorted((base / 'wine').rglob('*')):
+        relative = str(path.relative_to(base / 'wine'))
+        if relative in allowed_changes or relative == 'bin/ready-wine' or path.is_dir():
+            continue
+        candidate = SOURCE / relative
+        if path.is_symlink():
+            if not candidate.is_symlink() or os.readlink(candidate) != os.readlink(path):
+                raise RuntimeError('Wine base symlink differs from the tested immutable base: ' + relative)
+        elif not candidate.is_file() or digest(path) != manifest['files'].get(relative, {}).get('sha256'):
+            raise RuntimeError('Wine core differs from the tested immutable base: ' + relative)
     identity = hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     provider_id = 'ready-dxmt-' + identity[:20]
     providers = RUNTIME / 'Providers'; providers.mkdir(exist_ok=True)
@@ -79,6 +106,10 @@ exit "$READY_STATUS"
         temporary = providers / (provider_id + '.staging')
         temporary.mkdir()
         subprocess.run(['/bin/cp', '-cR', str(SOURCE), str(temporary / 'wine')], check=True)
+        for name, source in native32.items():
+            destination = temporary / 'native32' / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(['/bin/cp', '-c', str(source), str(destination)], check=True)
         wrapper = temporary / 'wine/bin/ready-wine'
         wrapper.write_text(wrapper_text); wrapper.chmod(0o755)
         (temporary / 'provider-manifest.json').write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
@@ -90,6 +121,15 @@ exit "$READY_STATUS"
     config.setdefault('engineOverrides', {})['dxmtMetal'] = 'd3d11,dxgi,d3d10core,winemetal=b'
     config.setdefault('engineSearchPaths', {})['dxmtMetal'] = str(target / 'wine/lib/wine')
     config.setdefault('engineDLLs', {})['dxmtMetal'] = str(target / 'wine/lib/wine/x86_64-windows')
+    config['builtin32Directory'] = str(base / 'wine/lib/wine/i386-windows')
+    config.setdefault('engineDLLs32', {})['dxmtMetal'] = str(target / 'wine/lib/wine/i386-windows')
+    if 'dxvk/d3d11.dll' in native32 and 'dxvk/dxgi.dll' in native32:
+        for engine in ['dxvkKosmic', 'dxvkMolten']:
+            config['engineDLLs32'][engine] = str(target / 'native32/dxvk')
+    if all(name in native32 for name in ['vkd3d/d3d12.dll', 'vkd3d/d3d12core.dll', 'vkd3d/dxgi.dll']):
+        config['engineDLLs32']['vkd3dKosmic'] = str(target / 'native32/vkd3d')
+    config['engineBuiltin32Dirs'] = dict(config['engineDLLs32'])
+    config.setdefault('engineArchitectures', {})['dxmtMetal'] = manifest['verifiedArchitectures']
     config.setdefault('engineAPIs', {})['dxmtMetal'] = ['d3d11']
     config.setdefault('engineProviderIDs', {})['dxmtMetal'] = provider_id
     if 'dxmtMetal' not in config.setdefault('verifiedEngines', []):
@@ -100,7 +140,9 @@ exit "$READY_STATUS"
     pending.write_text(json.dumps(config, indent=2) + '\n'); os.replace(pending, RUNTIME / 'runtime.json')
     result = {'providerID': provider_id, 'path': str(target), 'runtimeID': config['runtimeID'],
               'verifiedAPIs': ['d3d11'], 'presentationVerified': True, 'directToDisplayVerified': False,
-              'gameCompatibilityVerified': False, 'proprietaryAppleFilesExcluded': True}
+              'gameCompatibilityVerified': False, 'proprietaryAppleFilesExcluded': True,
+              'verifiedArchitectures': manifest['verifiedArchitectures'],
+              'native32PayloadPresenceMeansCompatibility': False}
     (ROOT / 'Evidence/runtime-dxmt-frozen.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result, indent=2))
 

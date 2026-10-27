@@ -117,9 +117,42 @@ not override that directory. Configuration selects both the engine's Wine wrappe
 and its wineserver, records a combined runtime identity, and exposes only verified
 API capabilities. Updating an engine takes effect on a subsequent launch.
 
-The current base is `ready-runtime-b4a90f0d97ce75cdd949`; the verified DXMT provider
-is `ready-dxmt-8b9fd99324a40e1c2f37`. IDs include build/patch manifests, not just
-the upstream Wine version string.
+The current base is `ready-runtime-b4a90f0d97ce75cdd949`. The selected DXMT
+provider and combined identity are recorded in `Runtime/runtime.json` and
+`Evidence/runtime-dxmt-frozen.json`. IDs include build/patch manifests, not just
+the upstream Wine version string. The freeze gate compares every unchanged Wine
+core file with the tested base; unrelated core binaries cannot inherit stale
+successful DXMT probes.
+
+## 32-bit Windows applications
+
+Actual i686 PE executables also pass Win32 calls, DXMT D3D11 feature level 11_0
+with GPU buffer readback, and a 600-frame D3D11 swapchain on this M1. These tests
+use the x86_64 Wine host and its WoW64 modules under Rosetta. No 32-bit macOS
+executable or 32-bit Unix driver is required. SM5 shader rasterization was tested
+separately in PE64; a PE32 shader-raster claim is not made.
+
+An empty `syswow64` directory initially caused `kernel32.dll` c0000135 even though
+the central Wine already contained its i386 builtin DLLs. Running `wineboot -u`
+alone, including with `WINEARCH=wow64`, did not repair it. A COW projection of the
+**pure base Wine** i386 builtin files into a new prefix's `windows/syswow64`
+before Wineboot resolves the bootstrap. The selected engine's managed PE32 DLLs
+are then projected separately, with pure Wine originals retained for restoration
+when switching engines. Nothing is hard-linked or symlinked back to a mutable
+central DLL. Normal PE32 launch also passes without forcing WINEARCH.
+
+Configuration uses `builtin32Directory` for the pure Wine bootstrap and
+`engineDLLs32` for each selected renderer's versioned payload. The transitional
+`engineBuiltin32Dirs` is an alias for the latter, not the bootstrap source.
+Pinned DXVK and VKD3D PE32 payloads are present in the immutable provider, but
+their presence does not change their failed GPU capability gates.
+
+`python3 Scripts/runtime_wow64_smoke.py` rebuilds freestanding PE32 probes,
+creates a fresh synthetic prefix, bootstraps pure Wine, applies the selected DXMT
+payload, verifies all three real API tests, and removes the fixture. `--keep`
+retains only that synthetic run for diagnosis. The report is
+`Evidence/runtime-wow64-proof.json`; module traces and exact payload/executable
+hashes accompany it. No individual 32-bit game's compatibility is guaranteed.
 
 ## Apple integration boundary
 

@@ -51,6 +51,8 @@ Apple D3DMetal/GPTK evaluation libraries are **proprietary optional local inputs
 
 ## Verified so far / still open
 
-The [sanitized checkpoint](Validation/checkpoint.json) records 18 domain checks, store protocol tests, real process/session coordination, and real Wine registry/folder API checks across game/profile prefixes. Actual Metal overlay rendering passes six ARM64/x64 paths and a Windows Vulkan → Wine → KosmicKrisp path. The launcher releases its canvas texture during play; a local Metal allocation measurement falls from about 47 MB to 0.74 MB.
+The [sanitized checkpoint](Validation/checkpoint.json) records 19 domain checks, 55 store protocol/concurrency tests, real process/session coordination, and real Wine registry/folder API checks across game/profile prefixes. Two actual Windows sessions also verify that terminating A leaves B running with its lease intact. Actual Metal overlay rendering passes six ARM64/x64 paths and a Windows Vulkan → Wine → KosmicKrisp path. The launcher releases its canvas texture during play; a local Metal allocation measurement falls from about 47 MB to 0.74 MB.
+
+After provisioning the local runtime, additional integration probes are reproducible with `Scripts/runtime_prefix_proof.py`, `Scripts/test_wine_sessions.py` and `Scripts/runtime_wow64_smoke.py`. They use synthetic data and Windows programs; they do not use store accounts or real user saves.
 
 These probes do not prove a commercial game works, its anti-cheat accepts Wine, or a real account login/download succeeds. The tested fullscreen baseline and injected overlay both show **Composited** in the Metal HUD; direct display remains unverified. Apple DX12 interoperability, physical-controller behavior, input suppression, native app save isolation, complete release packaging and real game/migration validation remain open. Nothing is published as a completed product yet.

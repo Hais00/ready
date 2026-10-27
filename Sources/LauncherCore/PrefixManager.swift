@@ -124,6 +124,56 @@ public struct LegacyMigrationPlan: Codable {
   public var warning: String
 }
 public enum LegacyMigration {
+  /// Abort a copied migration without deleting either the legacy source or new data.
+  /// Returns the archive root containing the independent prefix copies.
+  public static func rollback(_ plan: LegacyMigrationPlan, paths: LauncherPaths) throws -> URL {
+    let fm = FileManager.default
+    guard plan.source == paths.legacyPrefix.path,
+      plan.status == "copied-awaiting-real-validation-original-retained",
+      fm.fileExists(atPath: paths.legacyPrefix.path),
+      (try? fm.destinationOfSymbolicLink(atPath: paths.legacyPrefix.path)) == nil
+    else { throw LauncherError.invalid("Sorgente originale del ripristino non disponibile") }
+    var leases = [PrefixLease]()
+    for id in plan.destinations.keys.sorted() {
+      leases.append(try PrefixLease(paths: paths, profile: plan.ownerProfile, gameID: id))
+    }
+    return try withExtendedLifetime(leases) {
+      for (id, path) in plan.destinations {
+        guard paths.prefix(profile: plan.ownerProfile, gameID: id).path == path,
+          fm.fileExists(atPath: path),
+          (try? fm.destinationOfSymbolicLink(atPath: path)) == nil
+        else { throw LauncherError.invalid("Copia della migrazione non valida: dati conservati") }
+      }
+      let archive = paths.root.appendingPathComponent(
+        "Backups/migration-rollback-" + UUID().uuidString)
+      try fm.createDirectory(
+        at: archive, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+      var moved = [(URL, URL)]()
+      do {
+        for (id, path) in plan.destinations.sorted(by: { $0.key < $1.key }) {
+          let original = URL(fileURLWithPath: path)
+          let saved = archive.appendingPathComponent(SafePath.key(id))
+          try fm.moveItem(at: original, to: saved)
+          moved.append((original, saved))
+        }
+        var result = plan
+        result.status = "rolled-back-copies-archived-original-retained"
+        try AtomicFile.writePrivate(
+          JSONEncoder().encode(result), to: archive.appendingPathComponent("plan.json"))
+        try AtomicFile.writePrivate(
+          JSONEncoder().encode(result), to: paths.root.appendingPathComponent("Migration/plan.json")
+        )
+        return archive
+      } catch {
+        // No recursive deletion: restore moves where possible and retain any
+        // conflicting copy in the archive for inspection.
+        for (original, saved) in moved.reversed() where !fm.fileExists(atPath: original.path) {
+          try? fm.moveItem(at: saved, to: original)
+        }
+        throw error
+      }
+    }
+  }
   /// Preparation is deliberately non-destructive. Never guess ownership of old mixed-account data.
   public static func prepare(paths: LauncherPaths, profile: UUID, games: [Game]) throws
     -> LegacyMigrationPlan?

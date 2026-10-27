@@ -91,6 +91,7 @@ exit "$READY_STATUS"
     if wrapper.exists() and wrapper.read_text()!=script:raise RuntimeError('Refusing to modify an existing runtime wrapper')
     if not wrapper.exists():wrapper.write_text(script);wrapper.chmod(0o755)
     config.update({'runtimeID':runtime_id,'wine':str(wrapper),'wineBinary':str(target/'wine/bin/wine'),'wineServer':str(target/'wine/bin/wineserver'),'wineBoot':None,
+                   'builtin32Directory':str(target/'wine/lib/wine/i386-windows'),
                    'kosmicICD':str(icds/'kosmic-x64.json'),'kosmicNativeICD':str(icds/'kosmic-arm64.json'),'moltenICD':str(icds/'molten.json'),
                    'vulkanLibrary':str(target/'vulkan/libvulkan.1.dylib'),'engineDLLs':{'dxvkKosmic':str(target/'dxvk'),'dxvkMolten':str(target/'dxvk'),'vkd3dKosmic':str(target/'vkd3d')},
                    'immutableRuntimeSet':str(target),'runtimeManifestSHA256':identity})

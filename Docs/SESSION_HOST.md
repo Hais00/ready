@@ -140,3 +140,26 @@ spawn, cancellation inside that hook preventing any child launch, and deliberate
 ambient prefix/renderer/injection variables not leaking into initialization or game.
 Evidence:
 `Evidence/session-host-manager.json`. It does not claim real-game compatibility.
+
+## Real Wine session isolation
+
+```sh
+python3 Scripts/test_wine_sessions.py
+```
+
+This separate integration test compiles an original Windows x64 executable that uses
+WinAPI file writes, process identification, and sleep to produce a heartbeat. It invokes
+the actual `SessionManager` with the existing local runtime configuration and two new
+prefixes beneath a UUID directory in `Runtime/TestPrefixes`. No protocol fixture,
+account, game, external prefix template, or existing personal directory is used.
+
+On the verified run, both freshly initialized Windows helpers reached heartbeat 3.
+Closing A stopped its heartbeat at 3 and released A's lock while B continued to 8,
+remained running, and kept its own lock. Closing B stopped its heartbeat at 12 and
+released the second lock after its exact-prefix Wine server wait. Both prefix markers
+matched the runtime identity, and lifecycle callbacks stayed on the main thread.
+`Evidence/session-host-wine-real.json` records all eight checks, runtime identity,
+helper hash, and host PIDs. The script performs exact-prefix cleanup, checks that no
+keeper holds a scratch lock, and removes its own UUID directory; it preserves scratch
+if a keeper still owns a lock. This proves process/prefix isolation, not graphics or
+game compatibility.

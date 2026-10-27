@@ -71,6 +71,7 @@ exit "$READY_STATUS"
         "wineVersion":"wine-11.20" if wine.exists() else None,
         "wineServer":str(RUNTIME/"wine-11.20/bin/wineserver") if wine.exists() else None,
         "wineBoot":None,
+        "builtin32Directory":str(RUNTIME/"wine-11.20/lib/wine/i386-windows"),
         "kosmicICD":str(RUNTIME/"mesa-x64-26.3.0-rc2/share/vulkan/icd.d/kosmickrisp_mesa_icd.x86_64.json"),
         "moltenICD":str(RUNTIME/"moltenvk-1.4.2/MoltenVK/dynamic/dylib/macOS/MoltenVK_icd.json"),
         "vulkanLibrary":str(RUNTIME/"vulkan-sdk-1.4.366/lib/libvulkan.1.dylib"),

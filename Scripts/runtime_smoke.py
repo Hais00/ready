@@ -40,6 +40,15 @@ def compile_probes():
     command([DLLTOOL,'-m','i386','--kill-at','-d',definition,'-l',PROBES/'kernel32-i386.lib'])
     command([CLANG,'--target=i686-windows','--no-default-config','-ffreestanding','-fno-builtin','-fshort-wchar','-O2','-c',ROOT/'Scripts/runtime_windows_probe.c','-o',PROBES/'runtime_windows_probe32.obj'])
     command([LINK,'/entry:mainCRTStartup','/subsystem:console','/machine:x86','/nodefaultlib','/safeseh:no',PROBES/'runtime_windows_probe32.obj',PROBES/'kernel32-i386.lib','/out:'+str(PROBES/'runtime_windows_probe32.exe')])
+    present32={
+        'd3d-present-kernel32-i386':('KERNEL32.dll',['GetModuleHandleW@4','LoadLibraryA@4','GetProcAddress@8','GetCommandLineW@0','ExitProcess@4']),
+        'present-user32-i386':('USER32.dll',['RegisterClassW@4','CreateWindowExW@48','DefWindowProcW@16','ShowWindow@8','UpdateWindow@4','PeekMessageW@20','TranslateMessage@4','DispatchMessageW@4','DestroyWindow@4','PostQuitMessage@4']),
+        'msvcrt-i386':('msvcrt.dll',['printf','memcpy','memset'])}
+    for name,(dll,exports) in present32.items():
+        definition=PROBES/(name+'.def');definition.write_text('LIBRARY '+dll+'\nEXPORTS\n'+'\n'.join(exports)+'\n')
+        command([DLLTOOL,'-m','i386','--kill-at','-d',definition,'-l',PROBES/(name+'.lib')])
+    command([CLANG,'--target=i686-windows','--no-default-config','-ffreestanding','-fno-builtin','-fshort-wchar','-O2','-c',ROOT/'Scripts/runtime_d3d11_present.c','-o',PROBES/'runtime_d3d11_present32.obj'])
+    command([LINK,'/entry:mainCRTStartup','/subsystem:console','/machine:x86','/nodefaultlib','/safeseh:no',PROBES/'runtime_d3d11_present32.obj',*[PROBES/(name+'.lib') for name in present32],'/out:'+str(PROBES/'runtime_d3d11_present32.exe')])
     command(['/usr/bin/clang','-arch','arm64','-arch','x86_64','-O2','-I',RUNTIME/'vulkan-headers-1.4.366/include',ROOT/'Scripts/runtime_vulkan_probe.c','-o',RUNTIME/'runtime_vulkan_probe'])
 
 def execute(args,env,timeout=90):

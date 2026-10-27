@@ -18,11 +18,29 @@ public struct CompatibilityRule: Codable, Equatable {
   }
 }
 public enum RendererSelector {
-  public static func available(_ engine: GraphicsEngine, runtime: RuntimeConfiguration) -> Bool {
+  public static func requiredDLLs(_ engine: GraphicsEngine) -> [String] {
+    switch engine {
+    case .dxmtMetal: return ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
+    case .d3dMetal: return ["d3d11.dll", "d3d12.dll", "dxgi.dll"]
+    case .dxvkKosmic, .dxvkMolten: return ["d3d11.dll", "dxgi.dll"]
+    case .vkd3dKosmic: return ["d3d12.dll", "d3d12core.dll", "dxgi.dll"]
+    default: return []
+    }
+  }
+  public static func available(
+    _ engine: GraphicsEngine, runtime: RuntimeConfiguration,
+    architecture: BinaryArchitecture = .unknown
+  ) -> Bool {
     let fm = FileManager.default
     guard let wine = runtime.engineWineBinaries?[engine.rawValue] ?? runtime.wine,
       fm.isExecutableFile(atPath: wine)
     else { return false }
+    if architecture == .x86 {
+      guard let builtin = runtime.builtin32Directory,
+        fm.isReadableFile(
+          atPath: URL(fileURLWithPath: builtin).appendingPathComponent("kernel32.dll").path)
+      else { return false }
+    }
     switch engine {
     case .automatic: return false
     case .wineD3D: return true
@@ -33,7 +51,11 @@ public enum RendererSelector {
     case .dxmtMetal, .d3dMetal: break
     }
     if [.dxmtMetal, .d3dMetal, .dxvkKosmic, .dxvkMolten, .vkd3dKosmic].contains(engine) {
-      guard let directory = runtime.engineDLLs[engine.rawValue], fm.fileExists(atPath: directory)
+      let payload = architecture == .x86 ? runtime.engineDLLs32 : runtime.engineDLLs
+      guard let directory = payload?[engine.rawValue],
+        requiredDLLs(engine).allSatisfy({
+          fm.isReadableFile(atPath: URL(fileURLWithPath: directory).appendingPathComponent($0).path)
+        })
       else { return false }
     }
     return true
@@ -41,10 +63,10 @@ public enum RendererSelector {
   /// Fallback is evaluated between launches. Never hot-swap DLLs in a running prefix.
   public static func select(
     game: Game, runtime: RuntimeConfiguration, rules: [CompatibilityRule],
-    failed: Set<GraphicsEngine> = []
+    failed: Set<GraphicsEngine> = [], architecture: BinaryArchitecture = .unknown
   ) throws -> GraphicsEngine {
     if game.engine != .automatic {
-      guard available(game.engine, runtime: runtime) else {
+      guard available(game.engine, runtime: runtime, architecture: architecture) else {
         throw LauncherError.unavailable("Il motore scelto non è installato per questo runtime.")
       }
       return game.engine
@@ -55,6 +77,14 @@ public enum RendererSelector {
       return nil
     }()
     func supportsRequiredAPI(_ engine: GraphicsEngine) -> Bool {
+      // A successful PE64 probe does not certify the PE32 route. Advanced manual
+      // overrides may still try an available experimental payload explicitly.
+      if architecture == .x86,
+        !(runtime.engineArchitectures?[engine.rawValue]?.contains("i386") == true
+          || runtime.engineArchitectures?[engine.rawValue]?.contains("x86") == true)
+      {
+        return false
+      }
       guard let api = requiredAPI else { return true }
       return runtime.engineAPIs?[engine.rawValue]?.contains(api) == true
     }
@@ -64,7 +94,7 @@ public enum RendererSelector {
     }.flatMap { $0.engines }
     if let selected = candidates.first(where: {
       !failed.contains($0) && verified.contains($0.rawValue) && supportsRequiredAPI($0)
-        && available($0, runtime: runtime)
+        && available($0, runtime: runtime, architecture: architecture)
     }) {
       return selected
     }
@@ -79,7 +109,7 @@ public enum RendererSelector {
     }
     if let engine = generic.first(where: {
       verified.contains($0.rawValue) && supportsRequiredAPI($0) && !failed.contains($0)
-        && available($0, runtime: runtime)
+        && available($0, runtime: runtime, architecture: architecture)
     }) {
       return engine
     }

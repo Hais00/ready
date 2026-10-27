@@ -287,8 +287,11 @@ final class SessionManager {
       try checkCancellation(ctx)
       let marker = prefix.appendingPathComponent(".ready/runtime-initialized")
       let version = ctx.runtime.runtimeIdentity
+      try EngineInstaller.prepareForRuntimeChange(version, prefix: prefix)
+      // Project pure Wine PE32 builtins before wineboot. Renderer DLLs are selected
+      // afterwards, so switching engines can restore the matching pure originals.
+      try WindowsBuiltinBootstrap.prepare(runtime: ctx.runtime, prefix: prefix)
       if (try? String(contentsOf: marker, encoding: .utf8)) != version {
-        try EngineInstaller.prepareForRuntimeChange(version, prefix: prefix)
         try runInitializationStage(
           ctx, name: "Inizializzazione Wine", program: plan.executable,
           arguments: ["wineboot", "-u"])
