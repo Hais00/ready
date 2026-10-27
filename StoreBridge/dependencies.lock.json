@@ -1,0 +1,39 @@
+[
+  {
+    "name": "legendary",
+    "repository": "Heroic-Games-Launcher/legendary",
+    "ref": "0.20.43",
+    "source_url": "https://codeload.github.com/Heroic-Games-Launcher/legendary/tar.gz/0.20.43",
+    "source_sha256": "e41348ad06b804a0123178926d23fbf8b6da0f9ef6c2b407db1f6455ea545111"
+  },
+  {
+    "name": "gogdl",
+    "repository": "Heroic-Games-Launcher/heroic-gogdl",
+    "ref": "v1.3.1",
+    "source_url": "https://codeload.github.com/Heroic-Games-Launcher/heroic-gogdl/tar.gz/v1.3.1",
+    "source_sha256": "0f10501f090aff72ede268b2c766138900f5279800da6914d95d0d29327617e5"
+  },
+  {
+    "name": "nile",
+    "repository": "imLinguin/nile",
+    "ref": "v1.2.0",
+    "source_url": "https://codeload.github.com/imLinguin/nile/tar.gz/v1.2.0",
+    "source_sha256": "a06dd595248f0b4bf8fccf2b14a534391c94b810f725b6bbeaca92bc3ac2673d"
+  },
+  {
+    "name": "depotdownloader",
+    "repository": "SteamRE/DepotDownloader",
+    "ref": "DepotDownloader_3.4.0",
+    "source_url": "https://codeload.github.com/SteamRE/DepotDownloader/tar.gz/DepotDownloader_3.4.0",
+    "source_sha256": "2f09a0aaf003ee01fce44ec9acc0371441172e27d544eb7ccbe7974c01f47f42"
+  },
+  {
+    "name": "gogdl-xdelta",
+    "directory": "gogdl/xdelta3",
+    "repository": "jmacd/xdelta",
+    "ref": "0525275fe4b553a10f38e455d30c60dc6ed9b45d",
+    "source_url": "https://codeload.github.com/jmacd/xdelta/tar.gz/0525275fe4b553a10f38e455d30c60dc6ed9b45d",
+    "source_sha256": "3f636e59b01e12fde61355e6f555467e873f4f00e3edc1aa65ae530eda3df554",
+    "extraction_note": "Skipped absolute autotools helper symlinks; C source unchanged."
+  }
+]

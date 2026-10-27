@@ -1,0 +1,19 @@
+Ready StoreBridge original code is GPL-3.0-or-later.
+
+Protocol implementations were reconstructed from the publicly available GameNative
+source at eaa715cf38fddfea6f8d1278c7dd89c0bb50e063:
+https://github.com/utkarshdalal/GameNative
+GameNative is GPL-3.0, copyright its respective contributors. In particular,
+Amazon device-auth request structure, entitlement pagination, and public launcher
+identifiers follow service/amazon; Epic and GOG flows follow service/epic and
+service/gog. Closed GameNative libraries are neither used nor redistributed.
+
+SteamBridge uses SteamKit2 (LGPL-2.1-only; see the exact downloaded source).
+Download engines are separate open-source executables: Legendary (GPL-3.0),
+heroic-gogdl (GPL-3.0), Nile (GPL-3.0), DepotDownloader (GPL-2.0 or the license
+recorded in its pinned source). Their complete upstream sources, versions and
+archive hashes are obtained by Scripts/store_bootstrap.py. Each dependency's
+actual license is authoritative; no binary release is authorized by this notice.
+
+Storefront metadata only proves macOS availability, not Apple Silicon support.
+Mach-O inspection is mandatory before labelling a downloaded macOS build native.

@@ -1,0 +1,24 @@
+name: ready checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native launcher and domain invariants
+        run: |
+          swift build --product M1Launcher --jobs 2
+          swift run --jobs 2 ReadyCoreProbe
+      - name: Store protocol tests
+        run: python3 -m unittest discover -s Tests/StoreBridgeTests -v
+      - name: Overlay compile
+        run: |
+          sdk_major="$(xcrun --show-sdk-version | cut -d. -f1)"
+          if [ "$sdk_major" -ge 26 ]; then
+            sh Scripts/build_overlay.sh
+          else
+            echo "Metal 4 compile gate requires SDK 26+. Core/store checks still run; overlay is not validated on this runner."
+          fi
+      # Direct-to-display and Wine/GPTK require a real Apple Silicon display and locally provisioned runtimes.

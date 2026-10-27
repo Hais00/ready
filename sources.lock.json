@@ -1,0 +1,58 @@
+[
+  {
+    "name": "apple-homebrew",
+    "version": "main",
+    "url": "https://codeload.github.com/apple/homebrew-apple/tar.gz/main",
+    "sha256": "ba3fdbe5ed860dcb06292987f01f09c0dbafffe43396faa7e66d7b2bb9262f80",
+    "fetched_at": "2026-10-27T21:55:56.476652+00:00"
+  },
+  {
+    "name": "dxvk",
+    "version": "v3.1.1",
+    "url": "https://codeload.github.com/doitsujin/dxvk/tar.gz/v3.1.1",
+    "sha256": "ef4944134f6c39d0937f265391db2d08bca33cd3a2f0ee9133e1eb55f1cc657c",
+    "fetched_at": "2026-10-27T21:55:38.089385+00:00"
+  },
+  {
+    "name": "gptk-resources",
+    "version": "main",
+    "url": "https://codeload.github.com/apple/game-porting-toolkit/tar.gz/main",
+    "sha256": "f095feeb53cd0e3d2594c1dc35ae229fbe2f42ac6883616e016dc5730fa66bba",
+    "fetched_at": "2026-10-27T21:55:55.787645+00:00"
+  },
+  {
+    "name": "mesa",
+    "version": "26.3.0-rc2",
+    "url": "https://archive.mesa3d.org/mesa-26.3.0-rc2.tar.xz",
+    "sha256": "6b9154bc46ec73901555dbcb61600eb69607dc1da718a87e7a1c09a755bb1b6d",
+    "fetched_at": "2026-10-27T21:56:02.355399+00:00"
+  },
+  {
+    "name": "moltenvk",
+    "version": "v1.4.2",
+    "url": "https://codeload.github.com/KhronosGroup/MoltenVK/tar.gz/v1.4.2",
+    "sha256": "6864db532f1dbbdb621a8d0ec13f24edae318fd9269dd3dd0cdff791334bb1cb",
+    "fetched_at": "2026-10-27T21:55:34.824618+00:00"
+  },
+  {
+    "name": "steamkit",
+    "version": "3.5.1-Alpha.1",
+    "url": "https://codeload.github.com/SteamRE/SteamKit/tar.gz/3.5.1-Alpha.1",
+    "sha256": "6782a48ac96b21835783bab97023e0f7acfabb5f79daba10d96289cfa3c4cd53",
+    "fetched_at": "2026-10-27T21:55:50.228488+00:00"
+  },
+  {
+    "name": "vkd3d-proton",
+    "version": "v3.0.1",
+    "url": "https://codeload.github.com/HansKristian-Work/vkd3d-proton/tar.gz/v3.0.1",
+    "sha256": "3882a57dbd6e4f25424c46b0170ea17a1b639e74c12f84d1c37f156d99ff9a08",
+    "fetched_at": "2026-10-27T21:55:48.475908+00:00"
+  },
+  {
+    "name": "wine",
+    "version": "11.20",
+    "url": "https://dl.winehq.org/wine/source/11.x/wine-11.20.tar.xz",
+    "sha256": "eac8ca448f9c0087f963026b4dc276d1e2b7fbb64056edc093e59bbb7e56fe28",
+    "fetched_at": "2026-10-27T21:55:32.149674+00:00"
+  }
+]

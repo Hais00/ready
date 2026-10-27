@@ -1,0 +1,10 @@
+.build/
+Build/
+Vendor/
+Runtime/
+.DS_Store
+*.dmg
+*.partial
+Evidence/*
+!Evidence/README.md
+__pycache__/

@@ -1,0 +1,5 @@
+Dependencies/
+SteamBridge/bin/
+SteamBridge/obj/
+__pycache__/
+*.pyc
