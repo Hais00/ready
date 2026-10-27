@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/3Shain/dxmt",
+  "sourceCommit": "3b252590cb0290e36fca6f088b5255b871d2d95a",
+  "sourceArchiveURL": "https://codeload.github.com/3Shain/dxmt/tar.gz/3b252590cb0290e36fca6f088b5255b871d2d95a",
+  "sourceArchiveSHA256": "c098a89937f6faec94ff6c1f54b1b3b7f330ca9b37c78d1c50d749f4a10971e1",
+  "license": "LGPL-2.1-or-later",
+  "unmodifiedUpstream": true,
+  "ciRunID": 40488590746,
+  "artifactID": 12726786394,
+  "artifactName": "dxmt-3b252590cb0290e36fca6f088b5255b871d2d95a",
+  "artifactArchiveSHA256": "44a13648294d432898db1198788f0da2567cf25b194666ff6b7bd919926c2f73",
+  "artifactBytes": 34891986,
+  "artifactDigestVerified": true,
+  "artifactCreatedAt": "2026-10-27T10:31:29Z",
+  "payloadArchiveSHA256": "c9e111225685da2dd7e7ffb55ea4a0dba66a6267835693cdf24d7406223b2fbd",
+  "selectedPayloadFiles": {
+    "x86_64-unix/winemetal.so": "5ce6cae72505c647e4e94e147feb9a4cc7265c4423e66a548f7b09fdb2425188",
+    "x86_64-windows/d3d10core.dll": "56e8a2c0cc8fffc4ad099da1b22b7c0b11e94855c6578dc6811d591b552c1838",
+    "x86_64-windows/d3d11.dll": "3ad60e8cd76583c1a8472a7ff3875394fcbd6ce94a29f59af1f06e56cbde5649",
+    "x86_64-windows/dxgi.dll": "5477c759e6c9356545ffb6c45c87c306107f2316b910a40d9edce3abae1d2508",
+    "x86_64-windows/winemetal.dll": "8d6c48412743c7c0bfbe3153665d97ba2726179f6542ad72d02db191f67d3383",
+    "i386-windows/d3d10core.dll": "7cbabf131b52e944b6a6dc809122bd3017d6f3de4ab992fe50ee72c75dd5a272",
+    "i386-windows/d3d11.dll": "2ac4808b1b63dc501de6188f9b01ee1f324daf216b3438a22f84bce36ac5f28c",
+    "i386-windows/dxgi.dll": "5cedc7aa063a1ddc007293664624c2dd781e34293d797d5523a366b77f5143c8",
+    "i386-windows/winemetal.dll": "cd77b358cddc95ce80ed3cd3d12d8e63a9e39e85905f36d3d67ff6624381313e"
+  },
+  "excludedOptionalPayloads": [
+    "nvapi64.dll",
+    "nvngx.dll",
+    "aarch64-windows",
+    "aarch64-unix"
+  ],
+  "upstreamSubmodules": [
+    {
+      "path": "external/nvapi",
+      "commit": "d08488fcc82eef313b0464db37d2955709691e94"
+    },
+    {
+      "path": "include/native/directx",
+      "commit": "9df86f2341616ef1888ae59919feaa6d4fad693d",
+      "archiveURL": "https://codeload.github.com/misyltoad/mingw-directx-headers/tar.gz/9df86f2341616ef1888ae59919feaa6d4fad693d",
+      "archiveSHA256": "9c1b8bbfd2d6c758fac4d93c2808a46bc1eee429fe656b4f21b29e02615aa8aa"
+    }
+  ],
+  "buildLLVM": {
+    "repository": "https://github.com/llvm/llvm-project",
+    "ref": "llvmorg-15.0.7",
+    "license": "Apache-2.0 WITH LLVM-exception",
+    "requiredForSourceBuild": true,
+    "installedByReady": false
+  },
+  "upstreamCIWineVersion": "v8.16-3shain",
+  "runtimeWineVersionVerified": "11.20"
+}

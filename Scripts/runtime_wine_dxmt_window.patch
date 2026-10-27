@@ -1,0 +1,137 @@
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -35,6 +35,9 @@
+ 
+ static pthread_mutex_t win_data_mutex;
+ static CFMutableDictionaryRef win_datas;
++static void ready_dxmt_update_view(struct macdrv_win_data *data);
++static void ready_dxmt_dispose_view(struct macdrv_win_data *data);
++
+ 
+ static unsigned int activate_on_focus_time;
+ 
+@@ -745,6 +748,7 @@
+  */
+ static void sync_window_position(struct macdrv_win_data *data, UINT swp_flags, const struct window_rects *old_rects)
+ {
++    ready_dxmt_update_view(data);
+     CGRect frame = cgrect_from_rect(data->rects.visible);
+ 
+     if (data->cocoa_window)
+@@ -1265,6 +1269,7 @@
+ 
+     if (data->drag_event) NtSetEvent(data->drag_event, NULL);
+ 
++    ready_dxmt_dispose_view(data);
+     destroy_cocoa_window(data);
+ 
+     CFDictionaryRemoveValue(win_datas, hwnd);
+@@ -2208,3 +2213,108 @@
+     pthread_mutex_init(&win_data_mutex, &attr);
+     pthread_mutexattr_destroy(&attr);
+ }
++
++
++struct ready_dxmt_win_data
++{
++    HWND hwnd;
++    WineWindow *cocoa_window;
++    WineContentView *cocoa_view;
++    WineContentView *client_cocoa_view;
++};
++
++static CFMutableDictionaryRef ready_dxmt_views;
++static __thread struct ready_dxmt_win_data ready_dxmt_legacy;
++static __thread struct macdrv_win_data *ready_dxmt_locked;
++
++static struct ready_dxmt_win_data *ready_dxmt_get_win_data(HWND hwnd)
++{
++    struct macdrv_win_data *data = get_win_data(hwnd);
++    ready_dxmt_locked = data;
++    if (!data) return NULL;
++    ready_dxmt_legacy.hwnd = hwnd;
++    ready_dxmt_legacy.cocoa_window = data ? data->cocoa_window : NULL;
++    ready_dxmt_legacy.cocoa_view = NULL;
++    ready_dxmt_legacy.client_cocoa_view = NULL;
++    if (data && !data->client_view && data->cocoa_window)
++    {
++        WineContentView *view = macdrv_create_view(cgrect_from_rect(data->rects.client));
++        if (!ready_dxmt_views) ready_dxmt_views = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
++        if (!view || !ready_dxmt_views)
++        {
++            if (view) macdrv_dispose_view(view);
++            release_win_data(data);
++            ready_dxmt_locked = NULL;
++            return NULL;
++        }
++        CFDictionarySetValue(ready_dxmt_views, hwnd, view);
++        macdrv_set_view_superview(view, NULL, data->cocoa_window, NULL, NULL);
++        macdrv_set_view_hidden(view, FALSE);
++        data->client_view = view;
++    }
++    if (data)
++    {
++        ready_dxmt_legacy.cocoa_view = data->client_view;
++        ready_dxmt_legacy.client_cocoa_view = data->client_view;
++    }
++    return &ready_dxmt_legacy;
++}
++
++static void ready_dxmt_release_win_data(struct ready_dxmt_win_data *legacy)
++{
++    struct macdrv_win_data *data = ready_dxmt_locked;
++    if (legacy != &ready_dxmt_legacy) return;
++    ready_dxmt_locked = NULL;
++    release_win_data(data);
++}
++
++static WineWindow *ready_dxmt_get_cocoa_window(HWND hwnd, BOOL require_on_screen)
++{
++    return macdrv_get_cocoa_window(hwnd, require_on_screen != FALSE);
++}
++
++static void ready_dxmt_update_view(struct macdrv_win_data *data)
++{
++    WineContentView *view;
++    if (!ready_dxmt_views || !(view = (WineContentView *)CFDictionaryGetValue(ready_dxmt_views, data->hwnd))) return;
++    macdrv_set_view_frame(view, cgrect_from_rect(data->rects.client));
++    macdrv_set_view_superview(view, NULL, data->cocoa_window, NULL, NULL);
++}
++
++static void ready_dxmt_dispose_view(struct macdrv_win_data *data)
++{
++    WineContentView *view;
++    if (!ready_dxmt_views || !(view = (WineContentView *)CFDictionaryGetValue(ready_dxmt_views, data->hwnd))) return;
++    CFDictionaryRemoveValue(ready_dxmt_views, data->hwnd);
++    if (data->client_view == view) data->client_view = NULL;
++    macdrv_dispose_view(view);
++}
++
++struct ready_dxmt_functions
++{
++    void (*unused_init_display_devices)(BOOL);
++    struct ready_dxmt_win_data *(*get_win_data)(HWND);
++    void (*release_win_data)(struct ready_dxmt_win_data *);
++    WineWindow *(*get_cocoa_window)(HWND, BOOL);
++    MTLDevice_id (*create_metal_device)(void);
++    void (*release_metal_device)(MTLDevice_id);
++    WineMetalView *(*create_metal_view)(WineContentView *, MTLDevice_id);
++    CAMetalLayer *(*get_metal_layer)(WineMetalView *);
++    void (*release_metal_view)(WineMetalView *);
++    void *unused_on_main_thread;
++};
++
++__attribute__((visibility("default")))
++const struct ready_dxmt_functions macdrv_functions =
++{
++    NULL,
++    ready_dxmt_get_win_data,
++    ready_dxmt_release_win_data,
++    ready_dxmt_get_cocoa_window,
++    macdrv_create_metal_device,
++    macdrv_release_metal_device,
++    macdrv_view_create_metal_view,
++    macdrv_view_get_metal_layer,
++    macdrv_view_release_metal_view,
++    NULL
++};

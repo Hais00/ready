@@ -1,8 +1,9 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* SPDX-License-Identifier: GPL-3.0-only */
 #include <stdint.h>
 #include <stddef.h>
 typedef uint32_t DWORD; typedef int32_t HRESULT; typedef uint16_t WCHAR;
 typedef void *HANDLE; typedef void *HMODULE;
+int _fltused=0;
 typedef struct { uint32_t d1; uint16_t d2,d3; uint8_t d4[8]; } GUID;
 typedef struct IUnknown IUnknown;
 struct IUnknown { void **vtable; };
@@ -47,6 +48,36 @@ static void hex(HRESULT value) { char b[11]="0x00000000";const char *digits="012
 static int contains(const WCHAR *s,const WCHAR *needle) {for(;*s;s++){unsigned i=0;while(needle[i]&&s[i]==needle[i])i++;if(!needle[i])return 1;}return 0;}
 
 void mainCRTStartup(void) {
+    if(contains(GetCommandLineW(),L"dx9")) {
+        HMODULE module=LoadLibraryW(L"d3d9.dll"),user=LoadLibraryW(L"user32.dll");
+        if(!module||!user){out("{\"api\":\"dx9\",\"deviceCreated\":false}\n");ExitProcess(2);}
+        typedef IUnknown *(WINAPI *Create9)(uint32_t);typedef void *(WINAPI *Desktop)(void);
+        Create9 create=(Create9)GetProcAddress(module,"Direct3DCreate9");Desktop desktop=(Desktop)GetProcAddress(user,"GetDesktopWindow");
+        IUnknown *api=create?create(32):NULL,*device=NULL,*back=NULL,*staging=NULL;
+        struct Present {uint32_t w,h,format,count,multi,quality,swap;void *window;int windowed,depth;uint32_t depthFormat,flags,refresh,interval;} params={64,64,0,1,0,0,1,NULL,1,0,0,0,0,0};
+        if(desktop)params.window=desktop();
+        typedef HRESULT (WINAPI *CreateDevice)(IUnknown *,uint32_t,uint32_t,void *,uint32_t,void *,IUnknown **);
+        HRESULT hr=api?((CreateDevice)api->vtable[16])(api,0,1,params.window,0x20,&params,&device):(HRESULT)0x80004005;
+        int readback=0;
+        if(SUCCEEDED(hr)) {
+            typedef HRESULT (WINAPI *Clear)(IUnknown *,uint32_t,void *,uint32_t,uint32_t,float,uint32_t);
+            typedef HRESULT (WINAPI *BackBuffer)(IUnknown *,uint32_t,uint32_t,uint32_t,IUnknown **);
+            typedef HRESULT (WINAPI *CreateSurface)(IUnknown *,uint32_t,uint32_t,uint32_t,uint32_t,IUnknown **,void *);
+            typedef HRESULT (WINAPI *CopySurface)(IUnknown *,IUnknown *,IUnknown *);
+            HRESULT c=((Clear)device->vtable[43])(device,0,NULL,1,0xff3366ccu,1.0f,0);
+            if(SUCCEEDED(c))c=((BackBuffer)device->vtable[18])(device,0,0,0,&back);
+            if(SUCCEEDED(c))c=((CreateSurface)device->vtable[36])(device,64,64,21,2,&staging,NULL);
+            if(SUCCEEDED(c))c=((CopySurface)device->vtable[32])(device,back,staging);
+            if(SUCCEEDED(c)) {
+                struct Locked {int pitch;void *bits;} locked;
+                typedef HRESULT (WINAPI *Lock)(IUnknown *,void *,void *,uint32_t);typedef HRESULT (WINAPI *Unlock)(IUnknown *);
+                c=((Lock)staging->vtable[13])(staging,&locked,NULL,0x10);
+                if(SUCCEEDED(c)){readback=((uint32_t *)locked.bits)[0]==0xff3366ccu;((Unlock)staging->vtable[14])(staging);}
+            }
+        }
+        out("{\"api\":\"dx9\",\"hresult\":\"");hex(hr);out("\",\"deviceCreated\":");out(SUCCEEDED(hr)?"true":"false");out(",\"gpuBufferReadbackVerified\":");out(readback?"true":"false");out("}\n");
+        release(staging);release(back);release(device);release(api);FreeLibrary(module);FreeLibrary(user);ExitProcess(SUCCEEDED(hr)&&readback?0:3);
+    }
     if(contains(GetCommandLineW(),L"dx12")) {
         HMODULE module=LoadLibraryW(L"d3d12.dll");
         if(!module){out("{\"api\":\"dx12\",\"deviceCreated\":false,\"reason\":\"LoadLibrary failed\"}\n");ExitProcess(2);}
@@ -70,7 +101,7 @@ void mainCRTStartup(void) {
         out("{\"api\":\"dx11\",\"hresult\":\"");hex(hr);out("\",\"featureLevel\":\"");hex((HRESULT)level);out("\",\"deviceCreated\":");out(SUCCEEDED(hr)?"true":"false");out(",\"gpuBufferReadbackVerified\":");out(readback?"true":"false");out("}\n");
         release(context);release(device);FreeLibrary(module);ExitProcess(SUCCEEDED(hr)&&readback?0:3);
     }
-    out("{\"api\":\"win32\",\"pointerBits\":64,\"processId\":");
+    out("{\"api\":\"win32\",\"pointerBits\":");out(sizeof(void*)==8?"64":"32");out(",\"processId\":");
     DWORD pid=GetCurrentProcessId();char b[12];int i=0;do{b[i++]=(char)('0'+pid%10);pid/=10;}while(pid);for(int j=i-1;j>=0;j--){char c[2]={b[j],0};out(c);}out("}\n");
     ExitProcess(0);
 }

@@ -1,0 +1,12 @@
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -2914,6 +2914,9 @@
+     sysarch( X86_64_SET_GSBASE, &teb );
+ #elif defined (__APPLE__)
+     thread_data->pthread_teb = mac_thread_gsbase();
++    /* Explicit legacy TLS-base field used by the public WineCX bridge ABI. */
++    C_ASSERT(FIELD_OFFSET(TEB, SavedPriorityState) == 0x1768);
++    teb->SavedPriorityState = thread_data->pthread_teb;
+ #else
+ # error Please define setting %gs for your architecture
+ #endif

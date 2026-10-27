@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-only
 import contextlib, hashlib, importlib.util, io, json, pathlib, plistlib, struct, subprocess, sys, tempfile, time, unittest, urllib.parse, zlib
 from unittest.mock import patch
 ROOT=pathlib.Path(__file__).resolve().parents[2]
@@ -84,6 +84,21 @@ class ArchitectureTests(unittest.TestCase):
             with self.assertRaises(bridge.BridgeError):bridge.inspect_native(f.name)
 
 class DownloadTests(unittest.TestCase):
+    def test_download_result_exposes_validated_metadata_variant(self):
+        with tempfile.TemporaryDirectory() as directory:
+            d=pathlib.Path(directory).resolve();config=d/'profile';config.mkdir();tool=d/'venv/bin/python';tool.parent.mkdir(parents=True)
+            script='''import json,os,pathlib,struct,sys
+args=sys.argv[1:];root=pathlib.Path(args[args.index('--base-path')+1])/args[args.index('--game-folder')+1];root.mkdir()
+head=bytearray(0x86);head[:2]=b'MZ';struct.pack_into('<I',head,0x3c,0x80);head[0x80:0x84]=b'PE\\0\\0';struct.pack_into('<H',head,0x84,0x8664);(root/'Actual.exe').write_bytes(head)
+cfg=pathlib.Path(os.environ['LEGENDARY_CONFIG_PATH']);auth=json.loads((cfg/'user.json').read_text());assert auth['access_token']=='private-token';assert (cfg/'user.json').stat().st_mode&0o777==0o600
+(cfg/'installed.json').write_text(json.dumps({'app':{'install_path':str(root),'executable':'Actual.exe','launch_parameters':'--title "a b"','needs_verification':False}}))
+print('sensitive unfiltered source log: private-token');print('100%')
+'''
+            tool.write_text('#!'+sys.executable+'\n'+script);tool.chmod(0o700)
+            r={'operation':'download','store':'epic','profileID':PROFILE,'credentials':{'access_token':'private-token'},'options':{'gameID':'app','platform':'windows','installDir':str(d/'Game')}}
+            out=io.StringIO()
+            with patch.object(backend,'TOOLS',d),patch.object(backend,'profile_config',return_value=config),contextlib.redirect_stdout(out):result=backend.download(r)
+            self.assertEqual(result['installedVariant']['executable'],str(d/'Game/Actual.exe'));self.assertEqual(result['installedVariant']['arguments'],['--title','a b']);self.assertFalse(result['launchSelectionRequired']);self.assertFalse(result['executionVerified']);self.assertNotIn('private-token',out.getvalue());self.assertFalse(list(config.rglob('user.json')))
     def test_steam_completion_rejects_incomplete_manifest_marker(self):
         with tempfile.TemporaryDirectory() as d:
             p=pathlib.Path(d);(p/'.DepotDownloader').mkdir()

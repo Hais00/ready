@@ -1,6 +1,6 @@
 # Ready in-process Metal overlay
 
-Original GPL-3.0-or-later source: `Overlay/ReadyOverlay.m` and `Overlay/ReadyOverlay.h`.
+Original GPL-3.0-only source: `Overlay/ReadyOverlay.m` and `Overlay/ReadyOverlay.h`.
 The build links only macOS system frameworks. It does not embed or patch D3DMetal,
 GameNative's closed helpers, or Valve binaries.
 
@@ -115,17 +115,47 @@ slices. The tests run native arm64 and x86_64 through Rosetta on the actual M1:
 Evidence lives in `Evidence/overlay-*.json` and PNGs. Timings are diagnostics of a
 synchronized synthetic probe, **not gaming performance benchmarks**.
 
-For a framebuffer-only fullscreen-eligible probe, run `ReadyMetalProbe` with the same
-injection environment and `--metal4 --fullscreen --presentation-probe`. Optional Metal
-HUD variables are `MTL_HUD_ENABLED=1 MTL_HUD_LOG_ENABLED=1`. The initial fullscreen
-probe passed, but its logs did not provide authoritative present-mode evidence.
+The real Windows Vulkan swapchain probe also passes through ReadySessionHost →
+ready-wine → Wine 11.20 → KosmicKrisp → Metal → injected overlay. Run:
+
+```sh
+python3 Scripts/test_wine_overlay.py --exe Runtime/Probes/runtime_vulkan_present.exe
+```
+
+The test creates a private temporary prefix, initializes it under the native keeper,
+checks the game PID's actual presentation counters while hidden/shown/hidden, then
+waits for the exact prefix and removes its temporary files. On the tested M1 runtime,
+tracked overlay texture bytes change 0 → 835,584 → 0. Evidence is
+`Evidence/overlay-wine-present.json`. This verifies that Windows Vulkan path; it does
+not establish arbitrary game or Direct3D backend compatibility.
+
+For a framebuffer-only fullscreen probe, run
+`Build/ReadyMetalProbe.app/Contents/MacOS/ReadyMetalProbe` with the injection environment
+and `--metal4 --fullscreen --presentation-probe --session-probe`. The app bundle enables
+native fullscreen and Game Mode; presentation-only draws at the view's backing-pixel
+size, while readback tests retain their fixed diagnostic resolution. Optional Metal HUD
+variables are `MTL_HUD_ENABLED=1 MTL_HUD_LOG_ENABLED=1`.
+
+On 2026-10-28, the actual Metal HUD on Apple M1/macOS 27.0 showed **Composited** for
+both hidden and shown overlay states at 3360×2100, with Game Mode on and a full-screen,
+opaque, framebuffer-only Metal layer. `Evidence/overlay-native-hud-observation.json`
+records the observation and geometry. `Scripts/test_overlay_presentation.py` additionally
+records actual AppKit activity, key/main window status, frontmost PID, occlusion
+visibility, and all window/view/layer/display dimensions. In the follow-up observation
+the probe was active, key, main, frontmost, and visible, with opaque view/window/layer
+and `presentsWithTransaction=NO`; the shown HUD remained Composited. The baseline
+was already composited; this test
+neither proves direct presentation nor identifies why composition was active. A
+PID-scoped `metalperftrace listen` trace provided timings but no composition-mode field
+in its observed JSON output. No system-wide capture or security settings were changed.
 
 ## Remaining limits
 
 - Direct-to-display with the overlay visible must be verified with the Metal HUD or
   Instruments for each real backend. A fullscreen probe passing is not sufficient.
-- Real Wine, DXVK/MoltenVK, KosmicKrisp, and GPTK/D3DMetal game processes still need
-  end-to-end testing. The small synthetic hosts establish the Metal contracts only.
+- DXVK/MoltenVK and GPTK/D3DMetal game processes still need end-to-end testing.
+  The successful Wine/KosmicKrisp Windows Vulkan probe establishes one real backend
+  path, alongside the synthetic Metal contract tests.
 - Hardened-runtime/library-validation restrictions may reject dynamic injection.
   Do not disable SIP or alter third-party code signatures to claim compatibility.
 - Games acquiring drawables exclusively through other APIs such as an internal

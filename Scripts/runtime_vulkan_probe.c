@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* SPDX-License-Identifier: GPL-3.0-only */
 /* Exercise a real ICD, device, queue, GPU transfer, and host-visible readback. */
 #include <vulkan/vulkan.h>
 #if defined(_WIN32)

@@ -2,7 +2,7 @@
 
 Free, open-source native macOS game launcher for Apple Silicon. **Work in progress**, not yet a finished replacement for Steam or a production-ready game compatibility package.
 
-Repository: https://github.com/Hais00/ready (currently private). Our code is **GPL-3.0-or-later**; see [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).
+Repository: https://github.com/Hais00/ready (currently private). Our code is **GPL-3.0-only**; see [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Design
 
@@ -37,7 +37,7 @@ swift run M1Launcher --preview Evidence/ready-preview.png
 swift run M1Launcher --graphics-self-test
 ```
 
-The standalone app is generated at `Build/ready.app`. Development currently expects `READY_PROJECT_ROOT` to point to this source directory when launched elsewhere; self-contained packaging is still an open gate.
+The app is generated at `Build/ready.app`. This development bundle records the source directory in its resources, so Finder launch can find the local runtime and helpers. `READY_PROJECT_ROOT` can override it. Moving the project requires rebuilding the bundle; self-contained release packaging is still an open gate.
 
 ## Sources and runtimes
 
@@ -47,8 +47,10 @@ python3 Scripts/fetch_sources.py
 
 Public upstream sources go into ignored `Vendor/`, pinned in `sources.lock.json`. Store helper source acquisition/build scripts and locks live in `StoreBridge/` and `Scripts/`. Build/download intermediates can be cleaned only inside this project after preserving installed runtimes and provenance.
 
-Apple D3DMetal/GPTK evaluation libraries are **proprietary optional local inputs**, excluded from the open-source distribution. Their beta license permits certain non-commercial distribution; that does not make them open source or license them under our GPL. The open rendering path is Wine + DXVK/VKD3D + Vulkan + KosmicKrisp/MoltenVK, subject to actual per-engine compatibility tests.
+Apple D3DMetal/GPTK evaluation libraries are **proprietary optional local inputs**, excluded from the open-source distribution. Their beta license permits certain non-commercial distribution; that does not make them open source or license them under our GPL. The working open DX11 path tested here is Wine + [DXMT](Docs/DXMT.md). Wine + Vulkan + KosmicKrisp/MoltenVK also passes Vulkan presentation probes. Current DXVK/VKD3D device-creation failures are documented in [runtime validation](Docs/RUNTIME.md); those paths are not enabled automatically as verified DX11/DX12 engines.
 
 ## Verified so far / still open
 
-Actual Metal overlay rendering has passed ARM64 and x64/Rosetta synthetic paths. Prefix/data-isolation and protocol tests also pass. These do not prove a commercial game works, its anti-cheat accepts Wine, an account login is successful, or macOS selects direct display. Runtime interoperability, real store entitlement/download flows, injected input suppression, physical-controller behavior, native app save isolation, and real game validation remain explicitly open. Nothing is published as a completed product yet.
+The [sanitized checkpoint](Validation/checkpoint.json) records 18 domain checks, store protocol tests, real process/session coordination, and real Wine registry/folder API checks across game/profile prefixes. Actual Metal overlay rendering passes six ARM64/x64 paths and a Windows Vulkan → Wine → KosmicKrisp path. The launcher releases its canvas texture during play; a local Metal allocation measurement falls from about 47 MB to 0.74 MB.
+
+These probes do not prove a commercial game works, its anti-cheat accepts Wine, or a real account login/download succeeds. The tested fullscreen baseline and injected overlay both show **Composited** in the Metal HUD; direct display remains unverified. Apple DX12 interoperability, physical-controller behavior, input suppression, native app save isolation, complete release packaging and real game/migration validation remain open. Nothing is published as a completed product yet.

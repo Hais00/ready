@@ -4,18 +4,18 @@ The goal remains the complete native macOS launcher requested by the user. No ga
 
 | Requirement | Required evidence | Current state |
 | --- | --- | --- |
-| Latest Wine development/beta sources and usable runtime | pinned source hash; wine --version; Windows synthetic executables | pending |
-| Latest Apple GPTK beta | authenticated download, version, working DX11/DX12 probes | 4.0 beta 3 downloaded; not integrated |
-| Latest Vulkan-to-Metal renderer | Mesa/KosmicKrisp source; Vulkan runtime/device probe; presentation test | installed Mesa 26.2.4 and MoltenVK 1.4.2 discovered; latest source pending |
-| Reference UX | native app screenshot compared with attachment; controller focus navigation | pending |
-| Minimal graphics memory during play | frontend texture/drawable teardown; measured before/during/after | pending |
-| Fullscreen presentation | opaque CAMetalLayer; Metal HUD direct mode evidence for each engine | pending; never infer direct mode from fullscreen alone |
-| Steam/Epic/GOG/Amazon login, library, download, launch | real adapters and authorized account flows; synthetic transport tests; real authorized smoke tests | GameNative sources available; implementation pending |
-| Native Apple Silicon vs Windows install choice | per-build availability and Mach-O architecture verification; unknown differs from unsupported | pending |
-| Multiple launcher users | isolated account tokens and saves; switching blocked during shared-prefix session | pending |
-| Prefix per Windows game/profile (supersedes original single-prefix requirement) | independent registry/AppData/DLL state; per-prefix leases; central versioned engines; persistent Documents/Saved Games; non-destructive legacy migration | domain probes pass; Windows integration still pending |
-| In-process overlay without a second compositor surface | injected Metal render pass; real attach; resume/quit; memory and direct mode measurements | pending |
-| Controller + keyboard/mouse | synthetic input plus real device evidence when available | pending |
+| Latest Wine development/beta sources and usable runtime | pinned source hash; wine --version; Windows synthetic executables | Wine 11.20 built from source; real PE64 probes pass; PE32 still under validation |
+| Latest Apple GPTK beta | authenticated download, version, working DX11/DX12 probes | 4.0 beta 3 downloaded; DLL/framework loading investigated; genuine DX12 device/rendering not verified |
+| Latest Vulkan-to-Metal renderer | Mesa/KosmicKrisp source; Vulkan runtime/device probe; presentation test | Mesa/KosmicKrisp 26.3.0-rc2 and MoltenVK 1.4.2 installed/versioned; ARM64/x64 buffer and Wine presentation probes pass |
+| Reference UX | native app screenshot compared with attachment; controller focus navigation | native Metal UI rendered and visually checked; physical-controller validation open |
+| Minimal graphics memory during play | frontend texture/drawable teardown; measured before/during/after | canvas texture 15,078,400 → 0 bytes; process Metal allocation about 47 MB → 0.74 MB in local probe |
+| Fullscreen presentation | opaque CAMetalLayer; Metal HUD direct mode evidence for each engine | fullscreen, focus and opacity verified; HUD reports Composited in both baseline and overlay; direct mode unverified |
+| Steam/Epic/GOG/Amazon login, library, download, launch | real adapters and authorized account flows; synthetic transport tests; real authorized smoke tests | real adapters/source-built helpers and protocol tests; authorized account/entitlement/game smoke tests pending |
+| Native Apple Silicon vs Windows install choice | per-build availability and Mach-O architecture verification; unknown differs from unsupported | implemented manifest-based resolution and Mach-O/PE inspection; real store downloads pending |
+| Multiple launcher users | isolated account tokens, registry/AppData/saves and per-prefix session coordination | profile-scoped Keychain and game/profile data paths implemented; actual account flows pending |
+| Prefix per Windows game/profile (supersedes original single-prefix requirement) | independent registry/AppData/DLL state; per-prefix leases; central versioned engines; persistent Documents/Saved Games; non-destructive legacy migration | domain checks and real Wine Windows registry/folder/recreation probes pass; real game and legacy-data validation pending |
+| In-process overlay without a second compositor surface | injected Metal render pass; real attach; resume/quit; memory and direct mode measurements | six native GPU paths plus real Wine Vulkan path pass; hidden overlay texture 0 bytes; direct display unverified |
+| Controller + keyboard/mouse | synthetic input plus real device evidence when available | keyboard/mouse synthetic probes pass; physical controller and game input suppression open |
 
 Prefix/profile isolation concerns launcher profiles inside one macOS login. Native macOS apps do not require Wine. Different macOS OS accounts and adversarial sandboxing require a separate permissions design. No unrequested changes to system security, other projects, or user files.
 

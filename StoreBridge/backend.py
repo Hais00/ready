@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-only
 """Open download engines isolated from the app. No credentials in process arguments."""
 import contextlib, fcntl, json, os, pathlib, re, shutil, signal, subprocess, sys, tempfile, time, zlib
 from bridge import BridgeError, ROOT, emit, require, PUBLIC_CLIENT_IDS, inspect_native
@@ -124,19 +124,6 @@ def completion_proof(request,config,secret_dir,path):
         return any(str(e.get('id'))==gid and pathlib.Path(e.get('path','')).resolve()==path.resolve() for e in ledger)
     except (OSError,ValueError,TypeError):return False
 
-def installed_variants(path,platform):
-    output=[]
-    if not path.exists():return output
-    for item in path.rglob('*'):
-        if len(output)>=40:break
-        if platform=='macOS' and item.suffix=='.app':
-            try:
-                info=inspect_native(str(item));output.append({'id':'mac:'+item.name,'platform':'macOS','architecture':info['architecture'],'executable':info['path'],'arguments':[],'installed':True,'verification':info['verification']})
-            except BridgeError:continue
-        elif platform=='windows' and item.suffix.lower()=='.exe' and not any(v in item.name.lower() for v in ('unins','redist','setup','crashreport')):
-            output.append({'id':'win:'+item.name,'platform':'windows','architecture':'unknown','executable':str(item),'arguments':[],'installed':True,'verification':'Executable candidate; choose the game launch configuration'})
-    return output
-
 def download(request):
     config=profile_config(request);creds=request.get('credentials',{})
     with (config/'operation.lock').open('a') as lock:
@@ -163,11 +150,12 @@ def download(request):
                 if code:raise BridgeError('download_failed','The store download engine failed; the partial download can be resumed')
                 epic_config=secret_dir/'legendary-config'
                 if request['store']=='epic' and (epic_config/'user.json').exists():refreshed=json.loads((epic_config/'user.json').read_text())
-                variants=installed_variants(path,request.get('options',{}).get('platform','windows'))
                 if not path.exists() or not any(path.iterdir()):raise BridgeError('download_incomplete','The engine exited without installing game content')
                 if not completion_proof(request,config,secret_dir,path):raise BridgeError('download_incomplete','The store engine did not record a completed installation')
+                from launch_resolver import resolve_installed_launch
+                resolved=resolve_installed_launch(request,config,secret_dir,path)
                 emit('progress',phase='download',fraction=1.0)
-                return {'installDir':str(path),'variants':variants,'credentials':refreshed or creds,'launchSelectionRequired':len(variants)!=1,'downloadComplete':True,'executionVerified':False}
+                return {'installDir':str(path),'variants':resolved['launchCandidates'],'credentials':refreshed or creds,'downloadComplete':True,'executionVerified':False,**resolved}
             finally:
                 if p is not None and p.poll() is None:
                     with contextlib.suppress(ProcessLookupError):os.killpg(p.pid,signal.SIGTERM)

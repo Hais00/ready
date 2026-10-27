@@ -1,6 +1,6 @@
 # Third-party notices
 
-ready's original code is GPL-3.0-or-later. Copyright 2026 ready contributors.
+ready's original code is GPL-3.0-only. Copyright 2026 ready contributors.
 
 GameNative, copyright its contributors, GPL-3.0: https://github.com/utkarshdalal/GameNative, revision `eaa715cf38fddfea6f8d1278c7dd89c0bb50e063`, is the architectural reference for store authentication, depots and launch coordination. The public source clone remains at `../GameNative`. Closed GameNative helpers are not included or reconstructed from binaries.
 

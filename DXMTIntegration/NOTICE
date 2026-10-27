@@ -1,0 +1,29 @@
+Ready DXMT integration
+
+Scripts/dxmt_experiment.py and DXMTIntegration/dxmt_shader_probe.c are original
+Ready integration/test code, licensed GPL-3.0-only. They are not contributions
+to the upstream DXMT project.
+
+DXMTIntegration/Source is an unmodified source snapshot of DXMT, commit
+3b252590cb0290e36fca6f088b5255b871d2d95a, by Feifan He / CodeWeavers and
+other upstream contributors. Its current license is LGPL-2.1-or-later.
+See Source/LICENSE, Source/COPYING.LIB, retained LICENSE.OLD, and individual
+file notices. The earlier v0.80 release used the MIT license; do not confuse
+that release license with this development snapshot's license.
+
+The upstream gitlinked include/native/directx dependency is materialized
+unchanged at commit 9df86f2341616ef1888ae59919feaa6d4fad693d from
+misyltoad/mingw-directx-headers (Wine/MinGW-w64 LGPL-2.1-or-later headers).
+See its README.md, COPYING.MinGW-w64.txt, and per-file notices.
+
+DXVK-derived utility notices remain in Source/src/util/dxvk.LICENSE (zlib).
+LLVM 15.0.7 is a source-build dependency under Apache-2.0 WITH LLVM-exception;
+its source/runtime licensing is separate. Wine is LGPL-2.1-or-later.
+
+Optional NVIDIA NVAPI/NVNGX DLLs in the official upstream CI package are not
+installed by this integration. The external/nvapi gitlink is recorded but
+not fetched. No proprietary Apple GPTK/D3DMetal runtime is used by the DXMT
+probe. macOS/Metal are OS dependencies.
+
+Upstream AGENTS.md prohibits AI-generated code contributions to DXMT.
+No DXMT source was edited and no upstream contribution was prepared.

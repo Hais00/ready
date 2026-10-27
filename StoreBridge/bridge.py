@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-only
 """Ready store protocol bridge. One JSON request on stdin; JSONL events on stdout.
 
 Credentials and auth state are IPC-only. No credential files are persisted by the

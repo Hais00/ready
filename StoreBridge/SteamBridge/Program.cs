@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 // SteamKit usage follows the upstream LGPL authentication samples. No Valve client binaries.
 using System.Text.Json;
 using SteamKit2;
@@ -75,7 +75,7 @@ static class Program
                             var normalized=platform=="macos" ? "macOS":"windows";
                             variants.Add(new {id=normalized,platform=normalized,architecture="unknown",installed=false,arguments=Array.Empty<string>(),verification="Steam platform metadata; inspect local binary to confirm Apple Silicon"});
                         }
-                        var launch=app.KeyValues["config"]["launch"].Children.Select(k=>new {executable=k["executable"].Value,arguments=k["arguments"].Value,oslist=k["config"]["oslist"].Value}).ToArray();
+                        var launch=app.KeyValues["config"]["launch"].Children.Select(k=>new {executable=k["executable"].Value,arguments=k["arguments"].Value,workingdir=k["workingdir"].Value,@type=k["type"].Value,description=k["description"].Value,oslist=k["config"]["oslist"].Value,osarch=k["config"]["osarch"].Value}).ToArray();
                         games.Add(new {id="steam:"+app.ID,store="steam",storeID=app.ID.ToString(),title=common["name"].Value ?? app.ID.ToString(),artworkURL=$"https://cdn.cloudflare.steamstatic.com/steam/apps/{app.ID}/library_600x900.jpg",variants,engine="automatic",saveRules=Array.Empty<object>(),metadata=new {launch}});
                     }
                     Emit(new {type="progress",phase="library",completed=games.Count});

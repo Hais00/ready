@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 // Original Ready implementation. Hooks only documented Objective-C Metal/AppKit methods.
 #import <AppKit/AppKit.h>
 #import <Metal/Metal.h>

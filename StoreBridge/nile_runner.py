@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-only
 """Adapt Keychain credentials to Nile's open config API; encrypted temporary user store."""
 import contextlib,hashlib,json,os,pathlib,sys,time
 from nile.utils.config import Config,ConfigType

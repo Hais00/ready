@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-only
 """Local reproducible runtime builds; no system install and no security-policy changes."""
 import argparse
 import os
@@ -50,6 +50,11 @@ def configure_wine():
     env["GNUTLS_LIBS"] = f"-L{base} -lgnutls"
     env["FREETYPE_CFLAGS"] = f"-I{freetype_headers[-1]}"
     env["FREETYPE_LIBS"] = f"-L{base} -lfreetype"
+    # Community dependency dylibs use bare LC_ID_DYLIB names. Wine's otool
+    # parser otherwise captures the trailing '(compatibility version ...)' text.
+    env["ac_cv_lib_soname_freetype"]="libfreetype.6.dylib"
+    env["ac_cv_lib_soname_gnutls"]="libgnutls.30.dylib"
+    env["ac_cv_lib_soname_vulkan"]="libvulkan.1.dylib"
     options = ["../../Vendor/wine/configure", f"--prefix={SHORT}/Runtime/wine-11.20",
         "--host=x86_64-apple-darwin", "--build=x86_64-apple-darwin", "--enable-win64",
         "--enable-archs=x86_64,i386", "--disable-tests", "--with-vulkan", "--with-gnutls", "--with-freetype",
@@ -65,8 +70,17 @@ def build_wine(jobs):
     env["DYLD_LIBRARY_PATH"]=str(SHORT/"Runtime/wine-deps/lib")+":"+str(SHORT/"Runtime/vulkan-sdk-1.4.366/lib")
     env["DYLD_FALLBACK_LIBRARY_PATH"]=env["DYLD_LIBRARY_PATH"]
     flags=["CFLAGS=-O2 -g0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0", "i386_CFLAGS=-O2 -g0", "x86_64_CFLAGS=-O2 -g0"]
-    run(["make", f"-j{jobs}", *flags], cwd=ROOT/"Runtime/build-wine-11.20", env=env)
-    run(["make", "install", *flags], cwd=ROOT/"Runtime/build-wine-11.20", env=env)
+    # The protected Apple make strips DYLD_* before invoking build-time tools.
+    # Homebrew GNU make preserves the local dependency path without any SIP change.
+    make="/opt/homebrew/bin/gmake"
+    if not pathlib.Path(make).exists():raise RuntimeError('Homebrew GNU make is required for local dylib build dependencies')
+    # Experimental copied-source adapters use these same intermediate targets.
+    # A normal upstream build must rebuild them from pristine Vendor sources;
+    # its immutable provider projections are never touched here.
+    for relative in ['dlls/win32u/vulkan.o','dlls/winemac.drv/window.o','dlls/ntdll/unix/signal_x86_64.o']:
+        (ROOT/'Runtime/build-wine-11.20'/relative).unlink(missing_ok=True)
+    run([make, f"-j{jobs}", *flags], cwd=ROOT/"Runtime/build-wine-11.20", env=env)
+    run([make, "install", *flags], cwd=ROOT/"Runtime/build-wine-11.20", env=env)
 
 def build_loader(jobs):
     sdk=ROOT/"Runtime/vulkan-sdk-1.4.366"

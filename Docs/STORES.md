@@ -1,6 +1,6 @@
 # Store bridge
 
-The store bridge is GPL-3.0-or-later source in `StoreBridge/`. It reconstructs the public GameNative account/library architecture without using any closed GameNative module. See `StoreBridge/NOTICE` and `StoreBridge/dependencies.lock.json`.
+The store bridge is GPL-3.0-only source in `StoreBridge/`. It reconstructs the public GameNative account/library architecture without using any closed GameNative module. See `StoreBridge/NOTICE` and `StoreBridge/dependencies.lock.json`.
 
 ## Build and protocol
 
@@ -26,7 +26,7 @@ Operations:
 | `auth_complete` | `options.authState` (or `state`), `options.code` or `redirectURL` | `result.credentials` |
 | `refresh` | credentials | updated `result.credentials` |
 | `library` | credentials | progress events then `result.games`; optional updated credentials |
-| `download` (`install` alias) | `options.gameID`, `platform` (`windows`/`macOS`), absolute `installDir`, and game `metadata` | sanitized numeric progress then result with installed variants; failure never becomes an empty success |
+| `download` (`install` alias) | `options.gameID`, `platform` (`windows`/`macOS`), absolute `installDir`, and game `metadata` | sanitized numeric progress then `installedVariant`, `workingDirectory`, `launchCandidates`, `launchIssues`; ambiguous launches remain an explicit choice |
 | `launch_info` | credentials + gameID/metadata | arguments/environment, and explicit remaining client/SDK requirements |
 | `native_inspect` | `options.path` executable or `.app` | inspected Mach-O architecture; does not prove the application runs |
 
@@ -43,7 +43,20 @@ No account sign-in has been performed by the agent and no owned commercial game 
 
 ## Native builds
 
-`macOS` in store metadata is **not** `arm64`. All remote macOS variants begin with `architecture: "unknown"`. `native_inspect` reads the actual installed Mach-O header (including fat binaries), resolves `.app/Contents/Info.plist`, and rejects iOS-only bundles. Windows EXE candidates require launch-entry selection and execution validation. This avoids labelling an Intel-only Mac port as Apple Silicon native.
+`macOS` in store metadata is **not** `arm64`. All remote macOS variants begin with `architecture: "unknown"`. `native_inspect` reads the actual installed Mach-O header (including fat binaries), resolves `.app/Contents/Info.plist`, and rejects iOS-only bundles. The automatic launch resolver additionally validates executable Mach-O file type, slice bounds, load-command bounds and platform (macOS or Mac Catalyst, not iOS/simulator), and checks Windows PE machine types. This avoids labelling an Intel-only Mac port as Apple Silicon native.
+
+## Automatic launch selection
+
+`StoreBridge/launch_resolver.py` resolves declared launch metadata, not arbitrary EXE scans:
+
+- Steam: the selected platform's PICS `config/launch` entry, prioritising a unique `type: default`; preserve `executable`, `arguments`, `workingdir`, OS constraints and label.
+- Epic: Legendary's `installed.json[appName]` record (`executable`, `launch_parameters`, `install_path`). Mac and Windows installation state are cached separately.
+- GOG: the unique primary `FileTask` in `goggame-<id>.info`; a downloaded Mac app's file lives under `Contents/Resources` and task paths are relative to that app root.
+- Amazon: `fuel.json` / `Main.Command`, `Main.Args`, `Main.WorkingSubdirOverride`. JSON5 is parsed through Nile's open JSON5 dependency when necessary.
+
+An unambiguous valid entry yields `result.installedVariant`, compatible with `GameVariant` and containing additional `workingDirectory`, `source`, `primary` and `label` fields. The same directory is also returned as `result.workingDirectory`. If valid alternatives remain ambiguous, `installedVariant` is null, `launchCandidates` contains only validated choices, and `launchSelectionRequired` is true. Missing or unsafe primary entries are never replaced automatically with a settings tool. Missing metadata does not trigger a guessed EXE fallback.
+
+All executable and working-directory paths are resolved and confined to the canonical installation root before binary inspection. Absolute/drive/UNC paths, traversal and symlink escapes are rejected. Application plist/executable symlinks are checked before reading the binary. Windows string arguments follow Microsoft CRT quoting/backslash rules **for the argument tail**, documented [by Microsoft](https://learn.microsoft.com/en-us/cpp/c-language/parsing-c-command-line-arguments). macOS strings use POSIX quote parsing without shell evaluation. JSON argument arrays remain literal. No environment expansion, globbing, `cmd.exe` interpretation or command substitution is performed. Steam `%command%` templates are not silently interpreted and require explicit advanced configuration. Current defaults when working-directory metadata is absent: executable parent for Steam/Epic, installation/app root for GOG, installation root for Amazon.
 
 ## Credentials and cancellation
 
@@ -59,4 +72,22 @@ No account sign-in has been performed by the agent and no owned commercial game 
 
 `Evidence/stores-helper-smoke.json`: actual local execution of SteamKit helper self-test and Legendary/GOGdl/Nile/DepotDownloader version commands. `.NET` and Python helper dependencies are installed locally, not in public source distribution. Dependency archives are pinned and the exact source retrieval is scripted. `Evidence/stores-python-packages.txt` records Python dependency versions; a distributable binary still needs a full third-party notice/source-offer audit.
 
-Remaining direct evidence: real authorized account logins; real small entitled downloads for each platform/store; launch executable selection against actual manifests; working Steam client coupling where required; Epic DRM/EOS corner cases; Amazon SDK-dependent launches; account switching while a game is running; crash recovery of temporary auth artifacts.
+Remaining direct evidence: real authorized account logins; real small entitled downloads for each platform/store; launch selection against downloaded production manifests (four-store fixtures pass); working Steam client coupling where required; Epic DRM/EOS corner cases; Amazon SDK-dependent launches; account switching while a game is running; crash recovery of temporary auth artifacts.
+
+## Steamworks runtime: open host versus proprietary client
+
+SteamKit account/CDN connectivity is distinct from Steamworks inside a running game. Valve explicitly says [SteamAPI_Init requires a running Steam client and an owned app licence](https://partner.steamgames.com/doc/sdk/api). Setting `SteamAppId` alone cannot satisfy that requirement. The public [ISteamClient API](https://partner.steamgames.com/doc/api/ISteamClient) can create a pipe and connect to an **existing** global user; `CreateLocalUser` is for game servers, not an alternative desktop-client login API.
+
+Proton's source provides the relevant architecture:
+
+- [`steam_helper/steam.c`](https://github.com/ValveSoftware/Proton/blob/bc896217ffcd67f892f952b010f898fe7bd0f0a1/steam_helper/steam.c) is a BSD-3-Clause `steam.exe` stub supplying client process/registry/launch context.
+- [`lsteamclient/unixlib.cpp`](https://github.com/ValveSoftware/Proton/blob/bc896217ffcd67f892f952b010f898fe7bd0f0a1/lsteamclient/unixlib.cpp#L750) has a macOS branch that loads the user's real `steamclient.dylib` through `STEAM_COMPAT_CLIENT_INSTALL_PATH`, bridges callbacks/interfaces, and connects to a global user.
+- **Important licensing boundary:** [`lsteamclient/LICENSE`](https://github.com/ValveSoftware/Proton/blob/bc896217ffcd67f892f952b010f898fe7bd0f0a1/lsteamclient/LICENSE) is the Steamworks SDK licence, not a free/open-source licence. Visible source is not permission to relabel this component GPL. It must not be copied into the wholly free release under an assumed Proton-wide BSD licence.
+
+[NotProton](https://github.com/NotProtonNot/NotProton) and [steamplay-mac](https://github.com/Drustburn/steamplay-mac) demonstrate macOS ports using genuine Valve libraries and Wine client bridging. NotProton's [NOTICE](https://github.com/NotProtonNot/NotProton/blob/5065066a54622cfad1f34eab4bd2ad7c4a762cfe/NOTICE) explicitly distinguishes its GPL app, BSD steam shim and SDK-licensed lsteamclient. The self-built runner fork patches Wine source instead of binary detours, but still has that SDK boundary and currently references Wine 11.0/CrossOver sources rather than our Wine 11.20.
+
+[OpenSteamClient](https://github.com/OpenSteamClient/OpenSteamClient) demonstrates a source-visible headless-core pattern: `dlopen` the genuine client, create `CLIENTENGINE_INTERFACE_VERSION005`, create a global user, then token login through `IClientUser`. Its main branch is deprecated, targets Linux, depends on private version-sensitive interfaces, and its imported OpenSteamworks headers claim Valve copyright without a clearly independent free licence. The MIT label on its UI is insufficient to approve copying that complete ABI layer.
+
+[Aurelia](https://github.com/Drackrath/Aurelia) is a GPL-3 launcher/reference for runtime lifecycle. Its documented Steamworks path uses either the real host Steam or a real Windows Steam installation inside Wine; it does not prove a fully free replacement for Valve's Steamworks runtime. Its in-Wine runtime path is currently Linux-focused.
+
+Plausible implementation for Ready: keep our host/IPC/session code free, require a genuine optional user-installed Valve client, preserve its entitlement checks, and use compatible ABI bridging only after a per-file licence audit and a pinned-Wine integration test. Alternatively, run a genuine Windows Steam client in the game's/profile's Wine environment and launch through it, with central immutable client payloads and isolated writable account state. The latter avoids copying SDK-licensed bridge source, but hiding Steam's UI does not guarantee the CEF/GPU allocation disappears. A genuinely lightweight direct `steamclient.dylib` host would require independently authored free declarations plus careful private-ABI integration; it is not implemented or validated here. No universal DRM-free assumption, fake ownership ticket or licence bypass is used.

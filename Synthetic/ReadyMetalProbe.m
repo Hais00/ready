@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 // Real Metal drawable test host. Does not link the overlay; it must be injected by dyld.
 #import <AppKit/AppKit.h>
 #import <Metal/Metal.h>
@@ -36,6 +36,12 @@ static void WriteControl(NSString *path,NSInteger sequence,BOOL visible,NSIntege
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender{return YES;}
 - (void)windowWillClose:(NSNotification *)note{self.closed=YES;}
 @end
+@interface ProbeView:NSView
+@end
+@implementation ProbeView
+- (BOOL)isOpaque{return YES;}
+- (CALayer *)makeBackingLayer{return [CAMetalLayer layer];}
+@end
 
 int main(int argc,const char **argv){@autoreleasepool{
     BOOL metal4=NO,fullScreen=NO,scheduled=NO,presentationOnly=NO,sessionProbe=NO;NSInteger frameCount=60;NSString *out=@"Evidence";
@@ -48,14 +54,15 @@ int main(int argc,const char **argv){@autoreleasepool{
     NSString *architecture=@"arm64";
 #endif
     [[NSFileManager defaultManager]createDirectoryAtPath:out withIntermediateDirectories:YES attributes:nil error:nil];
-    [NSApplication sharedApplication];NSApp.activationPolicy=NSApplicationActivationPolicyRegular;ProbeDelegate *delegate=[ProbeDelegate new];NSApp.delegate=delegate;
-    NSWindow *window=[[NSWindow alloc]initWithContentRect:NSMakeRect(100,100,960,540) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
-    window.title=metal4 ? @"Ready Metal 4 injection probe":@"Ready Metal 3 injection probe";window.delegate=delegate;window.backgroundColor=NSColor.blackColor;window.collectionBehavior=NSWindowCollectionBehaviorFullScreenPrimary;
-    NSView *view=[[NSView alloc]initWithFrame:NSMakeRect(0,0,960,540)];view.wantsLayer=YES;CAMetalLayer *layer=[CAMetalLayer layer];
+    [NSApplication sharedApplication];NSApp.activationPolicy=NSApplicationActivationPolicyRegular;ProbeDelegate *delegate=[ProbeDelegate new];NSApp.delegate=delegate;[NSApp finishLaunching];
+    NSWindow *window=[[NSWindow alloc]initWithContentRect:NSMakeRect(100,100,960,540) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable|NSWindowStyleMaskFullSizeContentView backing:NSBackingStoreBuffered defer:NO];
+    window.title=metal4 ? @"Ready Metal 4 injection probe":@"Ready Metal 3 injection probe";window.delegate=delegate;window.backgroundColor=NSColor.blackColor;window.opaque=YES;window.titleVisibility=NSWindowTitleHidden;window.titlebarAppearsTransparent=YES;window.collectionBehavior=NSWindowCollectionBehaviorFullScreenPrimary;
+    NSView *view=[[ProbeView alloc]initWithFrame:NSMakeRect(0,0,960,540)];view.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;view.wantsLayer=YES;CAMetalLayer *layer=(CAMetalLayer *)view.layer;
     id<MTLDevice> device=MTLCreateSystemDefaultDevice();if(!device){fprintf(stderr,"Metal device unavailable\n");return 2;}
-    layer.device=device;layer.pixelFormat=MTLPixelFormatBGRA8Unorm;layer.opaque=YES;layer.framebufferOnly=presentationOnly;layer.maximumDrawableCount=2;layer.displaySyncEnabled=YES;layer.presentsWithTransaction=NO;layer.drawableSize=CGSizeMake(960,540);view.layer=layer;window.contentView=view;
+    layer.device=device;layer.pixelFormat=MTLPixelFormatBGRA8Unorm;layer.opaque=YES;layer.framebufferOnly=presentationOnly;layer.maximumDrawableCount=2;layer.displaySyncEnabled=YES;layer.presentsWithTransaction=NO;layer.drawableSize=CGSizeMake(960,540);window.contentView=view;
     [window makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];Pump(0.2);
     if(fullScreen){[window toggleFullScreen:nil];Pump(1.1);}
+    if(presentationOnly){NSRect backing=[view convertRectToBacking:view.bounds];layer.contentsScale=window.backingScaleFactor;layer.drawableSize=backing.size;}
     StatusFn status=(StatusFn)dlsym(RTLD_DEFAULT,"ReadyOverlayCopyStatusJSON");SetStateFn setState=(SetStateFn)dlsym(RTLD_DEFAULT,"ReadyOverlaySetStateForTesting");
     if(!status || !setState){fprintf(stderr,"Overlay was not injected\n");return 3;}
     id<MTLCommandQueue> queue3=[device newCommandQueue];
@@ -70,7 +77,7 @@ int main(int argc,const char **argv){@autoreleasepool{
             if(!metal4){id<MTLCommandBuffer> cb=[queue3 commandBuffer];id<MTLRenderCommandEncoder> enc=[cb renderCommandEncoderWithDescriptor:pass];[enc endEncoding];if(scheduled)[cb addScheduledHandler:^(id<MTLCommandBuffer> command){[drawable present];}];else [cb presentDrawable:drawable];[cb commit];[cb waitUntilCompleted];if(cb.error){fprintf(stderr,"Metal3: %s\n",cb.error.description.UTF8String);return 6;}}
             else if(@available(macOS 26.0,*)){
                 [allocator4 reset];[command4 beginCommandBufferWithAllocator:allocator4];
-                MTL4RenderPassDescriptor *pass4=[MTL4RenderPassDescriptor new];pass4.colorAttachments[0].texture=drawable.texture;pass4.colorAttachments[0].loadAction=MTLLoadActionClear;pass4.colorAttachments[0].storeAction=MTLStoreActionStore;pass4.colorAttachments[0].clearColor=MTLClearColorMake(0.035,0.12,0.20,1);pass4.renderTargetWidth=960;pass4.renderTargetHeight=540;pass4.defaultRasterSampleCount=1;
+                MTL4RenderPassDescriptor *pass4=[MTL4RenderPassDescriptor new];pass4.colorAttachments[0].texture=drawable.texture;pass4.colorAttachments[0].loadAction=MTLLoadActionClear;pass4.colorAttachments[0].storeAction=MTLStoreActionStore;pass4.colorAttachments[0].clearColor=MTLClearColorMake(0.035,0.12,0.20,1);pass4.renderTargetWidth=drawable.texture.width;pass4.renderTargetHeight=drawable.texture.height;pass4.defaultRasterSampleCount=1;
                 id<MTL4RenderCommandEncoder> enc=[command4 renderCommandEncoderWithDescriptor:pass4 options:MTL4RenderEncoderOptionNone];[enc endEncoding];[command4 endCommandBuffer];
                 [queue4 waitForDrawable:drawable];id<MTL4CommandBuffer> commands[]={command4};[queue4 commit:commands count:1];[queue4 signalDrawable:drawable];[drawable present];
                 // A diagnostic readback queue waits on a queue-level completion event before reading the image.
@@ -82,9 +89,13 @@ int main(int argc,const char **argv){@autoreleasepool{
                 SavePNG(capture,width,height,[out stringByAppendingPathComponent:[NSString stringWithFormat:@"overlay-%@-phase%d.png",label,phase]]);
             }
             Pump(0.001);
+            if(sessionProbe && n%120==0){
+                NSDictionary *geometry=@{@"pid":@(getpid()),@"applicationActive":@(NSApp.isActive),@"keyWindow":@(window.isKeyWindow),@"mainWindow":@(window.isMainWindow),@"frontmostApplicationPID":@(NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier),@"frontmostIsProbe":@(NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier==getpid()),@"occlusionVisible":@((window.occlusionState&NSWindowOcclusionStateVisible)!=0),@"windowOpaque":@(window.isOpaque),@"viewOpaque":@(view.isOpaque),@"presentsWithTransaction":@(layer.presentsWithTransaction),@"displayPixelWidth":@(CGDisplayPixelsWide([window.screen.deviceDescription[@"NSScreenNumber"]unsignedIntValue])),@"displayPixelHeight":@(CGDisplayPixelsHigh([window.screen.deviceDescription[@"NSScreenNumber"]unsignedIntValue])),@"frame":@(n),@"fullscreen":@(!!(window.styleMask&NSWindowStyleMaskFullScreen)),@"windowFrame":NSStringFromRect(window.frame),@"screenFrame":NSStringFromRect(window.screen.frame),@"viewFrame":NSStringFromRect(view.frame),@"layerFrame":NSStringFromRect(layer.frame),@"layerBounds":NSStringFromRect(layer.bounds),@"drawableWidth":@(layer.drawableSize.width),@"drawableHeight":@(layer.drawableSize.height),@"framebufferOnly":@(layer.framebufferOnly),@"layerOpaque":@(layer.opaque)};
+                NSData *g=[NSJSONSerialization dataWithJSONObject:geometry options:NSJSONWritingPrettyPrinted error:nil];[g writeToFile:[out stringByAppendingPathComponent:@"overlay-probe-window.json"] atomically:YES];
+            }
         }}
         if(capture)[images addObject:capture];NSDictionary *after=Status(status);
-        [phases addObject:@{@"phase":@(phase),@"before":before,@"after":after,@"seconds":@(CFAbsoluteTimeGetCurrent()-began),@"deviceCurrentAllocatedSize":@(device.currentAllocatedSize)}];
+        [phases addObject:@{@"phase":@(phase),@"before":before,@"after":after,@"startUnixTime":@(began+kCFAbsoluteTimeIntervalSince1970),@"endUnixTime":@(CFAbsoluteTimeGetCurrent()+kCFAbsoluteTimeIntervalSince1970),@"seconds":@(CFAbsoluteTimeGetCurrent()-began),@"deviceCurrentAllocatedSize":@(device.currentAllocatedSize)}];
     }}
     if(sessionProbe){NSDictionary *result=@{@"status":Status(status),@"phases":phases};NSData *json=[NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingPrettyPrinted error:nil];[json writeToFile:[out stringByAppendingPathComponent:@"overlay-session.json"] atomically:YES];[window orderOut:nil];return 0;}
     NSDictionary *final=Status(status);BOOL passes=(presentationOnly || (images.count==3 && ChangedPixels(images[0],images[1])>10000 && ChangedPixels(images[0],images[2])==0)) && [final[@"trackedTextureBytes"]unsignedLongLongValue]==0 && [final[@"overlayFrameCount"]unsignedLongLongValue]>=frameCount;

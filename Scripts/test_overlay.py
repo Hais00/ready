@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-only
 """Inject the real dylib into a Metal 3 and Metal 4 test host and inspect readbacks."""
 import json, os, pathlib, subprocess, tempfile, time
 ROOT=pathlib.Path(__file__).resolve().parents[1]

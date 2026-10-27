@@ -1,109 +1,510 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-import Foundation
 import AppKit
+// SPDX-License-Identifier: GPL-3.0-only
+import Foundation
 import LauncherCore
 
+/// Main-queue lifecycle + a worker for prefix initialization. Every Wine process is supervised.
 final class SessionManager {
-    let paths:LauncherPaths
-    let project:URL
-    private var process:Process?
-    private var lease:PrefixLease?
-    private var monitor:Timer?
-    private var sequence=0
-    private var visible=false
-    private var selection=0
-    private var logHandle:FileHandle?
-    private var activeGame:Game?
-    private var activeProfile:UUID?
-    private var lastActionSequence:Int = -1
-    private var lastActionPID:Int = -1
-    private var activePrefix:URL?
-    private var activeRuntime:RuntimeConfiguration?
-    private var sessionID=UUID()
-    private var sessionDirectory:URL {paths.session(sessionID)}
-    private(set) var overlayStatus:[String:Any]=[:]
-    var onFinish:((String)->Void)?
-    var running:Bool { lease != nil }
-    var controlFile:URL {sessionDirectory.appendingPathComponent("control.json")}
-    init(paths:LauncherPaths,project:URL){self.paths=paths;self.project=project}
-    func start(game:Game,variant:GameVariant,profile:UUID)throws {
-        guard !running else{throw LauncherError.busy}
-        sessionID=UUID()
-        lastActionSequence = -1;lastActionPID = -1;visible=false;selection=0;sequence=0;overlayStatus=[:]
-        try paths.prepare()
-        try FileManager.default.createDirectory(at:sessionDirectory,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
-        let held=try PrefixLease(paths:paths,profile:profile,gameID:game.id)
-        let userRuntime=paths.runtimes.appendingPathComponent("runtime.json")
-        let runtime=RuntimeConfiguration.load(FileManager.default.fileExists(atPath:userRuntime.path) ? userRuntime:project.appendingPathComponent("Runtime/runtime.json"))
-        let overlay=project.appendingPathComponent("Build/libReadyOverlay.dylib")
-        let plan=try LaunchPlan.build(game:game,variant:variant,runtime:runtime,paths:paths,profile:profile,overlay:overlay,controlURL:controlFile)
-        if plan.usesWine {
-            let prefix=try PrefixManager(paths:paths).prepare(profile:profile,gameID:game.id)
-            // Wine boot/registry setup is per-prefix; shared engine files remain central.
-            let marker=prefix.appendingPathComponent(".ready/runtime-initialized")
-            let version=runtime.wineVersion ?? runtime.wine ?? "unknown"
-            if (try? String(contentsOf:marker)) != version {
-                try EngineInstaller.prepareForRuntimeChange(version,prefix:prefix)
-                let boot=Process();boot.executableURL=URL(fileURLWithPath:runtime.wine!);boot.arguments=["wineboot","-u"];boot.environment=ProcessInfo.processInfo.environment.merging(["WINEPREFIX":prefix.path,"WINEDEBUG":"-all"]){_,v in v};boot.standardOutput=FileHandle.nullDevice;boot.standardError=FileHandle.nullDevice
-                try boot.run();boot.waitUntilExit();guard boot.terminationStatus==0 else{throw LauncherError.failed("Inizializzazione Wine del gioco non riuscita.")}
-                try PrefixManager(paths:paths).prepare(profile:profile,gameID:game.id)
-                let reg=Process();reg.executableURL=URL(fileURLWithPath:runtime.wine!);reg.arguments=["regedit","/S",prefix.appendingPathComponent(".ready/folders.reg").path];reg.environment=boot.environment;reg.standardOutput=FileHandle.nullDevice;reg.standardError=FileHandle.nullDevice;try reg.run();reg.waitUntilExit()
-                guard reg.terminationStatus==0 else{throw LauncherError.failed("Reindirizzamento cartelle Windows non riuscito.")}
-                try AtomicFile.writePrivate(Data(version.utf8),to:marker)
+  private enum Phase { case idle, initializing, playing, stopping }
+  private final class Context {
+    let id = UUID()
+    let game: Game
+    let variant: GameVariant
+    let profile: UUID
+    let runtime: RuntimeConfiguration
+    let prefix: URL?
+    let directory: URL
+    let host: URL
+    let extraArguments: [String]
+    let extraEnvironment: [String: String]
+    var completion: ((Result<Void, Error>) -> Void)?  // Accessed on the main queue only.
+    var reportedStart = false
+    var pendingExit: Int32?
+    var finishing = false  // Main-queue-only exit de-duplication.
+    var selectedEngine: GraphicsEngine = .automatic
+    var logURL: URL?
+    var gameLogOffset: UInt64 = 0
+    var lease: PrefixLease?  // Worker owns until it publishes a result on the main queue.
+    var log: FileHandle?
+    private let lock = NSLock()
+    private var cancelled = false
+    private var child: Process?
+    init(
+      game: Game, variant: GameVariant, profile: UUID, runtime: RuntimeConfiguration,
+      paths: LauncherPaths, host: URL, arguments: [String], environment: [String: String],
+      completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+      self.game = game
+      self.variant = variant
+      self.profile = profile
+      self.runtime = runtime
+      prefix = variant.platform == .windows ? paths.prefix(profile: profile, gameID: game.id) : nil
+      directory = paths.session(id)
+      self.host = host
+      extraArguments = arguments
+      extraEnvironment = environment
+      self.completion = completion
+    }
+    var isCancelled: Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      return cancelled
+    }
+    func cancel() {
+      lock.lock()
+      cancelled = true
+      lock.unlock()
+    }
+    func setProcess(_ value: Process?) {
+      lock.lock()
+      child = value
+      lock.unlock()
+    }
+    func currentProcess() -> Process? {
+      lock.lock()
+      defer { lock.unlock() }
+      return child
+    }
+    func clearProcess(_ value: Process) {
+      lock.lock()
+      if child === value { child = nil }
+      lock.unlock()
+    }
+    var controlFile: URL { directory.appendingPathComponent("control.json") }
+  }
+  let paths: LauncherPaths
+  let project: URL
+  private let stateLock = NSLock()
+  private let worker = DispatchQueue(label: "ready.session.initialize", qos: .userInitiated)
+  private var phase: Phase = .idle
+  private var context: Context?
+  private var lastSessionID = UUID()
+  private var monitor: Timer?
+  private var sequence = 0, selection = 0
+  private var visible = false
+  private var lastActionSequence = -1, lastActionPID = -1
+  private var statusSnapshot: [String: Any] = [:]
+  private let initializationTimeout: TimeInterval
+  private let shutdownGrace: TimeInterval
+  var onFinish: ((String) -> Void)?
+  /// Main queue, synchronously before the game is spawned. Loading UI can stay alive during prefix setup.
+  var onWillLaunch: (() -> Void)?
+  var running: Bool {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return phase != .idle
+  }
+  var initializing: Bool {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return phase == .initializing
+  }
+  var overlayStatus: [String: Any] {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return statusSnapshot
+  }
+  var controlFile: URL {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return context?.controlFile
+      ?? paths.session(lastSessionID).appendingPathComponent("control.json")
+  }
+  var sessionProcessIdentifier: Int32? { currentContext()?.currentProcess()?.processIdentifier }
+  init(
+    paths: LauncherPaths, project: URL, initializationTimeout: TimeInterval = 120,
+    shutdownGrace: TimeInterval = 10
+  ) {
+    self.paths = paths
+    self.project = project
+    self.initializationTimeout = max(0.05, initializationTimeout)
+    self.shutdownGrace = max(0.05, shutdownGrace)
+  }
+  private func onMain(_ body: @escaping () -> Void) {
+    if Thread.isMainThread { body() } else { DispatchQueue.main.async(execute: body) }
+  }
+  private func currentContext() -> Context? {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return context
+  }
+  private func isCurrent(_ value: Context) -> Bool {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return context === value
+  }
+  private func setPhase(_ value: Phase) {
+    stateLock.lock()
+    phase = value
+    stateLock.unlock()
+  }
+  private func checkCancellation(_ value: Context) throws {
+    if value.isCancelled { throw LauncherError.failed("Avvio annullato.") }
+  }
+  private static func reservedEnvironment(_ key: String) -> Bool {
+    key == "WINEPREFIX" || key == "WINEDLLOVERRIDES" || key == "WINEARCH" || key == "WINELOADER"
+      || key == "WINESERVER" || key == "WINEDLLPATH" || key == "VK_DRIVER_FILES"
+      || key == "VK_ICD_FILENAMES" || key.hasPrefix("READY_") || key.hasPrefix("M1L_")
+      || key.hasPrefix("DYLD_")
+  }
+  func start(
+    game: Game, variant: GameVariant, profile: UUID, launchArguments: [String] = [],
+    launchEnvironment: [String: String] = [:], completion: @escaping (Result<Void, Error>) -> Void
+  ) {
+    onMain { [self] in
+      guard !running else {
+        completion(.failure(LauncherError.busy))
+        return
+      }
+      if let key = launchEnvironment.keys.first(where: Self.reservedEnvironment) {
+        completion(
+          .failure(
+            LauncherError.invalid("Lo store non può sovrascrivere la variabile riservata \(key).")))
+        return
+      }
+      let host = project.appendingPathComponent("Build/ReadySessionHost")
+      // Fail before any prefix, DLL, registry, or personal-data mutation.
+      guard FileManager.default.isExecutableFile(atPath: host.path) else {
+        completion(
+          .failure(
+            LauncherError.unavailable("Compila il supervisore con Scripts/build_session_host.sh.")))
+        return
+      }
+      let userRuntime = paths.runtimes.appendingPathComponent("runtime.json")
+      let runtime = RuntimeConfiguration.load(
+        FileManager.default.fileExists(atPath: userRuntime.path)
+          ? userRuntime : project.appendingPathComponent("Runtime/runtime.json"))
+      let ctx = Context(
+        game: game, variant: variant, profile: profile, runtime: runtime, paths: paths, host: host,
+        arguments: launchArguments, environment: launchEnvironment, completion: completion)
+      stateLock.lock()
+      context = ctx
+      phase = .initializing
+      lastSessionID = ctx.id
+      statusSnapshot = [:]
+      stateLock.unlock()
+      lastActionSequence = -1
+      lastActionPID = -1
+      visible = false
+      selection = 0
+      sequence = 0
+      worker.async { [self, ctx] in
+        do { try initializeAndLaunch(ctx) } catch {
+          onMain { [self, ctx] in startupFailed(ctx, error: error) }
+        }
+      }
+    }
+  }
+  private func initializationEnvironment(_ ctx: Context) -> [String: String] {
+    var env = ProcessInfo.processInfo.environment
+    for key in Array(env.keys)
+    where Self.reservedEnvironment(key) {
+      env.removeValue(forKey: key)
+    }
+    if let prefix = ctx.prefix { env["WINEPREFIX"] = prefix.path }
+    env["WINEDEBUG"] = "-all"
+    env["WINEDLLOVERRIDES"] = "mscoree,mshtml=d"
+    return env
+  }
+  private func configureHost(
+    _ ctx: Context, program: String, arguments: [String], environment: [String: String],
+    directory: URL? = nil
+  ) throws -> (Process, FileHandle) {
+    guard let lease = ctx.lease else { throw LauncherError.failed("Lock del prefix assente.") }
+    let task = Process()
+    task.executableURL = ctx.host
+    var hostArguments = [String]()
+    if let prefix = ctx.prefix,
+      let server = ctx.runtime.engineWineServers?[ctx.selectedEngine.rawValue]
+        ?? ctx.runtime.wineServer
+    {
+      guard server.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: server) else {
+        throw LauncherError.unavailable("Wineserver non disponibile per questo runtime.")
+      }
+      hostArguments = ["--wine-server", server, "--prefix", prefix.path]
+    }
+    task.arguments = hostArguments + ["--", program] + arguments
+    task.currentDirectoryURL = directory
+    var env = environment
+    env.removeValue(forKey: "DYLD_INSERT_LIBRARIES")
+    task.environment = env
+    let input = try lease.handleForSessionHost()
+    task.standardInput = input
+    task.standardOutput = ctx.log ?? FileHandle.nullDevice
+    task.standardError = ctx.log ?? FileHandle.nullDevice
+    return (task, input)
+  }
+  private func runInitializationStage(
+    _ ctx: Context, name: String, program: String, arguments: [String]
+  ) throws {
+    try checkCancellation(ctx)
+    let (task, input) = try configureHost(
+      ctx, program: program, arguments: arguments, environment: initializationEnvironment(ctx))
+    defer { try? input.close() }
+    let ended = DispatchSemaphore(value: 0)
+    task.terminationHandler = { _ in ended.signal() }
+    try task.run()
+    ctx.lease?.markTransferredToSessionHost()
+    try? input.close()
+    ctx.setProcess(task)
+    if ctx.isCancelled { stopCurrent(ctx) }
+    if ended.wait(timeout: .now() + initializationTimeout) == .timedOut {
+      ctx.cancel()
+      stopCurrent(ctx)
+      // The native keeper continues holding the same open-file-description even
+      // if this bounded shutdown wait expires and the UI receives an error.
+      _ = ended.wait(timeout: .now() + shutdownGrace)
+      throw LauncherError.failed(
+        "Timeout durante \(name). L’ambiente rimane protetto finché i suoi processi non terminano.")
+    }
+    ctx.clearProcess(task)
+    try checkCancellation(ctx)
+    guard task.terminationStatus == 0 else {
+      throw LauncherError.failed("\(name) non riuscito · codice \(task.terminationStatus).")
+    }
+  }
+  private func initializeAndLaunch(_ ctx: Context) throws {
+    try checkCancellation(ctx)
+    try paths.prepare()
+    try FileManager.default.createDirectory(
+      at: ctx.directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    ctx.lease = try PrefixLease(paths: paths, profile: ctx.profile, gameID: ctx.game.id)
+    try checkCancellation(ctx)
+    let logPath = paths.logs.appendingPathComponent("session-" + ctx.id.uuidString + ".log")
+    guard
+      FileManager.default.createFile(
+        atPath: logPath.path, contents: nil, attributes: [.posixPermissions: 0o600])
+    else { throw LauncherError.failed("Impossibile creare il log privato della sessione.") }
+    ctx.log = try FileHandle(forWritingTo: logPath)
+    ctx.logURL = logPath
+    let overlay = project.appendingPathComponent("Build/libReadyOverlay.dylib")
+    let plan = try LaunchPlan.build(
+      game: ctx.game, variant: ctx.variant, runtime: ctx.runtime, paths: paths,
+      profile: ctx.profile, overlay: overlay, controlURL: ctx.controlFile)
+    ctx.selectedEngine = plan.engine
+    if plan.usesWine, let prefix = ctx.prefix {
+      _ = try PrefixManager(paths: paths).prepare(profile: ctx.profile, gameID: ctx.game.id)
+      try checkCancellation(ctx)
+      let marker = prefix.appendingPathComponent(".ready/runtime-initialized")
+      let version = ctx.runtime.runtimeIdentity
+      if (try? String(contentsOf: marker, encoding: .utf8)) != version {
+        try EngineInstaller.prepareForRuntimeChange(version, prefix: prefix)
+        try runInitializationStage(
+          ctx, name: "Inizializzazione Wine", program: plan.executable,
+          arguments: ["wineboot", "-u"])
+        _ = try PrefixManager(paths: paths).prepare(profile: ctx.profile, gameID: ctx.game.id)
+        let registry = prefix.appendingPathComponent(".ready/folders.reg")
+        let dosPath = "Z:" + registry.path.replacingOccurrences(of: "/", with: "\\")
+        try runInitializationStage(
+          ctx, name: "Configurazione cartelle Windows", program: plan.executable,
+          arguments: ["regedit", "/S", dosPath])
+        try AtomicFile.writePrivate(Data(version.utf8), to: marker)
+      }
+      try checkCancellation(ctx)
+      try EngineInstaller.configure(plan.engine, runtime: ctx.runtime, paths: paths, prefix: prefix)
+    }
+    try checkCancellation(ctx)
+    try AtomicFile.writePrivate(
+      JSONSerialization.data(withJSONObject: ["visible": false, "selection": 0, "sequence": 1]),
+      to: ctx.controlFile)
+    var baseEnvironment = ProcessInfo.processInfo.environment
+    for key in Array(baseEnvironment.keys) where Self.reservedEnvironment(key) {
+      baseEnvironment.removeValue(forKey: key)
+    }
+    var gameEnvironment = baseEnvironment.merging(plan.environment) { _, new in
+      new
+    }
+    gameEnvironment.merge(ctx.extraEnvironment) { _, new in new }
+    // Initialization diagnostics must not poison classification of a later DRM/game failure.
+    ctx.gameLogOffset = (try? ctx.log?.seekToEnd()) ?? 0
+    let (task, input) = try configureHost(
+      ctx, program: plan.executable, arguments: plan.arguments + ctx.extraArguments,
+      environment: gameEnvironment, directory: URL(fileURLWithPath: plan.currentDirectory))
+    defer { try? input.close() }
+    task.terminationHandler = { [weak self, ctx] exited in
+      self?.onMain { [weak self, ctx] in self?.gameExited(ctx, status: exited.terminationStatus) }
+    }
+    DispatchQueue.main.sync { [self, ctx] in if isCurrent(ctx), !ctx.isCancelled { onWillLaunch?() }
+    }
+    try checkCancellation(ctx)
+    try task.run()
+    ctx.lease?.markTransferredToSessionHost()
+    try? input.close()
+    ctx.setProcess(task)
+    if ctx.isCancelled {
+      stopCurrent(ctx)
+      throw LauncherError.failed("Avvio annullato.")
+    }
+    onMain { [self, ctx, task] in
+      guard isCurrent(ctx) else { return }
+      sequence = 1
+      ctx.reportedStart = true
+      setPhase(ctx.isCancelled ? .stopping : .playing)
+      let callback = ctx.completion
+      ctx.completion = nil
+      callback?(.success(()))
+      monitor = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) {
+        [weak self, weak ctx] _ in if let ctx { self?.pollOverlay(ctx) }
+      }
+      // A quick-exiting game may finish before this main-queue callback. Deliver
+      // completion first, then a single onFinish, rather than losing the exit.
+      if let exit = ctx.pendingExit {
+        finishGame(ctx, status: exit)
+      } else if !task.isRunning {
+        finishGame(ctx, status: task.terminationStatus)
+      }
+    }
+  }
+  private func gameExited(_ ctx: Context, status: Int32) {
+    guard isCurrent(ctx) else { return }
+    if !ctx.reportedStart {
+      ctx.pendingExit = status
+      return
+    }
+    finishGame(ctx, status: status)
+  }
+  private func finishGame(_ ctx: Context, status: Int32) {
+    guard isCurrent(ctx), !ctx.finishing else { return }
+    ctx.finishing = true
+    // At most 1 MiB is read, off the UI thread. Never persist log contents or command lines.
+    worker.async { [self, ctx] in
+      if ctx.prefix != nil, !ctx.isCancelled, ctx.selectedEngine != .automatic,
+        let file = ctx.logURL
+      {
+        var diagnostic = ""
+        if let handle = try? FileHandle(forReadingFrom: file) {
+          defer { try? handle.close() }
+          if let end = try? handle.seekToEnd() {
+            let tailStart = end > 1_048_576 ? end - 1_048_576 : 0
+            try? handle.seek(toOffset: min(end, max(tailStart, ctx.gameLogOffset)))
+            if let bytes = try? handle.read(upToCount: 1_048_576) {
+              diagnostic = String(decoding: bytes, as: UTF8.self)
             }
-            try EngineInstaller.configure(plan.engine,runtime:runtime,paths:paths,prefix:prefix)
-            activePrefix=prefix
+          }
         }
-        try writeControl(visible:false)
-        let status=sessionDirectory.appendingPathComponent("overlay-status.json")
-        if FileManager.default.fileExists(atPath:status.path){try FileManager.default.removeItem(at:status)}
-        let task=Process();task.executableURL=URL(fileURLWithPath:plan.executable);task.arguments=plan.arguments;task.currentDirectoryURL=URL(fileURLWithPath:plan.currentDirectory)
-        task.environment=ProcessInfo.processInfo.environment.merging(plan.environment){_,new in new}
-        let log=paths.logs.appendingPathComponent("session-\(UUID().uuidString).log")
-        FileManager.default.createFile(atPath:log.path,contents:nil,attributes:[.posixPermissions:0o600]);let handle=try FileHandle(forWritingTo:log)
-        task.standardOutput=handle;task.standardError=handle
-        task.terminationHandler={[weak self] p in DispatchQueue.main.async{self?.finish("Sessione terminata · codice \(p.terminationStatus)")}}
-        try task.run();process=task;lease=held;activeGame=game;activeProfile=profile;activeRuntime=runtime;logHandle=handle
-        monitor=Timer.scheduledTimer(withTimeInterval:0.25,repeats:true){[weak self] _ in self?.pollOverlay()}
-    }
-    func overlayToggle(){guard running else{return};try? writeControl(visible:!visible)}
-    func overlayMove(_ delta:Int){guard running,visible else{return};selection=(selection+delta+2)%2;try? writeControl(visible:true)}
-    func overlayConfirm(){guard running,visible else{return};if selection==1{quit()}else{try? writeControl(visible:false)}}
-    func resume(){try? writeControl(visible:false)}
-    func quit(){
-        guard let process else{return}
-        try? writeControl(visible:false)
-        if process.isRunning {process.terminate()}
-        // No global killall: only this exact game/profile wineserver may be shut down.
-        let cfg=activeRuntime ?? RuntimeConfiguration()
-        if let prefix=activePrefix,let server=cfg.wineServer,FileManager.default.isExecutableFile(atPath:server){
-            let stop=Process();stop.executableURL=URL(fileURLWithPath:server);stop.arguments=["-k"];stop.environment=ProcessInfo.processInfo.environment.merging(["WINEPREFIX":prefix.path]){_,v in v};try? stop.run()
+        if RendererFailureLedger.graphicsInitializationFailed(
+          exitCode: status, userRequestedStop: ctx.isCancelled, diagnostic: diagnostic)
+        {
+          try? RendererFailureLedger(paths: paths).record(
+            profile: ctx.profile, gameID: ctx.game.id, wineVersion: ctx.runtime.runtimeIdentity,
+            engine: ctx.selectedEngine)
         }
+      }
+      onMain { [self, ctx] in finish(ctx, "Sessione terminata · codice \(status)") }
     }
-    private func writeControl(visible:Bool)throws {
-        self.visible=visible;sequence+=1
-        let value:[String:Any]=["visible":visible,"selection":selection,"sequence":sequence]
-        try AtomicFile.writePrivate(JSONSerialization.data(withJSONObject:value),to:controlFile)
+  }
+  private func startupFailed(_ ctx: Context, error: Error) {
+    guard isCurrent(ctx) else { return }
+    let callback = ctx.completion
+    ctx.completion = nil
+    cleanup(ctx)
+    callback?(.failure(error))
+  }
+  private func cleanup(_ ctx: Context) {
+    monitor?.invalidate()
+    monitor = nil
+    try? ctx.log?.close()
+    ctx.log = nil
+    // Break Context -> Process -> terminationHandler -> Context retention after exit.
+    // A timed-out native keeper is independent and continues holding its own fd0.
+    if let task = ctx.currentProcess(), !task.isRunning { task.terminationHandler = nil }
+    ctx.setProcess(nil)
+    // A handed-off lease only closes here. It never LOCK_UNs a surviving keeper.
+    ctx.lease = nil
+    stateLock.lock()
+    if context === ctx {
+      context = nil
+      phase = .idle
     }
-    private func pollOverlay(){
-        guard let bytes=try? Data(contentsOf:sessionDirectory.appendingPathComponent("overlay-status.json")),let status=(try? JSONSerialization.jsonObject(with:bytes)) as? [String:Any] else{return}
-        overlayStatus=status
-        guard (status["frameCount"] as? Int ?? 0)>0 else{return}
-        if (status["controlSequence"] as? Int ?? -1)>=sequence {
-            if let shown=status["visible"] as? Bool{visible=shown}
-            if let current=status["selection"] as? Int{selection=current}
-        }
-        let actionSequence=status["actionSequence"] as? Int ?? -1
-        let actionPID=status["pid"] as? Int ?? -1
-        if (actionPID != lastActionPID || actionSequence != lastActionSequence),let action=status["requestedAction"] as? String {
-            lastActionSequence=actionSequence
-            lastActionPID=actionPID
-            if action=="quit"{quit()}else if action=="resume"{resume()}
-        }
+    stateLock.unlock()
+  }
+  private func finish(_ ctx: Context, _ message: String) {
+    guard isCurrent(ctx) else { return }
+    cleanup(ctx)
+    onFinish?(message)
+  }
+  private func stopCurrent(_ ctx: Context) {
+    guard let process = ctx.currentProcess() else { return }
+    if process.isRunning { process.terminate() }
+    // Scope shutdown to this context's exact prefix. No global killall/default prefix.
+    if let prefix = ctx.prefix,
+      let server = ctx.runtime.engineWineServers?[ctx.selectedEngine.rawValue]
+        ?? ctx.runtime.wineServer,
+      FileManager.default.isExecutableFile(atPath: server)
+    {
+      let stop = Process()
+      stop.executableURL = URL(fileURLWithPath: server)
+      stop.arguments = ["-k"]
+      var env = initializationEnvironment(ctx)
+      env["WINEPREFIX"] = prefix.path
+      env.removeValue(forKey: "WINEDLLOVERRIDES")
+      stop.environment = env
+      stop.standardOutput = FileHandle.nullDevice
+      stop.standardError = FileHandle.nullDevice
+      try? stop.run()
     }
-    private func finish(_ message:String){
-        guard running else{return};monitor?.invalidate();monitor=nil
-        // Personal folders persist outside the prefix; no global save swapping occurs on profile changes.
-        try? logHandle?.close();logHandle=nil;process=nil;activeGame=nil;activeProfile=nil;activePrefix=nil;activeRuntime=nil;lease=nil;onFinish?(message)
+  }
+  func quit() {
+    onMain { [self] in
+      guard let ctx = currentContext() else { return }
+      ctx.cancel()
+      setPhase(.stopping)
+      try? writeControl(ctx, visible: false)
+      stopCurrent(ctx)
     }
+  }
+  func overlayToggle() {
+    onMain { [self] in
+      guard let ctx = currentContext(), ctx.reportedStart else { return }
+      try? writeControl(ctx, visible: !visible)
+    }
+  }
+  func overlayMove(_ delta: Int) {
+    onMain { [self] in
+      guard let ctx = currentContext(), ctx.reportedStart, visible else { return }
+      selection = (selection + delta + 2) % 2
+      try? writeControl(ctx, visible: true)
+    }
+  }
+  func overlayConfirm() {
+    onMain { [self] in
+      guard let ctx = currentContext(), ctx.reportedStart, visible else { return }
+      if selection == 1 { quit() } else { try? writeControl(ctx, visible: false) }
+    }
+  }
+  func resume() {
+    onMain { [self] in if let ctx = currentContext() { try? writeControl(ctx, visible: false) } }
+  }
+  private func writeControl(_ ctx: Context, visible: Bool) throws {
+    self.visible = visible
+    sequence += 1
+    try AtomicFile.writePrivate(
+      JSONSerialization.data(withJSONObject: [
+        "visible": visible, "selection": selection, "sequence": sequence,
+      ]), to: ctx.controlFile)
+  }
+  private func pollOverlay(_ ctx: Context) {
+    guard isCurrent(ctx),
+      let bytes = try? Data(
+        contentsOf: ctx.directory.appendingPathComponent("overlay-status.json")),
+      let status = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any],
+      (status["frameCount"] as? Int ?? 0) > 0
+    else { return }
+    stateLock.lock()
+    statusSnapshot = status
+    stateLock.unlock()
+    if (status["controlSequence"] as? Int ?? -1) >= sequence {
+      if let shown = status["visible"] as? Bool { visible = shown }
+      if let current = status["selection"] as? Int { selection = max(0, min(current, 1)) }
+    }
+    let actionSequence = status["actionSequence"] as? Int ?? -1
+    let actionPID = status["pid"] as? Int ?? -1
+    if actionPID != lastActionPID || actionSequence != lastActionSequence,
+      let action = status["requestedAction"] as? String
+    {
+      lastActionSequence = actionSequence
+      lastActionPID = actionPID
+      if action == "quit" { quit() } else if action == "resume" { resume() }
+    }
+  }
 }

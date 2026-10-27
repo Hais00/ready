@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-only
 """Fetch upstream runtime artifacts into this project only; retain provenance.
 
 Apple's optional evaluation runtime is deliberately not a distribution input.
@@ -45,7 +45,9 @@ def fetch_open_wine_dependencies():
         for member in tf:
             if "/Contents/Resources/wine/lib/" not in member.name:continue
             relative=member.name.split("/Contents/Resources/wine/lib/",1)[1]
-            if '/' in relative or not relative.endswith('.dylib'):continue
+            # Do not let an older bundled MoltenVK shadow the explicitly selected
+            # current renderer through DYLD_LIBRARY_PATH, even for absolute ICD paths.
+            if '/' in relative or not relative.endswith('.dylib') or relative=='libMoltenVK.dylib':continue
             target=dest/relative
             if member.isfile():
                 with tf.extractfile(member) as src,target.open('wb') as out:shutil.copyfileobj(src,out)

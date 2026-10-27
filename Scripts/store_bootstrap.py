@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-only
 """Fetch pinned OPEN store helpers and build locally. Never fetch GameNative closed helpers."""
 import argparse, hashlib, json, os, pathlib, shutil, subprocess, sys, tarfile, urllib.request, venv
 ROOT=pathlib.Path(__file__).resolve().parents[1]

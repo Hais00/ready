@@ -1,0 +1,107 @@
+{
+  "createdAt": "2026-10-28T00:30:15.476459+01:00",
+  "goalComplete": false,
+  "core": {
+    "checks": 18,
+    "passed": true,
+    "names": [
+      "Valve manifests and malformed input",
+      "Mach-O architecture and unknown native availability",
+      "Per-prefix locks allow independent sessions",
+      "Isolated game/profile prefix paths and persistent profiles",
+      "Personal folders persist across prefix recreation",
+      "Path traversal and symlink escape rejection",
+      "Literal process arguments and verified engine selection",
+      "Dependencies and registry remain isolated between games",
+      "Non-destructive legacy migration and rollback source",
+      "Migration preflight does not leave partial prefixes",
+      "Runtime upgrade never restores old Wine DLLs",
+      "Legacy symlink cannot redirect migration into original data",
+      "Store manifest identifiers preserve 64-bit integer precision",
+      "Low feature-level fallback is not advertised as modern DX11",
+      "Renderer failures are scoped by profile, game and runtime",
+      "Windows registry redirection uses canonical escaping and Unicode",
+      "PE import detection distinguishes APIs and malformed input",
+      "Built-in provider policy is explicit and scoped"
+    ]
+  },
+  "storeProtocols": {
+    "checks": 44,
+    "passed": true,
+    "realAccountsVerified": false
+  },
+  "sessionHost": {
+    "passed": true,
+    "checks": {
+      "independentSessionsAndSignalGroups": true,
+      "childStdinIsDevNull": true,
+      "noLockDescriptorInGame": true,
+      "literalArguments": true,
+      "duplicatePrefixRejected": true,
+      "parentCrashKeepsLease": true,
+      "parentHangupDoesNotEndGame": true,
+      "exactPrefixWineserverWait": true,
+      "waiterCannotReleaseLeaseEarlyOnSignal": true,
+      "quickChild": true,
+      "failedChild": true,
+      "missingChild": true,
+      "invalidStdinRejected": true,
+      "nativeMetalOverlayHandoff": true
+    },
+    "scope": "real processes, file locks, crash handoff and exact-prefix waiter"
+  },
+  "sessionManager": {
+    "passed": true,
+    "checks": {
+      "ambientReservedEnvironmentScrubbed": true,
+      "completionCallbackMainQueue": true,
+      "drmFailureDoesNotPoisonRenderer": true,
+      "finishCallbackMainQueue": true,
+      "graphicsFailureRecordedBeforeFinish": true,
+      "independentNativeSessions": true,
+      "initializationCancellation": true,
+      "initializationIsAsynchronous": true,
+      "initializationWithoutOverlayOrMonoPrompt": true,
+      "launchHookCancellationPreventsSpawn": true,
+      "launchHookMainAfterInitializationBeforeSpawn": true,
+      "missingHostPreflight": true,
+      "noCommandLineOrLaunchSecretLogging": true,
+      "quickExitLifecycleOrdering": true,
+      "reservedEnvironmentRejectedBeforeMutation": true,
+      "timeoutKeepsLivePrefixLocked": true,
+      "transientLaunchDataSeparated": true,
+      "userQuitDoesNotPoisonRenderer": true
+    },
+    "scope": "real-Foundation-Process-and-native-keeper; Wine protocol fixtures, not real game compatibility"
+  },
+  "winePrefixAPIs": {
+    "verified": true,
+    "steps": 7,
+    "canonicalWindowsPaths": true,
+    "scope": "Synthetic games, real Wine Windows registry and folder APIs, independent profile/game prefixes, recreation retains data"
+  },
+  "frontendMemory": {
+    "canvasTextureBytesBefore": 15078400,
+    "canvasTextureBytesDuringGame": 0,
+    "directToDisplayVerified": false,
+    "gpuAllocatedBytesAfter": 737280,
+    "gpuAllocatedBytesBefore": 47038464,
+    "pass": true
+  },
+  "overlay": {
+    "gpuPaths": 6,
+    "wineVulkanMetalVerified": true,
+    "shownTrackedTextureBytes": 835584,
+    "hiddenTrackedTextureBytes": 0,
+    "directToDisplayVerified": false,
+    "observedHUDMode": "Composited in both native baseline and overlay samples"
+  },
+  "openGates": [
+    "Real account login, entitlement downloads and commercial game launch",
+    "Actual direct-to-display mode; current tested fullscreen baseline is Composited",
+    "D3D12 / latest proprietary Apple runtime ABI integration",
+    "Physical-controller behavior and in-game input suppression",
+    "Native macOS game save/account isolation and complete release packaging",
+    "Real legacy user-data migration beyond synthetic copies"
+  ]
+}
