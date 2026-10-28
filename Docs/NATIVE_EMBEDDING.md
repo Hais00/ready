@@ -156,3 +156,35 @@ python3 NativeEmbedding/direct_drawable_lab.py
 ```
 
 Il driver compila e firma due bundle propri su Dati, verifica le firme, registra `build-sign.jsonl`, `Host.signature.txt`, `Guest.signature.txt`, `host.txt`, `guest.txt`, `result.json`, snapshot dei sorgenti e `hashes.json`. Nessun gioco, sorgente Ready/Steam o impostazione globale viene modificato.
+
+## Intercettazione successiva con proxy della risorsa host
+
+Una prova successiva va oltre il renderer cooperativo: lo **stesso eseguibile
+sintetico firmato**, invariato fra baseline ed esecuzione iniettata, usa normali
+`NSWindow`, `NSView`, `CAMetalLayer`, `nextDrawable` e `presentDrawable`.
+Lo shim sostituisce la richiesta di finestra con un proxy locale il cui
+`windowNumber` identifica la vera risorsa WindowServer dell'host. Il drawable
+proxy espone una texture importata dalla IOSurface del vero drawable host;
+completato il rendering originale, l'host presenta quel drawable.
+
+Il triangolo è stato verificato con CUA nella finestra host. In 90 frame il
+guest non possiede finestre WindowServer e gli ID delle superfici host/importate
+coincidono. L'host non codifica command buffer, encoder, copie o readback;
+il guest mantiene i suoi 90 render encoder, senza blit/compute o copie dello
+shim. I contatori riguardano i percorsi applicativi verificabili nel sorgente,
+non operazioni interne del driver o del compositor. Rimangono costi CPU, IPC,
+sincronizzazione e una coda Metal vuota creata dallo shim.
+
+Il censimento della prova visiva conserva una finestra host visibile e una
+risorsa host ausiliaria non visibile alta 30 pixel, non classificata. Non si
+dichiara un solo oggetto WindowServer totale. Il guest ha zero risorse finestra,
+ma anche `NSApp.windows` restituisce zero: main/key window, responder, input,
+resize e fullscreen non sono coperti. La proxy è limitata ai selettori provati;
+quelli sconosciuti falliscono senza creare una finestra nascosta o introdurre
+una copia di fallback.
+
+Questa prova dimostra un target host logico su un'app indipendente invariata,
+senza trasferire l'identità di un oggetto Objective-C fra processi. Non stabilisce
+compatibilità con giochi arbitrari, integrazione in Ready o direct scanout.
+Sorgenti, riproduzione e ricevute sono in
+[NativeEmbedding/NoCopyProxy.md](../NativeEmbedding/NoCopyProxy.md).

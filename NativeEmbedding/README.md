@@ -7,3 +7,9 @@ This directory does not integrate with Ready or patch games. `run_lab.py` compil
 Build only when the owned test applications are stopped. Fullscreen self-tests are opt-in and act on our host only. The code intentionally uses conservative CPU/GPU synchronization and a deprecated bootstrap registration helper; it is an experiment, not production transport or a catalog compatibility claim. No new third-party dependency is needed.
 
 The later user requirement rejects GPU copy and host composition. `DirectDrawable.m` / `direct_drawable_lab.py` are a separate cooperative experiment: guest renders into the public IOSurface of the host's actual CAMetalDrawable; host only presents. API/GPU tests succeeded with framebufferOnly=YES and no guest WindowServer windows. Visual verification succeeded through CUA after manual unlock; this does not transfer a foreign NSWindow object or prove arbitrary game interception. See the final section of the document.
+
+The later [NoCopyProxy experiment](NoCopyProxy.md) intercepts a normal independent
+synthetic app without changing its executable between baseline and injection.
+It renders directly into the host target with zero guest WindowServer windows
+and no application-level GPU copy. Its logical window proxy and public AppKit
+coverage remain deliberately limited; it is not production game integration.
