@@ -2,6 +2,10 @@
 
 Data: 28 ottobre 2026. Mac Apple M1, macOS 27.0.1 (26A434), SDK Command Line Tools locale. Risultato **sperimentale**, senza integrazione nel launcher e senza avviare giochi reali.
 
+**Vincolo successivo dell’utente:** il percorso con copia GPU o pass aggiuntivo di composizione è stato rifiutato come architettura per Ready. I risultati sotto restano prove del laboratorio, non una soluzione approvata. Una sola verifica successiva riguarda la scrittura diretta del guest nello storage pubblico del drawable host, senza blit e senza render pass host; anche un esito positivo dovrà distinguere questo trasporto dalla proprietà di una vera `NSWindow` fra processi. Nessuna delle due possibilità viene dichiarata già dimostrata.
+
+**Vincolo successivo dell’utente:** la soluzione con copia GPU e composizione host è stata rifiutata. Le sezioni iniziali rimangono ricevute storiche degli esperimenti; non sono la proposta accettata. Vedere in fondo **Prova diretta del drawable host, senza copia né pass host** per il controllo successivo, verificato poi anche visivamente dopo sblocco manuale.
+
 **È fattibile far apparire i pixel di un secondo processo nella finestra già esistente dell’host. È stato eseguito, anche tramite shim iniettato nel guest sintetico. I due entitlement abilitano il caricamento dello shim; non trasferiscono una `NSWindow`/`NSView` da un processo all’altro.** Il percorso funzionante qui è inoltro di superfici Metal/IOSurface e composizione nell’host.
 
 ## Che cosa è stato costruito ed eseguito
@@ -82,7 +86,7 @@ Ogni 30 frame il test controlla il verde al centro e il rosso del fondo uguale a
 
 ## Decisione e prossimo test proposto
 
-Per una sola finestra Ready visibile, la strada verificata è **host persistente + inoltro delle superfici + adapter espliciti per input, resize e fullscreen**. Il percorso cooperativo può evitare la copia esplicita intermedia; l’intercettazione del drawable è una base più compatibile con un guest indipendente, ma costa copia/pass aggiuntivi e dipende dal percorso del renderer. Non è un trapianto del suo albero AppKit nel processo Ready.
+**Decisione storica superata dal rifiuto dell’utente della copia/composizione:** la prima strada sperimentata era host persistente + inoltro delle superfici + adapter espliciti per input, resize e fullscreen. Non viene più proposta come soluzione del requisito corrente. Il percorso cooperativo può evitare la copia esplicita intermedia; l’intercettazione del drawable è una base più compatibile con un guest indipendente, ma costa copia/pass aggiuntivi e dipende dal percorso del renderer. Non è un trapianto del suo albero AppKit nel processo Ready.
 
 Caricare un engine direttamente nello stesso processo consentirebbe normale embedding locale, ma richiederebbe un engine/libreria cooperante, gestione di `NSApplication`, main thread e simboli; gli entitlement del gioco non trasformano un eseguibile arbitrario in quel modello.
 
@@ -104,3 +108,51 @@ python3 NativeEmbedding/experiment.py '/Volumes/Dati APFS/Codex-ready-01a17e79/t
 `--view` mantiene la sola finestra host per 45 secondi dopo i frame; il driver attende e registra gli exit status. Le immagini sono state catturate esclusivamente mediante CUA, non screen capture del launcher. Le prove non usano SIP/TCC override, task port esterni, giochi reali o impostazioni globali di ambiente.
 
 `manifest.json` collega i sorgenti snapshot ai prodotti con SHA-256. `final-rebuild-comparison.json` conferma che i due binari app e lo shim ricompilati/verificati alla consegna hanno **identici hash** rispetto ai binari delle prove finali. `build-and-sign.jsonl` conserva comandi, esiti e warning. I file `*.result.json` sono le ricevute primarie per le cinque modalità sopra; vecchi file esplorativi `window.*`/`standalone.*` non sostituiscono queste ricevute. Tutti i PID delle modalità finali sono terminati; nessuna finestra sintetica è stata lasciata aperta.
+
+
+## Prova diretta del drawable host, senza copia né pass host
+
+Aggiornamento successivo al rifiuto esplicito dell’utente di copia GPU/composizione: è stata eseguita **una prova pubblica separata** che inverte il trasporto della superficie. Nessun fallback a copia o sampling è stato inserito. Sorgenti nuovi `NativeEmbedding/DirectDrawable.m` e `NativeEmbedding/direct_drawable_lab.py`; ricevute indipendenti in:
+
+`/Volumes/Dati APFS/Codex-ready-01a17e79/tests/native-direct-drawable-20261028/`
+
+L’host acquisisce il **suo vero `CAMetalDrawable`**, legge la proprietà pubblica `drawable.texture.iosurface`, esporta proprio quella superficie con un diritto Mach. Il guest cooperativo senza finestra la importa, costruisce una texture che punta alla stessa IOSurface, esegue il solo render originale della scena e attende completamento GPU. L’ACK riporta l’identità della superficie. L’host chiama **soltanto `[drawable present]`** sul drawable acquisito: nessun command buffer Metal host, nessun render pass di sampling, nessun blit, nessun compute pass, nessun readback CPU. I due processi non trasferiscono un oggetto Objective-C `CAMetalDrawable` o `NSWindow`: condividono lo storage del drawable dell’host.
+
+Il probe iniziale ha trovato `texture.iosurface != nil` su questo M1/OS. Il run con `framebufferOnly=NO` ha concluso 180 frame con successo. Una seconda variante, senza cambiare il percorso, mantiene **`framebufferOnly=YES`**, il default ottimizzabile per display: anche questa conclude 180 frame. Non è quindi necessario disabilitare tale ottimizzazione per il percorso diretto provato su questa macchina; non è una garanzia per ogni formato, display o versione di macOS. [Apple descrive le restrizioni di framebufferOnly](https://developer.apple.com/documentation/quartzcore/cametallayer/framebufferonly) e [la proprietà pubblica IOSurface della texture](https://developer.apple.com/documentation/metal/mtltexture/iosurface).
+
+Run finale `framebufferOnly=YES`:
+
+| Controllo | Risultato misurato/registrato |
+| --- | --- |
+| Identità target | `host drawable.texture.iosurface` ID 318 = superficie importata guest ID 318 = `guest texture.iosurface` ID 318, ai sei campioni; ACK verificato per tutti i 180 frame |
+| GPU guest | 180 command buffer completati, 180 render encoder della scena, 0 blit, 0 compute; media `GPUStartTime/GPUEndTime` 0,057 ms |
+| Operazioni Metal host codificate | 0 command buffer, 0 encoder, 0 copie: solo acquisizione del drawable, IPC/attesa guest e chiamata `present` |
+| CPU/IPC/sync | media acquisizione drawable + roundtrip Mach + attesa GPU guest 1,389 ms; chiamata CPU `present` 0,069 ms; intervalli sintetici, non input-to-photon |
+| Allocazioni campionate | host 2.326.528 B; guest 1.703.936 B da `currentAllocatedSize`; non sommare gli alias della stessa superficie come memoria fisica distinta |
+| Finestre host | PID 36447: main window 5688; dopo l’inizio compare anche ID host 5689, tipo non classificato; CUA/AX espone la sola finestra principale |
+| Finestre guest | PID 36450: `NSApp == nil`, **lista WindowServer per quel PID vuota**, inclusi gli elementi non on-screen, prima di inizializzare Metal, ai sei campioni e alla fine |
+
+Il censimento usa `CGWindowListCopyWindowInfo(kCGWindowListOptionAll, ...)`, filtra esclusivamente il PID proprio e tratta un errore della query come fallimento, non come elenco vuoto. Il guest non esegue alcun costruttore `NSWindow`, non crea `NSApplication`, non ha una finestra nascosta. Non viene dedotto “zero finestre” dal semplice fatto che nulla sia visibile. I contatori degli encoder descrivono le operazioni effettivamente codificate dal nostro programma e sono verificabili nel sorgente; non costituiscono una cattura del driver/WindowServer né misurano operazioni interne del sistema.
+
+**Verifica visiva successiva riuscita dopo sblocco manuale dell’utente.** In precedenza CUA aveva restituito “The Mac is locked”; nessun bypass è stato tentato. Dopo la conferma dell’utente è stato eseguito **una sola volta lo stesso prototipo invariato**, con `framebufferOnly=YES`. CUA ha osservato la finestra `Native Direct Drawable HOST — only presentation` e catturato un triangolo verde su fondo rosso, non una finestra nera. Il file `direct-host-verified.cua.png` è l’immagine di questa prova diretta e non proviene dai precedenti esperimenti di copia. Host PID 36447 e guest PID 36450 sono terminati entrambi con exit 0; `validation.json` e `visual-verification.json` registrano hash e cleanup.
+
+Il censimento guest rimane vuoto in tutti i campioni. **Nell’esecuzione sbloccata il PID host possiede invece il main window 5688 e un secondo ID 5689**, non classificato prima dell’uscita; l’ispezione CUA/AX esponeva soltanto la finestra principale. Non si dichiara quindi “esattamente un oggetto WindowServer nell’host” o “nessun oggetto ausiliario del sistema”. Non c’è alcuna finestra del guest. La schermata verifica il contenuto finale effettivamente visibile, non la correttezza di ogni frame, il direct scanout o la latenza input-to-photon.
+
+### Il vincolo “l’app deve vedere soltanto la finestra Ready”
+
+Sono due requisiti diversi, e il primo non viene venduto come secondo:
+
+1. **Esiste soltanto la finestra WindowServer dell’host e un renderer guest cooperativo scrive nel suo target:** la prova diretta verifica il rendering nella finestra host e zero finestre guest; la verifica visiva è riuscita. Il secondo ID host non classificato impedisce una conclusione più forte di “un solo oggetto WindowServer totale”.
+2. **Un gioco macOS arbitrario crea/usa una `NSWindow` e quell’oggetto deve essere realmente la `NSWindow` già posseduta dal processo Ready:** questa prova non lo realizza. Le normali API pubbliche AppKit non trasferiscono oggetti `NSWindow`/`NSView` fra spazi di indirizzamento e i due entitlement non conferiscono quella proprietà. Una proxy locale o una finestra guest nascosta non sarebbero l’oggetto esterno e non soddisfano il vincolo letterale dell’utente.
+
+Un guest senza `NSApplication` non “vede” l’oggetto `NSWindow` host: riceve soltanto il target Metal. Per far credere a un gioco non cooperativo che `nextDrawable` e la presentazione restituiscano la sua normale finestra servirebbero intercettazione e oggetti locali proxy/adattati; ciò non rende la finestra un oggetto del processo host. **Non è stato costruito o dichiarato riuscito uno shim proxy per giochi in questo aggiornamento.** La verifica visiva ora è riuscita; dato il vincolo di identità dell’oggetto, la prova si ferma qui, senza introdurre un’altra copia o spacciare il renderer cooperativo per compatibilità generica.
+
+Zero pass/copie espliciti aggiuntivi non equivale a overhead totale nullo: il test registra CPU, IPC, attese e allocazioni; AppKit/Core Animation/WindowServer continuano a presentare la finestra host. Non è dimostrato un bypass del compositor, direct scanout o costo nullo rispetto a un processo unico.
+
+Per ripetere esclusivamente questa prova propria, dopo sblocco manuale e con i suoi vecchi PID terminati:
+
+```sh
+python3 NativeEmbedding/direct_drawable_lab.py
+```
+
+Il driver compila e firma due bundle propri su Dati, verifica le firme, registra `build-sign.jsonl`, `Host.signature.txt`, `Guest.signature.txt`, `host.txt`, `guest.txt`, `result.json`, snapshot dei sorgenti e `hashes.json`. Nessun gioco, sorgente Ready/Steam o impostazione globale viene modificato.
