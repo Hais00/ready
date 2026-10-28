@@ -33,6 +33,7 @@ typedef void *(*interface_fn)(void);
 typedef bool (*logged_on_fn)(void *);
 typedef uint64_t (*steam_id_fn)(void *);
 typedef bool (*subscribed_fn)(void *,uint32_t);
+typedef size_t (*redirect_stats_fn)(char *,size_t);
 static int report_fd=STDOUT_FILENO;
 static void timed_out(int sig) {
     (void)sig;
@@ -78,6 +79,19 @@ static int quiet_library_console(void) {
     int sink=open("/dev/null",O_WRONLY|O_CLOEXEC);if(sink<0)return -1;
     int ok=dup2(sink,STDOUT_FILENO)>=0&&dup2(sink,STDERR_FILENO)>=0;
     close(sink);return ok?0:-1;
+}
+static void report_redirect_stats(void) {
+    redirect_stats_fn getter=(redirect_stats_fn)dlsym(RTLD_DEFAULT,"ready_steam_discovery_redirect_stats_json");
+    if(!getter){dprintf(report_fd,"{\"redirectStatsGetterFound\":false,\"redirectStatsParsed\":false,\"redirectStats\":null}\n");return;}
+    char text[4096]={0},loaded[6]={0};unsigned long long fixed,redirected,forwarded,missing,invalid,succeeded,failed;int status=0,end=0;
+    size_t size=getter(text,sizeof text);
+    /* Parse only the exact safe scalar schema owned by our adapter. Never
+     * forward raw getter text or accept paths, service names, PIDs or identity. */
+    int fields=0;
+    if(size>0&&size<sizeof text&&text[size]==0)
+        fields=sscanf(text,"{\"redirectLoaded\":%5[a-z],\"fixedLookups\":%llu,\"privateRedirects\":%llu,\"otherLookupsForwarded\":%llu,\"missingConfiguration\":%llu,\"invalidConfiguration\":%llu,\"privateLookupSucceeded\":%llu,\"privateLookupFailed\":%llu,\"lastLookupStatus\":%d}%n",loaded,&fixed,&redirected,&forwarded,&missing,&invalid,&succeeded,&failed,&status,&end);
+    if(fields!=9||(size_t)end!=size||(strcmp(loaded,"true")&&strcmp(loaded,"false"))){dprintf(report_fd,"{\"redirectStatsGetterFound\":true,\"redirectStatsParsed\":false,\"redirectStats\":null}\n");return;}
+    dprintf(report_fd,"{\"redirectStatsGetterFound\":true,\"redirectStatsParsed\":true,\"redirectStats\":{\"redirectLoaded\":%s,\"fixedLookups\":%llu,\"privateRedirects\":%llu,\"otherLookupsForwarded\":%llu,\"missingConfiguration\":%llu,\"invalidConfiguration\":%llu,\"privateLookupSucceeded\":%llu,\"privateLookupFailed\":%llu,\"lastLookupStatus\":%d}}\n",loaded,fixed,redirected,forwarded,missing,invalid,succeeded,failed,status);
 }
 int main(int argc,char **argv) {
     const char *library=NULL,*code_root=NULL,*expected=NULL,*mode="exports";unsigned callback_ms=250;bool allowed=false,fixture=false;
@@ -138,9 +152,9 @@ int main(int argc,char **argv) {
     char after_hash[65];bool unchanged=!file_hash(image,after_hash)&&!strcmp(before_hash,after_hash);
     /* dlclose is intentionally omitted: the library may have asynchronous work.
      * This bounded, own probe exits instead of unloading live library code. */
-    alarm(0);
     bool authenticated=queried&&user_logged_on&&identity_matches&&owned_subscription;
     dprintf(report_fd,"{\"schema\":1,\"fixtureOnly\":%s,\"sdkSHA256\":\"%s\",\"sdkUnchanged\":%s,\"exports\":{\"SteamAPI_InitFlat\":%s,\"SteamAPI_Init\":%s,\"SteamAPI_IsSteamRunning\":%s,\"SteamAPI_RestartAppIfNecessary\":%s,\"SteamAPI_RunCallbacks\":%s,\"SteamAPI_Shutdown\":%s},\"initializationAttempted\":%s,\"apiInitialized\":%s,\"initResult\":%d,\"steamRunningBefore\":%s,\"steamRunningAfter\":%s,\"callbackCalls\":%u,\"shutdownCalled\":%s,\"externalLibraryConsoleSuppressed\":true,\"restartCalled\":false,\"gameLaunchRequested\":false}\n",fixture?"true":"false",before_hash,unchanged?"true":"false",flat?"true":"false",legacy?"true":"false",running?"true":"false",restart?"true":"false",callbacks?"true":"false",shutdown?"true":"false",attempted?"true":"false",initialized?"true":"false",result>=0&&result<=3?result:-1,before?"true":"false",after?"true":"false",pumped,shutdown_called?"true":"false");
     dprintf(report_fd,"{\"flatQueriesAvailable\":%s,\"flatQueriesPerformed\":%s,\"identityExpectationProvided\":%s,\"genuineUserLoggedOn\":%s,\"identityMatches\":%s,\"ownedSubscriptionObserved\":%s,\"gameAPIContextAuthenticated\":%s,\"fixtureOnly\":%s,\"gameLaunchRequested\":false}\n",queries_available?"true":"false",queried?"true":"false",expected_id?"true":"false",user_logged_on?"true":"false",identity_matches?"true":"false",owned_subscription?"true":"false",authenticated?"true":"false",fixture?"true":"false");
+    report_redirect_stats();alarm(0);
     return !unchanged?66:attempted&&!initialized?3:queried&&expected_id&&!authenticated?4:0;
 }

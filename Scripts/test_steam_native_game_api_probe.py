@@ -36,6 +36,18 @@ void *SteamAPI_SteamApps_v008(void){return initialized?&apps_object:NULL;}
 bool SteamAPI_ISteamApps_BIsSubscribedApp(void *p,uint32_t id){return initialized&&p==&apps_object&&id==1091500&&!getenv("READY_FAKE_NOT_SUBSCRIBED");}
 
 '''
+STATS=r'''
+// SPDX-License-Identifier: GPL-3.0-only
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+size_t ready_steam_discovery_redirect_stats_json(char *out,size_t capacity){
+ const char *mode=getenv("READY_FAKE_STATS_MODE");if(mode&&!strcmp(mode,"oversize"))return capacity+1;
+ if(mode&&!strcmp(mode,"private")){int n=snprintf(out,capacity,"{\"pid\":12345,\"path\":\"/synthetic-private-path\"}");return n>0?(size_t)n:0;}
+ int n=snprintf(out,capacity,"{\"redirectLoaded\":true,\"fixedLookups\":2,\"privateRedirects\":2,\"otherLookupsForwarded\":3,\"missingConfiguration\":0,\"invalidConfiguration\":0,\"privateLookupSucceeded\":1,\"privateLookupFailed\":1,\"lastLookupStatus\":1102}");return n>0?(size_t)n:0;
+}
+'''
+
 def sha(p):
  with p.open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
 def main():
@@ -58,8 +70,9 @@ def main():
   for mode in ['exports','init-flat']:
    p=subprocess.run(['/usr/bin/arch','-'+arch,*base,'--allow-sdk-execution','--mode',mode,'--callback-ms','30'],env=context,text=True,capture_output=True,timeout=20)
    assert p.returncode==0 and not p.stderr and 'synthetic-private-diagnostic-never-log' not in p.stdout
-   outputs=[json.loads(line) for line in p.stdout.splitlines()];assert len(outputs)==2
-   r=outputs[0]|outputs[1];assert r['fixtureOnly'] and not r['restartCalled'] and not r['gameLaunchRequested'] and r['sdkUnchanged']
+   outputs=[json.loads(line) for line in p.stdout.splitlines()];assert len(outputs)==3
+   r=outputs[0]|outputs[1]|outputs[2];assert not r['redirectStatsGetterFound']
+   assert r['fixtureOnly'] and not r['restartCalled'] and not r['gameLaunchRequested'] and r['sdkUnchanged']
    assert r['exports']['SteamAPI_InitFlat'] and not r['exports']['SteamAPI_Init']
    if mode=='init-flat':assert r['apiInitialized'] and r['callbackCalls']>0 and r['shutdownCalled'] and r['gameAPIContextAuthenticated'] and r['identityMatches']
    else:assert not r['initializationAttempted'] and r['callbackCalls']==0
@@ -67,8 +80,19 @@ def main():
   for name,changes in [('wrong-expected-identity',{'STEAMID':'76561198000000002'}),('expected-env-alone-is-not-login',{'READY_FAKE_LOGGED_OFF':'1'}),('missing-subscription',{'READY_FAKE_NOT_SUBSCRIBED':'1'})]:
    p=subprocess.run(['/usr/bin/arch','-'+arch,*base,'--allow-sdk-execution','--mode','init-flat','--callback-ms','0'],env={**context,**changes},text=True,capture_output=True,timeout=20)
    assert p.returncode==4 and not p.stderr
-   status=json.loads(p.stdout.splitlines()[-1]);assert not status['gameAPIContextAuthenticated']
+   status=next(value for value in map(json.loads,p.stdout.splitlines()) if 'gameAPIContextAuthenticated' in value);assert not status['gameAPIContextAuthenticated']
    checks[arch+'-'+name+'-does-not-authenticate']=True
+  stats_source=work/'own-stats.c';stats_library=work/'libOwnStats.dylib'
+  if not stats_library.exists():
+   stats_source.write_text(STATS);cmd=[*flags,'-dynamiclib',str(stats_source),'-o',str(stats_library)];subprocess.run(cmd,env=env,check=True,capture_output=True);commands.append(cmd)
+  for stats_mode in ['valid','private','oversize']:
+   args=['/usr/bin/arch','-'+arch,'/usr/bin/env','DYLD_INSERT_LIBRARIES='+str(stats_library),'READY_FAKE_STATS_MODE='+stats_mode,*base,'--allow-sdk-execution','--mode','exports']
+   p=subprocess.run(args,env=context,text=True,capture_output=True,timeout=20);assert p.returncode==0 and not p.stderr
+   result=json.loads(p.stdout.splitlines()[-1]);assert result['redirectStatsGetterFound']
+   assert 'synthetic-private-path' not in p.stdout and '\"pid\"' not in p.stdout
+   if stats_mode=='valid':assert result['redirectStatsParsed'] and result['redirectStats']['fixedLookups']==2 and result['redirectStats']['lastLookupStatus']==1102
+   else:assert not result['redirectStatsParsed'] and result['redirectStats'] is None
+   checks[arch+'-own-redirect-stats-'+stats_mode+'-safe-schema']=True
   assert marker.exists()
   invalid={**context,'SteamAppId':'0'}
   p=subprocess.run(['/usr/bin/arch','-'+arch,*base,'--allow-sdk-execution'],env=invalid,text=True,capture_output=True,timeout=20);assert p.returncode==65;checks[arch+'-wrong-app-context-refused']=True
