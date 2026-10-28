@@ -2,6 +2,53 @@
 import AppKit
 import LauncherCore
 
+private enum MaintenanceOperation {
+  case recover
+  case bind(LegacyMigrationPlan, LibraryState)
+  case rollback(LegacyMigrationPlan, LibraryState)
+  case migrate(Profile, [Game], LibraryState)
+
+  func execute(paths: LauncherPaths) throws -> (LibraryState?, String) {
+    switch self {
+    case .recover:
+      _ = try LegacyMigration.recoverInterrupted(paths: paths)
+      return (
+        nil,
+        "Copie parziali archiviate. Puoi ripetere la migrazione; originali e dati personali conservati."
+      )
+    case .bind(let plan, let library):
+      let rebound = try LegacyMigration.bindLibrary(library, plan: plan, paths: paths)
+      try LibraryRepository(paths: paths).save(rebound)
+      return (
+        rebound,
+        "Installazioni collegate al profilo proprietario. Verifica giochi e salvataggi; originale conservato."
+      )
+    case .rollback(let plan, let library):
+      _ = try LegacyMigration.rollback(plan, paths: paths)
+      let updated = LegacyMigration.libraryAfterRollback(library, plan: plan)
+      try LibraryRepository(paths: paths).save(updated)
+      return (
+        updated, "Migrazione annullata. Copie archiviate, originali e dati personali conservati."
+      )
+    case .migrate(let profile, let games, let library):
+      guard let plan = try LegacyMigration.prepare(paths: paths, profile: profile.id, games: games)
+      else {
+        throw LauncherError.unavailable("Il vecchio ambiente non è più disponibile.")
+      }
+      let backup = paths.root.appendingPathComponent(
+        "Migration/Plans/" + plan.id.uuidString + "/library-before.json")
+      try AtomicFile.writePrivate(JSONEncoder().encode(library), to: backup)
+      let copied = try LegacyMigration.execute(plan, paths: paths)
+      let updated = try LegacyMigration.bindLibrary(library, plan: copied, paths: paths)
+      try LibraryRepository(paths: paths).save(updated)
+      return (
+        updated,
+        "Copie create per \(profile.name). Verifica ogni gioco e salvataggio; originale e ripristino conservati."
+      )
+    }
+  }
+}
+
 extension AppDelegate {
   private func canMaintainData() -> Bool {
     guard !maintenanceInProgress, !session.running, pendingLaunch == nil,
@@ -14,13 +61,14 @@ extension AppDelegate {
     }
     return true
   }
-  private func maintain(_ message: String, work: @escaping () throws -> (LibraryState?, String)) {
+  private func maintain(_ message: String, operation: MaintenanceOperation) {
     guard canMaintainData() else { return }
     maintenanceInProgress = true
     canvas.message = message
     canvas.refresh()
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let result = Result { try work() }
+    let paths = self.paths
+    DispatchQueue.global(qos: .userInitiated).async { [weak self, paths, operation] in
+      let result = Result { try operation.execute(paths: paths) }
       DispatchQueue.main.async {
         guard let self else { return }
         self.maintenanceInProgress = false
@@ -45,14 +93,7 @@ extension AppDelegate {
       prompt.addButton(withTitle: "Archivia copie parziali")
       prompt.addButton(withTitle: "Annulla")
       guard prompt.runModal() == .alertFirstButtonReturn else { return }
-      let paths = self.paths
-      maintain("Recupero dell’operazione interrotta…") {
-        _ = try LegacyMigration.recoverInterrupted(paths: paths)
-        return (
-          nil,
-          "Copie parziali archiviate. Puoi ripetere la migrazione; originali e dati personali conservati."
-        )
-      }
+      maintain("Recupero dell’operazione interrotta…", operation: .recover)
       return
     }
     if let plan = LegacyMigration.loadPlan(paths: paths),
@@ -68,17 +109,8 @@ extension AppDelegate {
       prompt.addButton(withTitle: "Annulla migrazione…")
       prompt.addButton(withTitle: "Chiudi")
       let choice = prompt.runModal()
-      let snapshot = state
-      let paths = self.paths
       if choice == .alertFirstButtonReturn {
-        maintain("Collegamento delle installazioni migrate…") {
-          let rebound = try LegacyMigration.bindLibrary(snapshot, plan: plan, paths: paths)
-          try LibraryRepository(paths: paths).save(rebound)
-          return (
-            rebound,
-            "Installazioni collegate al profilo proprietario. Verifica giochi e salvataggi; originale conservato."
-          )
-        }
+        maintain("Collegamento delle installazioni migrate…", operation: .bind(plan, state))
       } else if choice == .alertSecondButtonReturn {
         let confirm = NSAlert()
         confirm.messageText = "Archiviare le copie migrate?"
@@ -87,15 +119,7 @@ extension AppDelegate {
         confirm.addButton(withTitle: "Archivia e annulla migrazione")
         confirm.addButton(withTitle: "Mantieni migrazione")
         guard confirm.runModal() == .alertFirstButtonReturn else { return }
-        maintain("Archiviazione delle copie migrate…") {
-          _ = try LegacyMigration.rollback(plan, paths: paths)
-          let updated = LegacyMigration.libraryAfterRollback(snapshot, plan: plan)
-          try LibraryRepository(paths: paths).save(updated)
-          return (
-            updated,
-            "Migrazione annullata. Copie archiviate, originali e dati personali conservati."
-          )
-        }
+        maintain("Archiviazione delle copie migrate…", operation: .rollback(plan, state))
       }
       return
     }
@@ -152,24 +176,7 @@ extension AppDelegate {
     review.addButton(withTitle: "Crea copie isolate")
     review.addButton(withTitle: "Annulla")
     guard review.runModal() == .alertFirstButtonReturn else { return }
-    let paths = self.paths
-    let snapshot = state
-    maintain("Migrazione dei dati per \(profile.name)…") {
-      guard
-        let plan = try LegacyMigration.prepare(paths: paths, profile: profile.id, games: candidates)
-      else {
-        throw LauncherError.unavailable("Il vecchio ambiente non è più disponibile.")
-      }
-      let backup = paths.root.appendingPathComponent(
-        "Migration/Plans/" + plan.id.uuidString + "/library-before.json")
-      try AtomicFile.writePrivate(JSONEncoder().encode(snapshot), to: backup)
-      let copied = try LegacyMigration.execute(plan, paths: paths)
-      let updated = try LegacyMigration.bindLibrary(snapshot, plan: copied, paths: paths)
-      try LibraryRepository(paths: paths).save(updated)
-      return (
-        updated,
-        "Copie create per \(profile.name). Verifica ogni gioco e salvataggio; originale e ripristino conservati."
-      )
-    }
+    maintain(
+      "Migrazione dei dati per \(profile.name)…", operation: .migrate(profile, candidates, state))
   }
 }
