@@ -103,6 +103,7 @@ public struct Game: Codable, Identifiable, Equatable {
   public var variants: [GameVariant]
   public var selectedVariant: String?
   public var engine: GraphicsEngine
+  public var controllerInputMode: ControllerInputMode?
   public var lastPlayed: Date?
   public var saveRules: [SaveRule]
   public var metadata: [String: JSONValue]?
@@ -211,10 +212,13 @@ public struct LibraryState: Codable {
   }
   public func configured(_ game: Game, profile: UUID? = nil) -> Game {
     var value = game
+    // Shared/store Game metadata cannot select another profile's input policy.
+    value.controllerInputMode = nil
     if let preferences = gamePreferences?[
       GamePreferences.key(profile: profile ?? activeProfile, gameID: game.id)]
     {
       value.engine = preferences.engine
+      value.controllerInputMode = preferences.controllerInputMode
       value.selectedVariant = preferences.selectedVariant
       if let scoped = preferences.variants {
         value.variants =
@@ -235,13 +239,15 @@ public struct GamePreferences: Codable {
   public var engine: GraphicsEngine
   public var selectedVariant: String?
   public var variants: [GameVariant]?
+  public var controllerInputMode: ControllerInputMode?
   public init(
     engine: GraphicsEngine = .automatic, selectedVariant: String? = nil,
-    variants: [GameVariant]? = nil
+    variants: [GameVariant]? = nil, controllerInputMode: ControllerInputMode? = nil
   ) {
     self.engine = engine
     self.selectedVariant = selectedVariant
     self.variants = variants
+    self.controllerInputMode = controllerInputMode
   }
   public static func key(profile: UUID, gameID: String) -> String {
     profile.uuidString + ":" + gameID

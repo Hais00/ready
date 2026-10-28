@@ -5,7 +5,8 @@ The diagnostic Wine 11.20 provider implements capture in Wine's builtin XInput
 DLLs. It returns neutral controller input to the Windows game while its injected
 Metal overlay is visible. GameController continues reading the original controller
 state. The currently selected runtime is unchanged; the candidate configuration is
-`Runtime/candidate-xinput.json`.
+`Runtime/candidate-xinput-v2.json`. The earlier protocol1/E5 provider and its
+candidate remain unchanged.
 
 The production implementation adapts the shared Wine `xinput1_3/main.c` source and
 adds a small native Unix library. It does not intercept arbitrary executable code,
@@ -33,6 +34,12 @@ the game made no XInput call during the entire open/close interval. Packet numbe
 change with capture transitions, including synthetic neutral state.
 
 ## Activation and failure behavior
+
+Protocol2 requires the exact native environment value `M1L_XINPUT_CAPTURE=1`.
+Absent, `0`, `true`, `01`, or any other value leaves ordinary input and rumble
+untouched, even with otherwise valid visible overlay state or changing capture
+epochs. The native reader performs no control/status file reads while opted out.
+The PE exports and pointer-free Unix-call ABI are unchanged.
 
 The native reader uses the current process's `M1L_CONTROL_FILE` and
 `M1L_OVERLAY_STATUS` (or the sibling `overlay-status.json`). It requires private,
@@ -77,8 +84,12 @@ contains neither facility.
 `Evidence/runtime-xinput-build.json` binds source and payload hashes.
 `Evidence/runtime-xinput-capture.json` records all five DLL versions on PE32 and
 PE64, independent keystroke calls, release latches, vibration, invalid status
-cases, newer commands, and two concurrent sessions with separate control files
-and native PIDs. Per-case DLL/Unix-module load traces are preserved with hashes.
+cases, newer commands, and concurrent sessions with separate control files
+and native PIDs. Protocol2 adds30 opt-out cases (absent/0/true across all ten
+DLL/architecture combinations), while the original ten opted-in cases retain
+rumble, epoch/release-latch and24 invalid-state/command checks. Four simultaneous
+session-pair cases cover PE32 and PE64 with both sessions enabled and with the
+second session opted out. A five-case native-only reader unit also checks `01`. Per-case DLL/Unix-module load traces are preserved with hashes.
 
 `Evidence/runtime-xinput-real-overlay.json` adds an actual Windows Vulkan window
 presenting through Wine, KosmicKrisp, and Metal. The real injected overlay writes
@@ -89,10 +100,15 @@ provider. The overlay allocates 835,584 tracked texture bytes while shown and
 returns to zero when hidden in this run. This is an input/overlay integration
 proof, not a direct-display or physical-controller result.
 
-The freeze script makes versioned base and DXMT Wine copies with production
+The freeze script makes a new protocol2 provider identity with versioned base and DXMT Wine copies with production
 capture modules, a separate `test-only/` payload, complete pristine Wine source,
 adapted source, build configuration, recipes, patches, notices, and hash-bound
-evidence. It creates a diagnostic candidate configuration without selecting it.
+evidence. It creates a diagnostic candidate configuration without selecting it. A separate
+immutable `controller-capability.json` binds each exact Wine root, raw Wine
+binary and selected launcher hashes,11 regular production modules,4 Unix
+symlink targets and10 original/current builtin hash lists. The candidate binds
+that capability manifest by path and hash; the full provider manifest then binds
+both the capability and candidate configuration hashes, avoiding a cycle.
 It does not swap DLLs in an active prefix. A game must load these builtin XInput
 DLLs; an application-supplied native XInput DLL is outside this proof. The
 candidate records the builtin override needed for testing but does not force it
@@ -112,3 +128,22 @@ controller input is exclusively captured across every game/input API. The active
 runtime generation and its existing prefixes remain unchanged. This diagnostic
 provider's evidence does not establish distribution readiness for the whole app
 or all inherited runtime components.
+
+
+## Protocol2 checkpoint
+
+The new frozen provider is
+`ready-xinput-v2-wine1120-5847cc7c9432529e98b9`. The capability manifest SHA256 is
+`e78fc7c412e1d1e00760cf500862222f3ddb0044e17ffd02aec6513a7e918662`;
+`Evidence/runtime-xinput-e6-provider.json` binds the full manifest and candidate.
+The source snapshot includes the native opt-in unit, production/test build
+recipes, all API/overlay evidence, complete Wine source and original notices.
+No frozen E5 file, active default configuration or evaluation configuration was
+changed. All synthetic Wine prefixes were stopped and removed before freeze.
+
+The observed actual-overlay result uses explicit flag1 and the earlier compiled
+Metal overlay library; it proves the new reader with actual same-process status.
+The caller's new controller policy and rebuilt overlay still require their own
+Core/Session end-to-end gate before any activation. Physical controllers remain
+unverified. The deterministic backend and observation export exist only in the
+separate test variant; production uses Wine's original physical input path.

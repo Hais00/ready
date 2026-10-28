@@ -1,8 +1,8 @@
 {
-  "createdAt": "2026-10-28T07:56:48.014175+01:00",
+  "createdAt": "2026-10-28T09:32:19.156797+01:00",
   "goalComplete": false,
   "core": {
-    "checks": 29,
+    "checks": 30,
     "passed": true,
     "names": [
       "Valve manifests and malformed input",
@@ -19,6 +19,7 @@
       "Dependencies and registry remain isolated between games",
       "Interrupted renderer projection recovers both DLL manifests",
       "Portable runtime paths resolve at the config without rewriting provenance",
+      "Controller input policy binds protocol2 providers and per-profile opt-out",
       "Non-destructive legacy migration and rollback source",
       "Interrupted rollback restores copies and preserves conflicts",
       "Migration preflight does not leave partial prefixes",
@@ -352,12 +353,57 @@
   },
   "diagnosticXInputCapture": {
     "passed": true,
+    "protocolVersion": 2,
+    "providerID": "ready-xinput-v2-wine1120-5847cc7c9432529e98b9",
     "dllArchitectureCases": 10,
+    "optOutCases": 30,
+    "totalAPICases": 40,
+    "negativeProtocolChecks": 24,
+    "sessionPairCases": 4,
+    "nativeOptInUnitCases": 5,
     "separateSessionsVerified": true,
     "actualInjectedOverlayStatusVerified": true,
     "physicalControllerVerified": false,
     "activated": false,
     "scope": "Wine 11.20 builtin XInput with simulated device input; other input APIs and WineCX unverified"
+  },
+  "frontendSnapshotV2": {
+    "fixtureChecks": 14,
+    "passed": true,
+    "legacyV1Refused": true,
+    "freshV2BuildAndAssemblyVerified": false,
+    "scope": "Synthetic source/recipe/binary/module tamper fixtures only; current-source normal build and actual v2 assembly pending"
+  },
+  "integratedRuntimeProposal": {
+    "prepared": true,
+    "fixtureChecks": 9,
+    "activationImplemented": false,
+    "activeProjectConfigurationsChanged": false,
+    "userConfigurationsOrPrefixesChanged": false,
+    "controllerBindingsPreserved": true,
+    "WineCXInputCaptureApplied": false,
+    "lastCheckReady": false,
+    "remainingCheckGates": [
+      "production-five-case-E2E",
+      "UI-signatures"
+    ]
+  },
+  "productionControllerPolicyE2E": {
+    "passed": false,
+    "requiredCases": 5,
+    "completedCases": 0,
+    "productionPolicyVerified": false,
+    "guardTriggered": true,
+    "terminalCondition": "disk-reserve",
+    "reserveMiB": 512,
+    "phase": "unknown",
+    "phaseKnown": false,
+    "elapsedAtGuardMonotonicSeconds": null,
+    "freeBytesAtGuard": null,
+    "softwareFailureEstablished": false,
+    "retryPendingSpace": true,
+    "newTelemetryExecuted": false,
+    "physicalControllerVerified": false
   },
   "portableRuntimeProjection": {
     "passed": true,
@@ -372,6 +418,7 @@
     "sourceAndProjectionBytesUnchanged": true,
     "scope": "real relocated open Wine/Windows synthetic programs with per-game/profile save bindings and native image audit",
     "nativeARM64HomebrewClosureResolved": false,
+    "separateSourceBuiltNativeCandidateClosureResolved": true,
     "wholeRuntimeDistributionApproved": false
   },
   "transportedDependencyEvidence": {
@@ -426,7 +473,8 @@
     "Guided migration UI visual verification (Mac locked during current attempt)",
     "Real legacy user-data/game migration beyond synthetic copy and rollback crash fixtures",
     "External updaters that do not participate in the installation lease protocol",
-    "Native ARM64 Kosmic Homebrew closure and a complete portable runtime installer",
+    "Integrate the separately verified source ARM64 renderer and finish the portable installer without changing defaults prematurely",
+    "Five-case production controller-policy E2E and current-source fresh frontend v2 build/assembly; retry pending additional disk space",
     "Historical static-input/binary source correspondence and exact release notices beyond acquired source archives",
     "Whole-application packaging and remaining third-party distribution inventory beyond the approved 25-library dependency payload"
   ]

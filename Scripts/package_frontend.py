@@ -33,6 +33,7 @@ def stage(destination):
         'StoreBridge/NOTICE', 'StoreBridge/dependencies.lock.json',
         'Scripts/build_app.sh', 'Scripts/build_overlay.sh', 'Scripts/build_session_host.sh',
         'Scripts/package_frontend.py', 'Scripts/test_frontend_package.py',
+        'Scripts/frontend_snapshot.py', 'Scripts/test_frontend_snapshot.py',
     ))
     sources.extend(ROOT / name for name in ('Build/libReadyOverlay.dylib', 'Build/ReadySessionHost'))
     inventory = []

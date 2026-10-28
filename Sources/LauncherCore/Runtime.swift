@@ -25,6 +25,7 @@ public struct RuntimeConfiguration: Codable {
   public var engineBootstrap32Dirs: [String: String]?
   public var evaluationOnlyEngines: [String]?
   public var evaluationModeEnabled: Bool?
+  public var overlayInputCapture: ControllerInputDescriptor?
   public var runtimeIdentity: String { runtimeID ?? wineVersion ?? wine ?? "unknown" }
   public func bootstrap32Directory(engine: GraphicsEngine?) -> String? {
     engine.flatMap { engineBootstrap32Dirs?[$0.rawValue] } ?? builtin32Directory
@@ -88,6 +89,10 @@ public struct LaunchPlan: Codable {
       env["READY_OVERLAY_LIBRARY"] = overlay.path
     }
     if variant.platform == .macOS {
+      try ControllerInputPolicy.apply(
+        game: game, variant: variant, runtime: runtime, engine: .automatic, wine: nil,
+        prefix: paths.prefix(profile: profile, gameID: game.id),
+        overlayAvailable: env["READY_OVERLAY_LIBRARY"] != nil, environment: &env)
       return .init(
         executable: target, arguments: variant.arguments, environment: env,
         currentDirectory: variant.workingDirectory
@@ -151,6 +156,11 @@ public struct LaunchPlan: Codable {
       throw LauncherError.unavailable(
         "Il motore selezionato richiede DLL non ancora installate/verificate.")
     }
+    let availableOverlay = overlay.flatMap { try? FileManager.default.attributesOfItem(atPath: $0.path)[.type] as? FileAttributeType } == .typeRegular
+    try ControllerInputPolicy.apply(
+      game: game, variant: variant, runtime: runtime, engine: engine, wine: wine,
+      prefix: paths.prefix(profile: profile, gameID: game.id),
+      overlayAvailable: availableOverlay && env["READY_OVERLAY_LIBRARY"] != nil, environment: &env)
     return .init(
       executable: wine, arguments: [target] + variant.arguments, environment: env,
       currentDirectory: variant.workingDirectory

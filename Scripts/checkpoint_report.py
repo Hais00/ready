@@ -34,7 +34,14 @@ source_gate=read('runtime-source-activation-dependency-gate.json')
 frontend_package=read('frontend-package-tests.json')
 xinput=read('runtime-xinput-capture.json')
 xinput_overlay=read('runtime-xinput-real-overlay.json')
-xinput_provider=read('runtime-xinput-provider.json')
+xinput_provider=read('runtime-xinput-e6-provider.json')
+xinput_optin=read('runtime-xinput-e6-native-optin.json')
+snapshot_tests=read('frontend-snapshot-v2-final-tests.json')
+integrated_proposal=read('runtime-integrated-proposal.json')
+integrated_check=read('runtime-integrated-check.json')
+controller_e2e_guard=read('controller-policy-e2e-guard.json')
+controller_e2e_path=ROOT/'Evidence/controller-policy-e2e.json'
+controller_e2e=json.loads(controller_e2e_path.read_text()) if controller_e2e_path.exists() else {}
 projection=read('runtime-projection-tests.json')
 projection_resources=read('runtime-projection-resource-resume-tests.json')
 transport=read('runtime-evidence-transport-tests.json')
@@ -63,7 +70,13 @@ assert source_gate['binaryRedistributionReady'] and not source_gate['runtimeVali
 assert frontend_package['passed']
 assert xinput['passed'] and xinput['twoSessionIsolation']['passed'] and xinput_overlay['passed']
 assert not xinput['defaultRuntimeModified'] and not xinput_overlay['defaultRuntimeModified']
-assert xinput_provider['diagnosticOnly'] and not xinput_provider['activated']
+assert xinput_provider['protocolVersion']==2 and xinput_provider['diagnosticOnly'] and not xinput_provider['activated']
+assert len(xinput['cases'])==10 and len(xinput['optOutCases'])==30 and all(c['passed'] for c in xinput['optOutCases'])
+assert sum(len(c['negativeProtocolCases']) for c in xinput['cases'])==24
+assert len(xinput['twoSessionIsolation']['cases'])==4 and xinput_optin['passedCases']==5
+assert snapshot_tests['passed'] and len(snapshot_tests['checks'])==14 and snapshot_tests['legacyV1Refused']
+assert not snapshot_tests['realV2AssemblyExecuted']
+assert not integrated_proposal['actualActivationCommandAvailable'] and not integrated_check['activationImplemented']
 assert projection['passed'] and not projection['staticOnly'] and projection['sourceAndProjectionBytesUnchanged']
 assert projection['ownedPrefixFixturesRemoved'] and not projection['binaryDistributionApproved']
 assert projection_resources['passed'] and projection_resources['sourceAndProjectionBytesUnchanged']
@@ -131,10 +144,29 @@ report={
   'scope':frontend_package['scope'],'externalRuntimesBundled':False,
   'proprietaryAppleFilesBundled':False,'runtimeLocationGUIVerified':False,
   'wholeApplicationDistributionApproved':False},
- 'diagnosticXInputCapture':{'passed':True,'dllArchitectureCases':len(xinput['cases']),
+ 'diagnosticXInputCapture':{'passed':True,'protocolVersion':2,'providerID':xinput_provider['providerID'],
+  'dllArchitectureCases':len(xinput['cases']),'optOutCases':len(xinput['optOutCases']),
+  'totalAPICases':len(xinput['cases'])+len(xinput['optOutCases']),
+  'negativeProtocolChecks':sum(len(c['negativeProtocolCases']) for c in xinput['cases']),
+  'sessionPairCases':len(xinput['twoSessionIsolation']['cases']),'nativeOptInUnitCases':xinput_optin['passedCases'],
   'separateSessionsVerified':True,'actualInjectedOverlayStatusVerified':True,
   'physicalControllerVerified':False,'activated':False,
   'scope':'Wine 11.20 builtin XInput with simulated device input; other input APIs and WineCX unverified'},
+ 'frontendSnapshotV2':{'fixtureChecks':len(snapshot_tests['checks']),'passed':True,
+  'legacyV1Refused':True,'freshV2BuildAndAssemblyVerified':False,
+  'scope':'Synthetic source/recipe/binary/module tamper fixtures only; current-source normal build and actual v2 assembly pending'},
+ 'integratedRuntimeProposal':{'prepared':True,'fixtureChecks':integrated_proposal['fixtureTests'],
+  'activationImplemented':False,'activeProjectConfigurationsChanged':False,
+  'userConfigurationsOrPrefixesChanged':False,'controllerBindingsPreserved':True,'WineCXInputCaptureApplied':False,
+  'lastCheckReady':integrated_check['readyForRootReview'],
+  'remainingCheckGates':[k for k,v in integrated_check['checks'].items() if not v['passed']]},
+ 'productionControllerPolicyE2E':{'passed':controller_e2e.get('passed',False),'requiredCases':5,
+  'completedCases':len(controller_e2e.get('cases',[])), 'productionPolicyVerified':controller_e2e.get('passed',False),
+  'guardTriggered':controller_e2e_guard['guardTriggered'],'terminalCondition':controller_e2e_guard['terminalCondition'],
+  'reserveMiB':512,'phase':controller_e2e_guard['phase'],'phaseKnown':False,
+  'elapsedAtGuardMonotonicSeconds':None,'freeBytesAtGuard':None,
+  'softwareFailureEstablished':controller_e2e_guard['softwareFailureObserved'],
+  'retryPendingSpace':True,'newTelemetryExecuted':False,'physicalControllerVerified':False},
  'portableRuntimeProjection':{'passed':True,'checks':len(projection['tests']),
   'additionalResourceChecks':len(projection_resources['tests']),
   'resourceScope':'DXMT PE64 shader/readback; 600 DXMT PE64/PE32 fullscreen-requested presents; Vulkan600 presents; TLS/certificate rejection/GDI/DirectWrite PE64/PE32',
@@ -142,7 +174,8 @@ report={
   'minimumMacOS':projection['minimumMacOS'],'diagnosticOnly':True,
   'oldRuntimeRootsDenied':True,'sourceAndProjectionBytesUnchanged':True,
   'scope':'real relocated open Wine/Windows synthetic programs with per-game/profile save bindings and native image audit',
-  'nativeARM64HomebrewClosureResolved':False,'wholeRuntimeDistributionApproved':False},
+  'nativeARM64HomebrewClosureResolved':False,'separateSourceBuiltNativeCandidateClosureResolved':True,
+  'wholeRuntimeDistributionApproved':False},
  'transportedDependencyEvidence':{'passed':True,'checks':len(transport['tests']),
   'evidenceFiles':transport['evidenceFiles'],'originalEvidenceDeniedToVerifier':True,
   'scope':transport['scope'],'approvedLibrariesAndModules':transport['transportedGateSummary']['approvedPayloadLibrariesAndModules'],
@@ -171,7 +204,8 @@ report={
   'Guided migration UI visual verification (Mac locked during current attempt)',
   'Real legacy user-data/game migration beyond synthetic copy and rollback crash fixtures',
   'External updaters that do not participate in the installation lease protocol',
-  'Native ARM64 Kosmic Homebrew closure and a complete portable runtime installer',
+  'Integrate the separately verified source ARM64 renderer and finish the portable installer without changing defaults prematurely',
+  'Five-case production controller-policy E2E and current-source fresh frontend v2 build/assembly; retry pending additional disk space',
   'Historical static-input/binary source correspondence and exact release notices beyond acquired source archives',
   'Whole-application packaging and remaining third-party distribution inventory beyond the approved 25-library dependency payload']
 }

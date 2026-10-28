@@ -21,11 +21,25 @@ def project(payload,wine):
         if source.is_symlink():target.symlink_to(os.readlink(source))
         else:shutil.copy2(source,target)
 
+def require_space(extra=0):
+    if shutil.disk_usage(ROOT).free<512*1024*1024+extra:raise RuntimeError('Preserving512MiB reserve before XInput provider freeze')
+
+def controller_capability(wine,original,build):
+    hashes={str(Path(k).relative_to('production')):v for k,v in build['payloadHashes'].items() if k.startswith('production/')}
+    assert len(hashes)==11
+    for relative,digest in hashes.items():assert sha(wine/'lib/wine'/relative)==digest,relative
+    aliases={'x86_64-unix/'+name+'.so':'xinput-capture.so' for name in build['versions'] if name!='xinput9_1_0'}
+    for relative,target in aliases.items():assert (wine/'lib/wine'/relative).is_symlink() and os.readlink(wine/'lib/wine'/relative)==target
+    known={relative:[digest,sha(original/'lib/wine'/relative)] for relative,digest in hashes.items() if relative.endswith('.dll')}
+    return {'wineRoot':str(wine),'wineBinarySHA256':sha(wine/'bin/wine'),'wineLauncherSHA256':sha(wine/'bin/ready-wine'),'payloadHashes':hashes,'unixAliases':aliases,'knownBuiltinHashes':known}
+
 def main():
+    require_space(192*1024*1024)
     paths=[ROOT/'Runtime/runtime.json',ROOT/'Runtime/evaluation-runtime.json'];before={str(p):sha(p) for p in paths};cfg=json.loads(paths[0].read_text())
     build_path=ROOT/'Evidence/runtime-xinput-build.json';api_path=ROOT/'Evidence/runtime-xinput-capture.json';overlay_path=ROOT/'Evidence/runtime-xinput-real-overlay.json'
     build=json.loads(build_path.read_text());api=json.loads(api_path.read_text());overlay=json.loads(overlay_path.read_text())
-    assert api['passed'] and len(api['cases'])==10 and api['twoSessionIsolation']['passed']
+    assert api['passed'] and api['protocolVersion']==2 and len(api['cases'])==10 and len(api['optOutCases'])==30 and api['twoSessionIsolation']['passed'] and len(api['twoSessionIsolation']['cases'])==4
+    assert build['protocolVersion']==2 and build['requiredOptIn']=={'name':'M1L_XINPUT_CAPTURE','value':'1'}
     assert api['buildEvidenceSHA256']==sha(build_path) and overlay['passed'] and overlay['nativeStatusWrittenByOverlay'] and not overlay['defaultRuntimeModified'] and overlay['buildEvidenceSHA256']==sha(build_path)
     assert build['nativeMinimumMacOS']=='14.0'
     assert sha(STAGING/'x86_64-ready-test-device.dll')==overlay['testDeviceSHA256']
@@ -43,12 +57,12 @@ def main():
         trace=case['moduleProvenance'];assert sha(ROOT/trace['log'])==trace['sha256']
     assert sha(ROOT/overlay['moduleLog']['path'])==overlay['moduleLog']['sha256']
     origin_base=Path(cfg['immutableRuntimeSet'])/'wine';origin_dxmt=Path(cfg['engineWineBinaries']['dxmtMetal']).parent.parent
-    inputs={'schema':1,'wineVersion':'11.20','baseRuntimeID':cfg['runtimeID'],'baseSourceGenerationSHA256':sha(origin_base.parent/'source-generation.json'),'dxmtSourceGenerationSHA256':sha(origin_dxmt.parent/'source-generation.json'),'buildEvidenceSHA256':sha(build_path),'apiEvidenceSHA256':sha(api_path),'apiTestBinaryScope':sorted(api_binary_names),'overlayEvidenceSHA256':sha(overlay_path),'freezeRecipeSHA256':sha(__file__)}
-    identity='ready-xinput-wine1120-'+hashlib.sha256(canonical(inputs)).hexdigest()[:20];provider=ROOT/'Runtime/Providers'/identity
+    inputs={'schema':2,'protocolVersion':2,'wineVersion':'11.20','baseRuntimeID':cfg['runtimeID'],'baseSourceGenerationSHA256':sha(origin_base.parent/'source-generation.json'),'dxmtSourceGenerationSHA256':sha(origin_dxmt.parent/'source-generation.json'),'buildEvidenceSHA256':sha(build_path),'apiEvidenceSHA256':sha(api_path),'apiTestBinaryScope':sorted(api_binary_names),'overlayEvidenceSHA256':sha(overlay_path),'nativeOptInEvidenceSHA256':sha(ROOT/'Evidence/runtime-xinput-e6-native-optin.json'),'freezeRecipeSHA256':sha(__file__)}
+    identity='ready-xinput-v2-wine1120-'+hashlib.sha256(canonical(inputs)).hexdigest()[:20];provider=ROOT/'Runtime/Providers'/identity
     if provider.exists():raise RuntimeError('Provider already exists; frozen providers are never overwritten')
     provider.mkdir();sources=provider/'sources';sources.mkdir();(sources/'Vendor').mkdir();copytree(ROOT/'Vendor/wine',sources/'Vendor/wine');shutil.copy2(ROOT/'Vendor/wine.source.json',sources/'Vendor/wine.source.json')
     scripts=sources/'Scripts';scripts.mkdir()
-    names=['runtime_build_xinput.py','runtime_freeze_xinput.py','runtime_xinput_protocol.h','runtime_xinput_unix.c','runtime_xinput_gate.h','runtime_wine_xinput_capture.patch','runtime_build.py','runtime_fetch.py','runtime_xinput_test.py','runtime_xinput_probe.c','runtime_xinput_test_device.c','runtime_xinput_overlay_test.py','runtime_xinput_overlay_probe.c','runtime_xinput_present_test.c','runtime_vulkan_present.c']
+    names=['runtime_build_xinput.py','runtime_freeze_xinput.py','runtime_xinput_protocol.h','runtime_xinput_native_optin_probe.c','runtime_xinput_unix.c','runtime_xinput_gate.h','runtime_wine_xinput_capture.patch','runtime_build.py','runtime_fetch.py','runtime_xinput_test.py','runtime_xinput_probe.c','runtime_xinput_test_device.c','runtime_xinput_overlay_test.py','runtime_xinput_overlay_probe.c','runtime_xinput_present_test.c','runtime_vulkan_present.c']
     for name in names:shutil.copy2(ROOT/'Scripts'/name,scripts/name)
     shutil.copy2(STAGING/'main.c',sources/'adapted-xinput-main.c')
     configuration=sources/'configuration';configuration.mkdir()
@@ -59,13 +73,13 @@ def main():
     providers={}
     for kind,original in [('base',origin_base),('dxmt',origin_dxmt)]:
         directory=provider/kind;directory.mkdir();wine=directory/'wine';copytree(original,wine);project(STAGING/'production',wine)
-        providers[kind]={'wine':str(wine/'bin/ready-wine'),'wineBinary':str(wine/'bin/wine'),'wineServer':str(wine/'bin/wineserver'),'builtin32Directory':str(wine/'lib/wine/i386-windows'),'originalWine':str(original),'originalWineBinarySHA256':sha(original/'bin/wine'),'wineBinaryUnchanged':sha(wine/'bin/wine')==sha(original/'bin/wine')}
+        providers[kind]={'controllerCapability':controller_capability(wine,original,build),'wine':str(wine/'bin/ready-wine'),'wineBinary':str(wine/'bin/wine'),'wineServer':str(wine/'bin/wineserver'),'builtin32Directory':str(wine/'lib/wine/i386-windows'),'originalWine':str(original),'originalWineBinarySHA256':sha(original/'bin/wine'),'wineBinaryUnchanged':sha(wine/'bin/wine')==sha(original/'bin/wine')}
     tests=provider/'test-only';tests.mkdir();copytree(STAGING/'test',tests/'variant')
-    for name in ['x86_64-ready-test-device.dll','i386-ready-test-device.dll','x86_64-xinput-probe.exe','i386-xinput-probe.exe','xinput-overlay-probe.exe','ready-present-test.dll']:shutil.copy2(STAGING/name,tests/name)
+    for name in ['native-optin-probe','x86_64-ready-test-device.dll','i386-ready-test-device.dll','x86_64-xinput-probe.exe','i386-xinput-probe.exe','xinput-overlay-probe.exe','ready-present-test.dll']:shutil.copy2(STAGING/name,tests/name)
     evidence=provider/'evidence';evidence.mkdir()
     shutil.copy2(origin_base.parent/'source-generation.json',evidence/'base-source-generation.json');shutil.copy2(origin_dxmt.parent/'source-generation.json',evidence/'dxmt-source-generation.json')
-    for path in [build_path,api_path,overlay_path]:shutil.copy2(path,evidence/path.name)
-    for case in api['cases']:shutil.copy2(ROOT/case['moduleProvenance']['log'],evidence/Path(case['moduleProvenance']['log']).name)
+    for path in [build_path,api_path,overlay_path,ROOT/'Evidence/runtime-xinput-e6-native-optin.json']:shutil.copy2(path,evidence/path.name)
+    for case in api['cases']+api['optOutCases']:shutil.copy2(ROOT/case['moduleProvenance']['log'],evidence/Path(case['moduleProvenance']['log']).name)
     shutil.copy2(ROOT/overlay['moduleLog']['path'],evidence/Path(overlay['moduleLog']['path']).name)
     config=json.loads(json.dumps(cfg));config.update(wine=providers['base']['wine'],wineBinary=providers['base']['wineBinary'],wineServer=providers['base']['wineServer'],builtin32Directory=providers['base']['builtin32Directory'],runtimeID=cfg['runtimeID']+'+'+identity)
     for key in ['engineWineBinaries','engineWineServers','engineSearchPaths','engineDLLs','engineDLLs32','engineBuiltin32Dirs','engineProviderIDs']:
@@ -75,11 +89,16 @@ def main():
         elif key=='engineSearchPaths':value['dxmtMetal']=str(provider/'dxmt/wine/lib/wine')
         elif key=='engineProviderIDs':value['dxmtMetal']=identity+'-dxmt'
         else:value['dxmtMetal']=str(provider/'dxmt/wine/lib/wine'/('x86_64-windows' if key=='engineDLLs' else 'i386-windows'))
-    config['overlayInputCapture']={'diagnosticOnly':True,'providerID':identity,'api':'Wine builtin XInput','requiresBuiltinXInputSelection':True,'requiredBuiltinOverride':'xinput1_1,xinput1_2,xinput1_3,xinput1_4,xinput9_1_0=b','verifiedArchitectures':['i386','x86_64'],'physicalControllerVerified':False,'directInputCovered':False,'rawInputCovered':False,'hidCovered':False}
-    candidate=ROOT/'Runtime/candidate-xinput.json';candidate.write_text(json.dumps(config,indent=2)+'\n')
-    manifest={'schema':1,'providerID':identity,'diagnosticOnly':True,'activated':False,'inputs':inputs,'providers':providers,'productionPayloadHashes':{k:v for k,v in build['payloadHashes'].items() if k.startswith('production/')},'sourceLicense':'LGPL-2.1-or-later','testLicense':'GPL-3.0-only','fullWineUpstreamSourceSupplied':True,'upstreamSource':json.loads((ROOT/'Vendor/wine.source.json').read_text()),'sourceFiles':{str(p.relative_to(provider)):sha(p) for p in sources.rglob('*') if p.is_file() and not p.is_symlink()},'scope':{'xinputVersions':build['versions'],'architectures':['i386','x86_64'],'rawDevice':'unchanged production Wine; deterministic backend only under test-only/','winecxVerified':False,'physicalControllerVerified':False,'otherInputAPIsCovered':False,'wholeRuntimeDistributionReadiness':False},'candidateConfiguration':str(candidate),'candidateSHA256':sha(candidate),'defaultConfigHashesBefore':before,'defaultConfigHashesAfter':{str(p):sha(p) for p in paths}}
+    engine_providers={engine:'base' for engine in ['wineD3D','vulkanKosmic','vulkanMolten','dxvkKosmic','dxvkMolten','vkd3dKosmic']};engine_providers['dxmtMetal']='dxmt'
+    controller={'protocolVersion':2,'providerID':identity,'engineProviders':engine_providers,'providers':{kind:value['controllerCapability'] for kind,value in providers.items()}}
+    capability_path=provider/'controller-capability.json'
+    capability={**controller,'proofs':{'apiMatrixSHA256':sha(api_path),'realOverlaySHA256':sha(overlay_path),'buildSHA256':sha(build_path),'nativeOptInSHA256':sha(ROOT/'Evidence/runtime-xinput-e6-native-optin.json')},'requiredEnvironment':{'M1L_XINPUT_CAPTURE':'1'},'physicalControllerVerified':False,'nonXInputAPIsCovered':False,'diagnosticOnly':True}
+    capability_path.write_text(json.dumps(capability,indent=2)+'\n')
+    config['overlayInputCapture']={**controller,'manifestPath':str(capability_path),'manifestSHA256':sha(capability_path)}
+    candidate=ROOT/'Runtime/candidate-xinput-v2.json';candidate.write_text(json.dumps(config,indent=2)+'\n')
+    manifest={'schema':2,'protocolVersion':2,'capabilityManifest':{'path':str(capability_path),'sha256':sha(capability_path)},'providerID':identity,'diagnosticOnly':True,'activated':False,'inputs':inputs,'providers':providers,'productionPayloadHashes':{k:v for k,v in build['payloadHashes'].items() if k.startswith('production/')},'sourceLicense':'LGPL-2.1-or-later','testLicense':'GPL-3.0-only','fullWineUpstreamSourceSupplied':True,'upstreamSource':json.loads((ROOT/'Vendor/wine.source.json').read_text()),'sourceFiles':{str(p.relative_to(provider)):sha(p) for p in sources.rglob('*') if p.is_file() and not p.is_symlink()},'scope':{'xinputVersions':build['versions'],'architectures':['i386','x86_64'],'rawDevice':'unchanged production Wine; deterministic backend only under test-only/','winecxVerified':False,'physicalControllerVerified':False,'otherInputAPIsCovered':False,'wholeRuntimeDistributionReadiness':False},'candidateConfiguration':str(candidate),'candidateSHA256':sha(candidate),'defaultConfigHashesBefore':before,'defaultConfigHashesAfter':{str(p):sha(p) for p in paths}}
     assert manifest['defaultConfigHashesAfter']==before
     (provider/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
-    record={'providerID':identity,'provider':str(provider),'manifestSHA256':sha(provider/'manifest.json'),'diagnosticOnly':True,'activated':False,'defaultRuntimeModified':False,'candidate':str(candidate),'candidateSHA256':sha(candidate),'apiMatrixPassed':True,'realOverlayPassed':True,'sourceLicense':'LGPL-2.1-or-later'}
-    (ROOT/'Evidence/runtime-xinput-provider.json').write_text(json.dumps(record,indent=2)+'\n');print(json.dumps(record,indent=2))
+    record={'protocolVersion':2,'capabilityManifestPath':str(capability_path),'capabilityManifestSHA256':sha(capability_path),'providerID':identity,'provider':str(provider),'manifestSHA256':sha(provider/'manifest.json'),'diagnosticOnly':True,'activated':False,'defaultRuntimeModified':False,'candidate':str(candidate),'candidateSHA256':sha(candidate),'apiMatrixPassed':True,'realOverlayPassed':True,'sourceLicense':'LGPL-2.1-or-later'}
+    (ROOT/'Evidence/runtime-xinput-e6-provider.json').write_text(json.dumps(record,indent=2)+'\n');print(json.dumps(record,indent=2))
 if __name__=='__main__':main()

@@ -358,9 +358,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       advanced
       ? "Opzioni avanzate. Il percorso automatico usa solo combinazioni disponibili e verificate."
       : "Scegli la versione da installare. Il launcher prepara automaticamente il suo ambiente."
-    let host = NSView(frame: NSRect(x: 0, y: 0, width: 470, height: advanced ? 83 : 34))
-    let version = NSPopUpButton(frame: NSRect(x: 0, y: advanced ? 46 : 4, width: 470, height: 28))
-    let engine = NSPopUpButton(frame: NSRect(x: 0, y: 4, width: 470, height: 28))
+    let host = NSView(frame: NSRect(x: 0, y: 0, width: 470, height: advanced ? 126 : 34))
+    let version = NSPopUpButton(frame: NSRect(x: 0, y: advanced ? 90 : 4, width: 470, height: 28))
+    let engine = NSPopUpButton(frame: NSRect(x: 0, y: 47, width: 470, height: 28))
+    let controller = NSPopUpButton(frame: NSRect(x: 0, y: 4, width: 470, height: 28))
+    controller.addItems(withTitles: ControllerInputMode.allCases.map { $0.title })
+    controller.selectItem(at: ControllerInputMode.allCases.firstIndex(of: game.controllerInputMode ?? .automatic) ?? 0)
+    if advanced {
+      a.informativeText += "\nController per questo profilo, dal prossimo avvio. Automatico rispetta le DLL XInput note del gioco; Forza richiede i builtin Wine senza modificare i file."
+    }
     version.addItems(
       withTitles: game.variants.map {
         $0.title + ($0.installed ? " · installato" : " · da installare")
@@ -373,7 +379,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     engine.addItems(withTitles: GraphicsEngine.allCases.map { $0.title })
     engine.selectItem(at: GraphicsEngine.allCases.firstIndex(of: game.engine) ?? 0)
     host.addSubview(version)
-    if advanced { host.addSubview(engine) }
+    if advanced { host.addSubview(engine); host.addSubview(controller) }
     a.accessoryView = host
     a.addButton(withTitle: game.currentVariant?.installed == false ? "Installa" : "Gioca")
     a.addButton(withTitle: advanced ? "Salva opzioni" : "Opzioni avanzate…")
@@ -385,6 +391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       return
     }
     game.engine = GraphicsEngine.allCases[engine.indexOfSelectedItem]
+    if advanced { game.controllerInputMode = ControllerInputMode.allCases[controller.indexOfSelectedItem] }
     guard game.variants.indices.contains(version.indexOfSelectedItem) else {
       showError(
         LauncherError.unavailable(
@@ -396,7 +403,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let scopedVariants = state.gamePreferences?[preferenceKey]?.variants
     state.gamePreferences?[preferenceKey] = GamePreferences(
       engine: game.engine, selectedVariant: game.selectedVariant,
-      variants: scopedVariants)
+      variants: scopedVariants, controllerInputMode: game.controllerInputMode)
     try? persist()
     if result == .alertFirstButtonReturn {
       if !game.variants[version.indexOfSelectedItem].installed {
@@ -633,6 +640,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let incoming = try? JSONDecoder().decode([Game].self, from: data)
       else { return }
       for var game in incoming {
+        game.controllerInputMode = nil // Only owned per-profile preferences select input policy.
         if let index = self.state.games.firstIndex(where: { $0.id == game.id }) {
           let old = self.state.games[index]
           game.engine = old.engine

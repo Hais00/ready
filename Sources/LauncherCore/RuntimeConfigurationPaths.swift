@@ -46,6 +46,24 @@ public enum RuntimeConfigurationPaths {
       }
       result[key] = try paths.mapValues { try absolute($0, root: root) }
     }
+    // Only these two capability locations are operational. Hashes, proof IDs,
+    // known-builtin records and historical provenance remain byte-for-byte values.
+    if var capture = result["overlayInputCapture"] as? [String: Any] {
+      if let value = capture["manifestPath"] {
+        guard let path = value as? String else { throw LauncherError.invalid("Manifest controller non valido.") }
+        capture["manifestPath"] = try absolute(path, root: root)
+      }
+      if let value = capture["providers"] {
+        guard var providers = value as? [String: [String: Any]] else { throw LauncherError.invalid("Provider controller non valido.") }
+        for (name, var provider) in providers {
+          guard let path = provider["wineRoot"] as? String else { throw LauncherError.invalid("Cartella Wine controller non valida.") }
+          provider["wineRoot"] = try absolute(path, root: root)
+          providers[name] = provider
+        }
+        capture["providers"] = providers
+      }
+      result["overlayInputCapture"] = capture
+    }
     // Resolved documents may be saved elsewhere (e.g. evaluation history).
     // Retaining the relative-format tag would rebase them a second time.
     result.removeValue(forKey: "pathFormat")

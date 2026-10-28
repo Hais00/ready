@@ -37,6 +37,9 @@ static bool read_owned(const char *path,struct state *result,bool fresh){struct 
 static pthread_mutex_t capture_lock=PTHREAD_MUTEX_INITIALIZER;
 static struct ready_xinput_capture cached;
 static NTSTATUS read_capture(void *raw){struct ready_xinput_capture *out=raw;pthread_mutex_lock(&capture_lock);memset(&cached,0,sizeof(cached));cached.unix_pid=getpid();cached.reason=1;
+    /* Protocol v2: a live overlay alone never authorizes Windows input capture. */
+    const char *enabled=getenv("M1L_XINPUT_CAPTURE");
+    if(!enabled||strcmp(enabled,"1")){cached.reason=2;*out=cached;pthread_mutex_unlock(&capture_lock);return 0;}
     const char *control=getenv("M1L_CONTROL_FILE"),*status=getenv("M1L_OVERLAY_STATUS");char fallback[4096];if(!status&&control){size_t n=strlen(control);if(n<sizeof(fallback)){memcpy(fallback,control,n+1);char *slash=strrchr(fallback,'/');if(slash&&(size_t)(slash-fallback)+21<sizeof(fallback)){strcpy(slash+1,"overlay-status.json");status=fallback;}}}
     struct state command,effective;if(read_owned(control,&command,false)&&read_owned(status,&effective,true)&&effective.have_pid&&effective.pid==(uint64_t)getpid()&&effective.have_frame&&effective.frame>0&&effective.have_support&&effective.support&&effective.metal&&effective.heartbeat){cached.active=1;cached.visible=command.sequence>effective.sequence?command.visible:effective.visible;uint64_t sequence=command.sequence>effective.sequence?command.sequence:effective.sequence;cached.command_sequence_low=(uint32_t)sequence;cached.command_sequence_high=(uint32_t)(sequence>>32);cached.capture_epoch_low=(uint32_t)effective.capture_epoch;cached.capture_epoch_high=(uint32_t)(effective.capture_epoch>>32);cached.reason=0;}
     *out=cached;pthread_mutex_unlock(&capture_lock);return 0;

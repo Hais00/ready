@@ -14,6 +14,10 @@ import uuid
 
 ROOT=Path(__file__).resolve().parents[1]
 OUTPUT=ROOT/'Runtime/XInputDiagnostic'
+RESERVE=512*1024*1024
+
+def require_space(additional=0):
+    if shutil.disk_usage(ROOT).free<RESERVE+additional:raise RuntimeError('Preserving512MiB reserve before creating/running an input fixture')
 
 def compile_tests():
     sdk=ROOT/'Runtime/wine-11.20/include/wine/windows';crt=ROOT/'Vendor/wine/include/msvcrt';cc='/opt/homebrew/opt/llvm/bin/clang';dt='/opt/homebrew/opt/llvm/bin/llvm-dlltool';link='/opt/homebrew/opt/lld/bin/lld-link'
@@ -31,17 +35,27 @@ def atomic(path,data,mode=0o600):
     temporary=path.with_name(path.name+'.'+uuid.uuid4().hex);temporary.write_text(json.dumps(data));temporary.chmod(mode);os.replace(temporary,path)
 
 class Session:
-    def __init__(self,root,wine,arch,version,template=None,extra_env=None,executable=None):
+    started=[]
+    def __init__(self,root,wine,arch,version,template=None,extra_env=None,executable=None,capture_flag="1"):
+        require_space(64*1024*1024)
+        self.stopped=False
         self.root=root;self.wine=wine;self.control=root/'control.json';self.status=root/'overlay-status.json';self.sequence=1;self.visible=False;self.epoch=0;self.pid=0;self.prefix=root/'prefix';root.mkdir(parents=True,exist_ok=True)
         if template:subprocess.run(['/bin/cp','-cR',str(template),str(self.prefix)],check=True)
         else:wow=self.prefix/'drive_c/windows/syswow64';wow.mkdir(parents=True);subprocess.run(['/bin/cp','-cR',str(wine/'lib/wine/i386-windows')+'/.',str(wow)],check=True)
         env={k:v for k,v in os.environ.items() if not k.startswith(('WINE','DYLD_','READY_','M1L_'))};cfg=json.loads((ROOT/'Runtime/runtime.json').read_text());base=Path(cfg['immutableRuntimeSet']);env.update(WINEPREFIX=str(self.prefix),WINEDEBUG='+loaddll',DYLD_PRINT_LIBRARIES='1',DYLD_LIBRARY_PATH=str(base/'vulkan')+':'+str(base/'dependencies'),WINEDLLOVERRIDES='mscoree,mshtml=d;xinput1_1,xinput1_2,xinput1_3,xinput1_4,xinput9_1_0=b');self.env=env
-        self.log=(root/'wine.log').open('wb')
+        self.log=(root/'wine.log').open('wb');Session.started.append(self)
         if not template:
             boot=subprocess.run([str(wine/'bin/wine'),'wineboot','-u'],env=env,stdout=self.log,stderr=self.log,timeout=180);subprocess.run([str(wine/'bin/wineserver'),'-k'],env=env,capture_output=True,timeout=10)
             if boot.returncode:raise RuntimeError('Synthetic Wine bootstrap failed')
-        atomic(self.control,{'sequence':self.sequence,'visible':False,'selection':0});env.update(extra_env or {});env.update(M1L_CONTROL_FILE=str(self.control),M1L_OVERLAY_STATUS=str(self.status),M1L_XINPUT_TEST_VERSION=version+'.dll',M1L_XINPUT_TEST_PROVIDER='Z:'+str(OUTPUT/(arch+'-ready-test-device.dll')).replace('/','\\'))
-        self.process=subprocess.Popen([str(wine/'bin/wine'),str(executable or OUTPUT/(arch+'-xinput-probe.exe'))],env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log,text=True,bufsize=1);self.info=self.read();self.pid=self.info.get('nativePid',0)
+        atomic(self.control,{'sequence':self.sequence,'visible':False,'selection':0});env.update(extra_env or {})
+        env.pop('M1L_XINPUT_CAPTURE',None)
+        if capture_flag is not None:env['M1L_XINPUT_CAPTURE']=capture_flag
+        env.update(M1L_CONTROL_FILE=str(self.control),M1L_OVERLAY_STATUS=str(self.status),M1L_XINPUT_TEST_VERSION=version+'.dll',M1L_XINPUT_TEST_PROVIDER='Z:'+str(OUTPUT/(arch+'-ready-test-device.dll')).replace('/','\\'))
+        self.process=subprocess.Popen([str(wine/'bin/wine'),str(executable or OUTPUT/(arch+'-xinput-probe.exe'))],env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log,text=True,bufsize=1)
+        try:self.info=self.read()
+        except Exception:
+            self.close();raise
+        self.pid=self.info.get('nativePid',0)
         if not self.pid:
             self.close();raise RuntimeError('Test Unix bridge did not report the native process ID: '+str(self.info))
     def read(self):
@@ -51,7 +65,8 @@ class Session:
         result=json.loads(line)
         if 'error' in result:raise RuntimeError(str(result))
         return result
-    def command(self,text):self.process.stdin.write(text+'\n');self.process.stdin.flush();return self.read()
+    def command(self,text):
+        require_space();self.process.stdin.write(text+'\n');self.process.stdin.flush();result=self.read();require_space();return result
     def update(self,visible,supported=True,pid=None,age=0,command_visible=None):
         self.sequence+=1
         if visible and not self.visible:self.epoch+=1
@@ -63,7 +78,8 @@ class Session:
             if self.process.poll() is None:
                 try:self.process.stdin.write('exit\n');self.process.stdin.flush();self.process.wait(timeout=10)
                 except Exception:pass
-        subprocess.run([str(self.wine/'bin/wineserver'),'-k'],env=self.env,capture_output=True,timeout=10);self.log.close()
+        subprocess.run([str(self.wine/'bin/wineserver'),'-k'],env=self.env,capture_output=True,timeout=10)
+        subprocess.run([str(self.wine/'bin/wineserver'),'-w'],env=self.env,capture_output=True,timeout=15,check=True);self.stopped=True;self.log.close()
 
 def stage_wine(root):
     cfg=json.loads((ROOT/'Runtime/runtime.json').read_text());source=Path(cfg['immutableRuntimeSet'])/'wine';wine=root/'wine';subprocess.run(['/bin/cp','-cR',str(source),str(wine)],check=True)
@@ -79,10 +95,15 @@ def stage_wine(root):
 def digest(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--template',type=Path);args=parser.parse_args()
-    if args.template:assert args.template.parent.parent.name.startswith('xinput-real-overlay-') and (args.template.parent.parent/'.ready-xinput-test').is_file()
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--template',type=Path);parser.add_argument('--keep',action='store_true');args=parser.parse_args()
+    if args.template:
+        known_baseline=(ROOT/'Runtime/TestPrefixes/wine-11.20').resolve()
+        own_marked=args.template.parent.parent.name.startswith('xinput-real-overlay-') and (args.template.parent.parent/'.ready-xinput-test').is_file()
+        assert args.template.resolve()==known_baseline or own_marked
+        assert (args.template/'system.reg').is_file()
+    require_space(192*1024*1024)
     default_paths=[ROOT/'Runtime/runtime.json',ROOT/'Runtime/evaluation-runtime.json'];before={str(p):digest(p) for p in default_paths}
-    compile_tests();parent=ROOT/'Runtime/TestPrefixes';root=parent/('xinput-capture-'+uuid.uuid4().hex);root.mkdir();(root/'.ready-xinput-test').write_text('Only deterministic synthetic controller tests\n');wine=stage_wine(root);sessions=[];report={'testDeviceProviderOnly':True,'physicalControllerVerified':False,'defaultRuntimeModified':False,'defaultConfigHashesBefore':before,'buildEvidenceSHA256':digest(ROOT/'Evidence/runtime-xinput-build.json'),'sourceInputs':{str(p.relative_to(ROOT)):digest(p) for p in [Path(__file__),ROOT/'Scripts/runtime_xinput_probe.c',ROOT/'Scripts/runtime_xinput_test_device.c']},'testBinaryHashes':{str(p.relative_to(ROOT)):digest(p) for p in OUTPUT.glob('*') if p.is_file() and p.suffix in ['.exe','.dll']},'cases':[],'passed':False}
+    compile_tests();parent=ROOT/'Runtime/TestPrefixes';root=parent/('xinput-capture-'+uuid.uuid4().hex);root.mkdir();(root/'.ready-xinput-test').write_text('Only deterministic synthetic controller tests\n');wine=stage_wine(root);sessions=[];report={'protocolVersion':2,'requiredOptIn':'M1L_XINPUT_CAPTURE=1','testDeviceProviderOnly':True,'physicalControllerVerified':False,'defaultRuntimeModified':False,'defaultConfigHashesBefore':before,'buildEvidenceSHA256':digest(ROOT/'Evidence/runtime-xinput-build.json'),'sourceInputs':{str(p.relative_to(ROOT)):digest(p) for p in [Path(__file__),ROOT/'Scripts/runtime_xinput_probe.c',ROOT/'Scripts/runtime_xinput_test_device.c']},'testBinaryHashes':{str(p.relative_to(ROOT)):digest(p) for p in OUTPUT.glob('*') if p.is_file() and p.suffix in ['.exe','.dll']},'cases':[],'optOutCases':[],'passed':False}
     try:
         template=args.template
         versions=['xinput1_1','xinput1_2','xinput1_3','xinput1_4','xinput9_1_0']
@@ -144,19 +165,54 @@ def main():
                     template=root/'initialized-template';subprocess.run(['/bin/cp','-cR',str(session.prefix),str(template)],check=True)
                 shutil.rmtree(session.prefix)
                 print(arch,version,'PASS',flush=True)
-        first=Session(root/'isolation-a',wine,'x86_64','xinput1_4',template);sessions.append(first)
-        second=Session(root/'isolation-b',wine,'x86_64','xinput1_4',template);sessions.append(second)
-        for value in [first,second]:value.command('seed-a')
-        first.update(True);second.update(False);a=first.command('sample');b=second.command('sample');assert a['buttons']==0 and b['buttons']&0x1000
-        second.update(True);assert first.command('sample')['buttons']==0 and second.command('sample')['buttons']==0
-        first.update(False);first.command('seed-neutral');first.command('sample');first.command('seed-b');assert first.command('sample')['buttons']==0x2000 and second.command('sample')['buttons']==0
-        report['twoSessionIsolation']={'separateControlNamespaces':True,'differentNativePids':first.pid!=second.pid,'first':a,'second':b,'passed':True}
+        # The native opt-in is process-local. All disabled spellings must leave
+        # ordinary GetState/Ex/keystroke/rumble and epoch transitions untouched.
+        for flag in [None,'0','true']:
+            flag_name='absent' if flag is None else flag
+            for arch in ['x86_64','i386']:
+                for version in versions:
+                    session=Session(root/('optout-'+flag_name)/arch/version,wine,arch,version,template,capture_flag=flag);sessions.append(session)
+                    session.command('seed-a');initial=session.command('sample');session.update(True);visible=session.command('rumble')
+                    assert visible['active']==visible['visible']==0 and visible['buttons']==initial['buttons'] and visible['buttons']&0x10 and visible['leftTrigger']==255 and visible['leftX']==20000
+                    assert visible['packet']==initial['packet'] and visible['leftMotor']==77 and visible['rightMotor']==99
+                    if visible['extendedResult']==0:assert visible['extendedButtons']&0x0400
+                    session.update(False);session.update(True);session.update(False);epoch=session.command('sample');assert epoch['active']==0 and epoch['buttons']==initial['buttons'] and epoch['packet']==initial['packet']
+                    if initial['keystrokeResult']!=50:
+                        session.command('seed-neutral')
+                        for _ in range(16):
+                            if session.command('key-only')['keystrokeResult']==4306:break
+                        else:raise RuntimeError('Opt-out normal keystroke release did not drain')
+                        session.command('seed-b');key=session.command('key-only');assert key['keystrokeResult']==0 and key['virtualKey']==0x5801
+                    report['optOutCases'].append({'flag':flag,'architecture':arch,'version':version,'initial':initial,'visibleStatusWhileOptedOut':visible,'unpolledEpochWhileOptedOut':epoch,'passed':True})
+                    session.close();sessions.remove(session)
+                    evidence_log=ROOT/'Evidence'/('runtime-xinput-optout-'+flag_name+'-'+arch+'-'+version+'.log');shutil.copy2(session.root/'wine.log',evidence_log)
+                    report['optOutCases'][-1]['moduleProvenance']={'log':str(evidence_log.relative_to(ROOT)),'sha256':digest(evidence_log)}
+                    shutil.rmtree(session.prefix);print(arch,version,'optout',flag_name,'PASS',flush=True)
+        isolation=[]
+        for arch in ['x86_64','i386']:
+            for second_flag in ['1',None]:
+                label='both-enabled' if second_flag=='1' else 'second-opted-out'
+                first=Session(root/('isolation-'+arch+'-'+label+'-a'),wine,arch,'xinput1_4',template);sessions.append(first)
+                second=Session(root/('isolation-'+arch+'-'+label+'-b'),wine,arch,'xinput1_4',template,capture_flag=second_flag);sessions.append(second)
+                for value in [first,second]:value.command('seed-a')
+                first.update(True);second.update(False);a=first.command('rumble');b=second.command('rumble');assert a['buttons']==a['leftMotor']==0 and b['buttons']&0x1000 and b['leftMotor']==77
+                second.update(True);a_shown=first.command('sample');b_shown=second.command('rumble');assert a_shown['buttons']==0
+                if second_flag=='1':assert b_shown['buttons']==b_shown['leftMotor']==0
+                else:assert b_shown['buttons']&0x1010==0x1010 and b_shown['leftMotor']==77
+                first.update(False);first.command('seed-neutral');first.command('sample');first.command('seed-b');assert first.command('sample')['buttons']==0x2000
+                if second_flag=='1':assert second.command('sample')['buttons']==0
+                else:assert second.command('sample')['buttons']&0x1010==0x1010
+                isolation.append({'architecture':arch,'secondFlag':second_flag,'separateControlNamespaces':True,'differentNativePids':first.pid!=second.pid,'first':a,'second':b,'secondVisible':b_shown,'passed':True})
+                first.close();second.close();sessions.remove(first);sessions.remove(second);shutil.rmtree(first.prefix);shutil.rmtree(second.prefix)
+        report['twoSessionIsolation']={'cases':isolation,'passed':all(v['passed'] for v in isolation)}
         report['defaultConfigHashesAfter']={str(p):digest(p) for p in default_paths};assert before==report['defaultConfigHashesAfter']
         report['passed']=True;print(json.dumps(report,indent=2))
     finally:
-        for session in sessions:session.close()
+        scoped=[s for s in Session.started if s.root.is_relative_to(root)]
+        for session in scoped:
+            if not session.stopped:session.close()
         (ROOT/'Evidence/runtime-xinput-capture.json').write_text(json.dumps(report,indent=2)+'\n')
         # Retain failed fixtures for diagnosis; successful fixtures contain no user data.
-        if report['passed'] and (root/'.ready-xinput-test').is_file():shutil.rmtree(root)
+        if not args.keep and all(s.stopped for s in scoped) and (root/'.ready-xinput-test').is_file():shutil.rmtree(root)
 
 if __name__=='__main__':main()

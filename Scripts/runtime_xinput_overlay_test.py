@@ -38,9 +38,9 @@ def wait_status(session,predicate,timeout=20):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--template',type=Path);args=parser.parse_args()
-    if args.template:assert args.template.parent.parent.name.startswith('xinput-real-overlay-') and (args.template.parent.parent/'.ready-xinput-test').is_file()
+    if args.template:assert args.template.resolve()==(ROOT/'Runtime/TestPrefixes/wine-11.20').resolve() or (args.template.parent.parent.name.startswith('xinput-real-overlay-') and (args.template.parent.parent/'.ready-xinput-test').is_file())
     compile_tests();exe,present=compile_present();cfg=json.loads((ROOT/'Runtime/runtime.json').read_text());default_before=digest(ROOT/'Runtime/runtime.json');overlay=ROOT/'Build/libReadyOverlay.dylib';assert overlay.is_file()
-    work=ROOT/'Runtime/TestPrefixes'/('xinput-real-overlay-'+uuid.uuid4().hex);work.mkdir();(work/'.ready-xinput-test').write_text('Synthetic device plus real injected Metal overlay\n');wine=stage_wine(work);session=None;result={'passed':False,'testDeviceProviderOnly':True,'physicalControllerVerified':False,'directToDisplayVerified':False}
+    work=ROOT/'Runtime/TestPrefixes'/('xinput-real-overlay-'+uuid.uuid4().hex);work.mkdir();(work/'.ready-xinput-test').write_text('Synthetic device plus real injected Metal overlay\n');wine=stage_wine(work);session=None;result={'protocolVersion':2,'explicitOptIn':'M1L_XINPUT_CAPTURE=1','passed':False,'testDeviceProviderOnly':True,'physicalControllerVerified':False,'directToDisplayVerified':False}
     try:
         env={'DYLD_INSERT_LIBRARIES':str(overlay),'M1L_XINPUT_PRESENT_PROVIDER':'Z:'+str(present).replace('/','\\'),'VK_DRIVER_FILES':cfg['kosmicICD'],'VK_ICD_FILENAMES':cfg['kosmicICD']}
         session=Session(work/'session',wine,'x86_64','xinput1_4',template=args.template,extra_env=env,executable=exe)

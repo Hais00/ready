@@ -32,6 +32,7 @@ static unsigned char RDDrawablesKey;
 static void RDWriteStatus(void);
 static void RDReadControl(void);
 static void RDPrepareHooks(id<MTLDevice> device);
+static BOOL RDControllerMenuEnabled=YES;
 static void RDPollControllers(void);
 static void RDStartHeartbeat(void);
 
@@ -78,7 +79,7 @@ static NSDictionary *RDStatus(void) {
         @"controlSequence":@(RDControlSequence),@"error":RDError ?: @"",
         @"controlWatchActive":@(RDControlWatch!=nil),@"controlReadCount":@(RDControlReadCount),
         @"heartbeatActive":RDHeartbeat ? @YES : @NO,@"heartbeatSequence":@(RDHeartbeatSequence),
-        @"inputCaptureEpoch":@(RDInputCaptureEpoch),
+        @"inputCaptureEpoch":@(RDInputCaptureEpoch),@"gamepadMenuEnabled":@(RDControllerMenuEnabled),
         @"separateWindowCount":@0,@"separateLayerCount":@0,
         @"directToDisplayVerified":@NO};
 }
@@ -230,6 +231,7 @@ static RDRenderer *RDRendererForDevice(id<MTLDevice> device) {
     if(!RDResources || RDResources.device!=device)RDResources=[[RDRenderer alloc]initWithDevice:device];return RDResources;
 }
 static void RDPollControllers(void) {
+    if(!RDControllerMenuEnabled)return; // Explicit per-game opt-out; keyboard/mouse remain active.
     static NSMapTable<GCController *,NSNumber *> *previous;
     if(!previous)previous=[NSMapTable weakToStrongObjectsMapTable];
     for(GCController *controller in GCController.controllers){
@@ -384,6 +386,7 @@ static void RDSendEventHook(NSApplication *self,SEL cmd,NSEvent *event) {
 }
 __attribute__((constructor))static void RDLoad(void){@autoreleasepool{
     const char *control=getenv("M1L_CONTROL_FILE");if(!control || !*control)return;
+    const char *capture=getenv("M1L_XINPUT_CAPTURE");RDControllerMenuEnabled=!(capture && !strcmp(capture,"0"));
     RDEnabled=YES;RDLock=[NSRecursiveLock new];RDOriginals=[NSMutableDictionary dictionary];RDLiveDrawables=[NSMapTable weakToWeakObjectsMapTable];
     RDControlPath=[NSString stringWithUTF8String:control];const char *status=getenv("M1L_OVERLAY_STATUS");
     RDStatusPath=status ? [NSString stringWithUTF8String:status]:[RDControlPath.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"overlay-status.json"];
