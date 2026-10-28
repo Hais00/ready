@@ -4,17 +4,24 @@ import Foundation
 public enum LocalDiscovery {
   public static func importGame(_ url: URL) throws -> Game {
     let isApp = url.pathExtension.lowercased() == "app"
-    let exe = isApp ? ArchitectureProbe.applicationExecutable(url) : url
+    let exe: URL? = isApp ? try NativeBinaryProbe.applicationExecutable(url) : url
     guard let exe,
       FileManager.default.isExecutableFile(atPath: exe.path)
         || exe.pathExtension.lowercased() == "exe"
     else { throw LauncherError.invalid("Seleziona un’app macOS o un eseguibile Windows.") }
-    let arch = try ArchitectureProbe.inspect(exe)
-    let platform: GamePlatform = exe.pathExtension.lowercased() == "exe" ? .windows : .macOS
+    let platform: GamePlatform = !isApp && exe.pathExtension.lowercased() == "exe" ? .windows : .macOS
+    let interpreted = platform == .macOS ? try NativeBinaryProbe.isInterpretedLauncher(exe) : false
+    let arch: BinaryArchitecture
+    if platform == .windows { arch = try ArchitectureProbe.inspect(exe) }
+    else if interpreted { arch = .unknown }
+    else { arch = try NativeBinaryProbe.inspect(exe) }
     let variant = GameVariant(
       id: platform.rawValue, platform: platform, architecture: arch, executable: exe.path,
       installationRoot: isApp ? url.path : exe.deletingLastPathComponent().path,
-      installed: true, verification: "Header del binario locale verificato")
+      installed: true,
+      verification: platform == .windows ? "Header del binario locale verificato"
+        : arch == .unknown ? "Launcher interpretato: architettura del gioco da verificare"
+        : "Mach-O eseguibile macOS verificato: CPU e piattaforma")
     var game = Game(
       id: "local:" + UUID().uuidString, store: .local, storeID: exe.path,
       title: url.deletingPathExtension().lastPathComponent, variants: [variant])
@@ -54,16 +61,20 @@ public enum LocalDiscovery {
         var scanned = 0
         while let file = enumr?.nextObject() as? URL, scanned < 4000 {
           scanned += 1
-          if file.pathExtension == "app" {
+          if file.pathExtension.lowercased() == "app" {
             enumr?.skipDescendants()
-            if let exe = ArchitectureProbe.applicationExecutable(file),
-              let a = try? ArchitectureProbe.inspect(exe)
-            {
-              variants.append(
-                .init(
-                  id: "mac:" + file.lastPathComponent, platform: .macOS, architecture: a,
-                  executable: exe.path, installationRoot: gameDir.path, installed: true,
-                  verification: "Binario installato verificato"))
+            if let exe = try? NativeBinaryProbe.applicationExecutable(file) {
+              let interpreted = (try? NativeBinaryProbe.isInterpretedLauncher(exe)) == true
+              let architecture: BinaryArchitecture? = interpreted ? BinaryArchitecture.unknown : try? NativeBinaryProbe.inspect(exe)
+              if let a = architecture {
+                variants.append(
+                  .init(
+                    id: "mac:" + file.lastPathComponent, platform: .macOS, architecture: a,
+                    executable: exe.path, installationRoot: gameDir.path, installed: true,
+                    verification: interpreted
+                      ? "Launcher interpretato: architettura del gioco da verificare"
+                      : "Mach-O macOS installato verificato: CPU e piattaforma"))
+              }
             }
           }
           if file.pathExtension.lowercased() == "exe",

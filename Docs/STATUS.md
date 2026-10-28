@@ -16,7 +16,7 @@ Started 2026-10-27. Repository: `https://github.com/Hais00/ready` (private). Loc
 - Latest beta releases requested explicitly; fetched Wine 11.20, Mesa/KosmicKrisp 26.3.0-rc2, SteamKit 3.5.1-Alpha.1, plus latest available DXVK/VKD3D/MoltenVK source artifacts.
 - Single-prefix design superseded by **game/profile prefixes**. See REQUIREMENTS and PREFIXES.
 - Native Swift/Metal frontend compiles and visually checked text orientation/icons. It renders only on change and tears down its canvas at actual game launch, after asynchronous Wine initialization.
-- Twenty-two domain checks pass, including independent DLL copy-on-write projections, registry paths, persistent folders, runtime selection and migration preflight. XCTest is absent on this CLT-only host; ReadyCoreProbe runs the same shared checks.
+- Twenty-four domain checks pass, including independent DLL copy-on-write projections, registry paths, persistent folders, runtime selection and migration preflight. XCTest is absent on this CLT-only host; ReadyCoreProbe runs the same shared checks.
 - Real Windows API probes under Wine verify game/profile registry and account marker separation, Documents redirection, and saved-data survival after prefix recreation. Original prefixes and rollback copies are preserved. Guided migration/recovery UI is implemented and compiled; visual verification awaits Mac unlock. An actual copy process was killed mid-copy, archived by recovery and successfully retried with unchanged original hashes.
 - Native session keeper checks verify exact-prefix coordination, independent process groups, parent-crash lock handoff, literal arguments and overlay handoff. SessionManager has asynchronous initialization/cancellation/timeout and main-thread lifecycle probes.
 - Overlay passes six native GPU paths and Windows Vulkan → Wine → KosmicKrisp → Metal injection. Texture allocation is 835,584 bytes shown and zero hidden. The actual fullscreen HUD reports Composited with and without overlay; direct display remains unverified.
@@ -30,3 +30,5 @@ Started 2026-10-27. Repository: `https://github.com/Hais00/ready` (private). Loc
 - Keeper and overlay builds publish signed binaries by atomic rename; a real running-child rebuild test verifies old executable mappings and leases remain intact.
 - Native controller policy has 30 logic checks; real AppKit modal interaction and hardware remain unverified while the Mac is locked.
 - See Docs/DISTRIBUTION.md: dependency provenance blocks binary-runtime redistribution. Source rebuilds are in progress; active runtime binaries remain unchanged.
+
+- Settings now offers explicit local evaluation activation and byte-exact runtime restoration with private history. It accepts no vendor terms, grants no rights and includes no Apple binaries. GUI visual verification remains pending; configuration policy/restore checks pass.

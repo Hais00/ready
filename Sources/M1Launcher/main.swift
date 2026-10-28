@@ -66,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     canvas = MetalCanvas(frame: NSRect(x: 0, y: 0, width: 1240, height: 760), device: device)
     canvas.autoresizingMask = [.width, .height]
     canvas.state = state
+    canvas.evaluationMode = activeRuntime().evaluationModeEnabled == true
     canvas.onAction = { [weak self] in self?.action($0) }
     window.contentView = canvas
     window.center()
@@ -464,7 +465,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
   }
   @objc func settings() {
-    let cfg = RuntimeConfiguration.load(project.appendingPathComponent("Runtime/runtime.json"))
+    let cfg = activeRuntime()
     let a = NSAlert()
     a.messageText = "Account e runtime"
     a.informativeText =
@@ -472,9 +473,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     a.addButton(withTitle: "Chiudi")
     a.addButton(withTitle: "Collega uno store…")
     a.addButton(withTitle: "Dati e ripristino…")
+    a.addButton(withTitle: "Valutazione Apple…")
     let choice = a.runModal()
     if choice == .alertSecondButtonReturn { connectStore() }
     if choice == .alertThirdButtonReturn { dataMaintenance() }
+    if choice.rawValue == NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + 3 {
+      evaluationSettings()
+    }
   }
   func connectStore() {
     guard !maintenanceInProgress else { return }

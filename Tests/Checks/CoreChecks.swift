@@ -12,6 +12,8 @@ public final class CoreChecks {
         "Mach-O architecture and unknown native availability",
         testDistinguishesARM64IntelAndFatBinaries
       ),
+      ("Native macOS executable and platform proof", NativeBinaryChecks.validate),
+      ("Explicit evaluation mode preserves and restores runtime configuration", EvaluationModeChecks.validate),
       ("Per-prefix locks allow independent sessions", testPrefixLeasePreventsConcurrentMutations),
       (
         "Isolated game/profile prefix paths and persistent profiles",
@@ -586,6 +588,23 @@ public final class CoreChecks {
     )
   }
   func testSavePathsRejectTraversalAndSymlinkEscape() throws {
+    let paths = LauncherPaths(root: temporary.appendingPathComponent("component-cases"))
+    let profile = UUID()
+    for (index, name) in ["", ".", ".."].enumerated() {
+      let prepared = try PrefixManager(paths: paths).prepare(
+        profile: profile, gameID: "name-\(index)", userName: name)
+      XCTAssertFalse(
+        FileManager.default.fileExists(
+          atPath: prepared.appendingPathComponent("drive_c/Documents").path))
+      XCTAssertFalse(
+        FileManager.default.fileExists(
+          atPath: prepared.appendingPathComponent("drive_c/users/Documents").path))
+      let document = prepared.appendingPathComponent("drive_c/users/_/Documents")
+      XCTAssertEqual(FileManager.default.fileExists(atPath: document.path), true)
+      try XCTAssertEqual(
+        try FileManager.default.destinationOfSymbolicLink(atPath: document.path),
+        paths.profile(profile).appendingPathComponent("Documents").path)
+    }
     let prefix = temporary.appendingPathComponent("prefix")
     try FileManager.default.createDirectory(at: prefix, withIntermediateDirectories: true)
     XCTAssertThrowsError(try SafePath.resolve("../outside", under: prefix))

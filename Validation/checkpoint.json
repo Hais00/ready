@@ -1,12 +1,14 @@
 {
-  "createdAt": "2026-10-28T01:51:39.664189+01:00",
+  "createdAt": "2026-10-28T02:49:18.715319+01:00",
   "goalComplete": false,
   "core": {
-    "checks": 22,
+    "checks": 24,
     "passed": true,
     "names": [
       "Valve manifests and malformed input",
       "Mach-O architecture and unknown native availability",
+      "Native macOS executable and platform proof",
+      "Explicit evaluation mode preserves and restores runtime configuration",
       "Per-prefix locks allow independent sessions",
       "Isolated game/profile prefix paths and persistent profiles",
       "Personal folders persist across prefix recreation",

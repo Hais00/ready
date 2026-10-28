@@ -65,6 +65,7 @@ final class MetalCanvas: NSView {
   var query = ""
   var selected = 0
   var message = ""
+  var evaluationMode = false
   var onAction: ((CanvasAction) -> Void)?
   private var hits = [CanvasHit]()
   private var suspended = false
@@ -270,8 +271,9 @@ final class MetalCanvas: NSView {
     let content = width - left - 36
     button(CGRect(x: left, y: 22, width: 37, height: 37), "arrow.clockwise", .refresh)
     text(
-      "READY", CGRect(x: left + 54, y: 32, width: 200, height: 22), size: 12, bold: true,
-      color: color(0xb2c2c1))
+      evaluationMode ? "READY · VALUTAZIONE" : "READY",
+      CGRect(x: left + 54, y: 32, width: 200, height: 22), size: 12, bold: true,
+      color: color(evaluationMode ? 0xe8b76d : 0xb2c2c1))
     let profile = state.profiles.first { $0.id == state.activeProfile }?.name ?? "Giocatore"
     text(profile, CGRect(x: width - 330, y: 29, width: 180, height: 27), size: 14, bold: true)
     icon("wifi", CGRect(x: width - 137, y: 30, width: 20, height: 20), tint: color(0xced4d3))

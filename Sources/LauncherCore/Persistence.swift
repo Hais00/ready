@@ -144,9 +144,10 @@ public enum SafePath {
       + SHA256.hash(data: Data(raw.utf8)).map { String(format: "%02x", $0) }.joined()
   }
   public static func component(_ raw: String) -> String {
-    raw.unicodeScalars.map {
+    let value = raw.unicodeScalars.map {
       CharacterSet.alphanumerics.contains($0) || "-_.".unicodeScalars.contains($0)
         ? String($0) : "_"
     }.joined()
+    return value.isEmpty || value == "." || value == ".." ? "_" : value
   }
 }
