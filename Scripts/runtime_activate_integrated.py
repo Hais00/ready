@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Prepare/check/rollback integrated PROJECT config proposals. No activate command.
+"""Prepare/check and explicitly reviewed activation of two PROJECT config files.
 
 UserRuntimes, prefixes, providers and the immutable E5/68 inputs are never edited.
-A passing check is a review receipt, not permission to promote project pointers.
+A passing check is a review receipt. Activation additionally requires the exact
+reviewed receipt hash supplied with --root-go after explicit Root authorization.
 """
 import argparse, contextlib, copy, fcntl, hashlib, json, os, pathlib, stat, subprocess, uuid
 ROOT=pathlib.Path(__file__).resolve().parents[1]
@@ -97,7 +98,7 @@ class Transaction:
         return directory
     def journal(self,directory):
         value=load(directory/'journal.json')
-        if value.get('schema')!=1 or value.get('state')not in ['prepared','rolling-back','rolled-back']:raise ValueError('Invalid integration journal')
+        if value.get('schema')!=1 or value.get('state')not in ['prepared','activating','committed','rolling-back','rolled-back','rollback-blocked']:raise ValueError('Invalid integration journal')
         if value.get('transaction')!=directory.name or [x.get('name')for x in value.get('configs',[])]!=list(CONFIGS):raise ValueError('Invalid journal scope')
         for i,record in enumerate(value['configs']):
             if record['beforeImage']!='before-'+CONFIGS[i]or record['afterImage']!='after-'+CONFIGS[i]:raise ValueError('Invalid snapshot path')
@@ -134,58 +135,116 @@ class Transaction:
                 atomic(directory/after,afters[i])
                 records.append({'name':name,'beforeExists':exists,'beforeImage':before,'beforeSHA256':hashlib.sha256(data).hexdigest()if exists else None,'afterImage':after,'afterSHA256':hashlib.sha256(afters[i]).hexdigest(),'mode':mode})
             if records[1]['beforeSHA256']!=values[0]['integrationInputs']['evaluationFragmentSHA256']:raise ValueError('Evaluation fragment changed during prepare')
-            journal={'schema':1,'transaction':identifier,'state':'prepared','configs':records,'activationImplemented':False,'userConfigurationsOrPrefixesTouched':False}
+            journal={'schema':1,'transaction':identifier,'state':'prepared','configs':records,'activationImplemented':True,'userConfigurationsOrPrefixesTouched':False}
             atomic(directory/'journal.json',encoded(journal))
             for i,name in enumerate(PROPOSALS):atomic(self.runtime/name,afters[i])
             atomic(self.transactions/'current.json',encoded({'transaction':identifier}))
             return directory
+    def _check_locked(self,directory,journal,persist=True):
+        if journal['state']!='prepared':raise ValueError('Only a prepared transaction can be checked')
+        normal,evaluation=[load(directory/r['afterImage'])for r in journal['configs']]
+        checks={}
+        def gate(name,function):
+            try:checks[name]={'passed':True,'evidence':function()}
+            except Exception as error:checks[name]={'passed':False,'reason':str(error)}
+        def unchanged():
+            expected=[encoded(x)for x in self.proposals()]
+            if [hashlib.sha256(x).hexdigest()for x in expected]!=[r['afterSHA256']for r in journal['configs']]:raise ValueError('Composition/input changed after prepare')
+            for i,r in enumerate(journal['configs']):
+                live=self.runtime/r['name'];present=live.exists()or live.is_symlink()
+                if present!=r['beforeExists']or(present and(sha(live)!=r['beforeSHA256']or stat.S_IMODE(owned(live).st_mode)!=r['mode'])):raise ValueError('Active project config changed since before-image')
+                if sha(self.runtime/PROPOSALS[i])!=r['afterSHA256']:raise ValueError('Proposal changed after prepare')
+            return {'projectPointersStillBeforeImages':True,'sourceE6BindingsPreserved':True,'nativeIndependent':normal['vulkanLibrary']!=normal['nativeVulkanLibrary']}
+        gate('composition-and-before-images',unchanged)
+        gate('controller-capability',lambda:check_controller(self.root,normal))
+        gate('native-independent-proof',lambda:check_native(self.root,normal))
+        gate('production-five-case-E2E',lambda:check_e2e(self.root,normal))
+        gate('Core30',lambda:check_core(self.root))
+        gate('UI-signatures',lambda:check_ui(self.root))
+        gate('evaluation-consumer-policy',lambda:check_policy(normal,evaluation))
+        result={'schema':1,'checkerScriptSHA256':sha(pathlib.Path(__file__)),'transaction':directory.name,'candidateConfigHashes':{r['name']:r['afterSHA256']for r in journal['configs']},'readyForRootReview':all(x['passed']for x in checks.values()),'checks':checks,'activationPerformed':False,'activationImplemented':True,'fixtureOnly':self.fixture,'userConfigurationsOrPrefixesTouched':False}
+        if persist:
+            receipt=directory/('check-'+uuid.uuid4().hex+'.json');atomic(receipt,encoded(result));journal['lastCheck']={'file':receipt.name,'sha256':sha(receipt)};journal['activationImplemented']=True;atomic(directory/'journal.json',encoded(journal))
+        return result
     def check(self,identifier=None):
         with self.lease():
+            directory=self.directory(identifier)
+            result=self._check_locked(directory,self.journal(directory))
+            receipt=self.journal(directory)['lastCheck']
+            return {**result,'reviewReceipt':{'path':str(directory/receipt['file']),'sha256':receipt['sha256']}}
+
+    def _before(self,record):
+        path=self.runtime/record['name'];present=path.exists()or path.is_symlink()
+        return present==record['beforeExists']and(not present or(sha(path)==record['beforeSHA256']and stat.S_IMODE(owned(path).st_mode)==record['mode']))
+
+    def activate(self,identifier=None,root_go=None,checkpoint=None):
+        if checkpoint and not self.fixture:raise ValueError('Fault callback is fixture-only')
+        if not isinstance(root_go,str)or len(root_go)!=64 or any(c not in '0123456789abcdef'for c in root_go):raise ValueError('Explicit Root GO with the exact Ready receipt SHA256 is required')
+        with self.lease():
             directory=self.directory(identifier);journal=self.journal(directory)
-            if journal['state']!='prepared':raise ValueError('Only a prepared transaction can be checked')
-            normal,evaluation=[load(directory/r['afterImage'])for r in journal['configs']]
-            checks={}
-            def gate(name,function):
-                try:checks[name]={'passed':True,'evidence':function()}
-                except Exception as error:checks[name]={'passed':False,'reason':str(error)}
-            def unchanged():
-                expected=[encoded(x)for x in self.proposals()]
-                if [hashlib.sha256(x).hexdigest()for x in expected]!=[r['afterSHA256']for r in journal['configs']]:raise ValueError('Composition/input changed after prepare')
-                for i,r in enumerate(journal['configs']):
-                    live=self.runtime/r['name'];present=live.exists()or live.is_symlink()
-                    if present!=r['beforeExists']or(present and(sha(live)!=r['beforeSHA256']or stat.S_IMODE(owned(live).st_mode)!=r['mode'])):raise ValueError('Active project config changed since before-image')
-                    if sha(self.runtime/PROPOSALS[i])!=r['afterSHA256']:raise ValueError('Proposal changed after prepare')
-                return {'projectPointersStillBeforeImages':True,'sourceE6BindingsPreserved':True,'nativeIndependent':normal['vulkanLibrary']!=normal['nativeVulkanLibrary']}
-            gate('composition-and-before-images',unchanged)
-            gate('controller-capability',lambda:check_controller(self.root,normal))
-            gate('native-independent-proof',lambda:check_native(self.root,normal))
-            gate('production-five-case-E2E',lambda:check_e2e(self.root,normal))
-            gate('Core30',lambda:check_core(self.root))
-            gate('UI-signatures',lambda:check_ui(self.root))
-            gate('evaluation-consumer-policy',lambda:check_policy(normal,evaluation))
-            result={'schema':1,'checkerScriptSHA256':sha(pathlib.Path(__file__)),'transaction':directory.name,'candidateConfigHashes':{r['name']:r['afterSHA256']for r in journal['configs']},'readyForRootReview':all(x['passed']for x in checks.values()),'checks':checks,'activationPerformed':False,'activationImplemented':False,'userConfigurationsOrPrefixesTouched':False}
-            receipt=directory/('check-'+uuid.uuid4().hex+'.json');atomic(receipt,encoded(result));journal['lastCheck']={'file':receipt.name,'sha256':sha(receipt)};atomic(directory/'journal.json',encoded(journal))
-            return result
+            if journal['state']=='committed':
+                if journal['authorization']['reviewedCheckSHA256']!=root_go:raise ValueError('Different authorization for an already committed transaction')
+                for record in journal['configs']:
+                    path=self.runtime/record['name']
+                    if sha(path)!=record['afterSHA256']or stat.S_IMODE(owned(path).st_mode)!=record['mode']:raise ValueError('Committed project configuration changed')
+                return {'state':'committed','alreadyCommitted':True,'activationPerformed':True,'transaction':directory.name}
+            if journal['state']!='prepared':raise ValueError('Interrupted activation must be rolled back, never resumed blindly')
+            matches=sorted(p for p in directory.glob('check-*.json')if sha(p)==root_go)
+            # Repeated successful checks can have identical bytes under distinct
+            # retained names. Root approves exact content, not a unique filename.
+            if not matches:raise ValueError('Reviewed receipt was not found in this transaction')
+            reviewed=load(matches[0])
+            expected={r['name']:r['afterSHA256']for r in journal['configs']}
+            if reviewed.get('readyForRootReview')is not True or reviewed.get('transaction')!=directory.name or reviewed.get('candidateConfigHashes')!=expected or reviewed.get('checkerScriptSHA256')!=sha(pathlib.Path(__file__))or reviewed.get('fixtureOnly',False)!=self.fixture:raise ValueError('Root GO does not bind this exact Ready transaction/script')
+            fresh=self._check_locked(directory,journal,persist=False)
+            if not fresh['readyForRootReview']or fresh['checks']!=reviewed['checks']:raise ValueError('Readiness evidence changed; review a new Ready receipt before activation')
+            if not all(self._before(r)for r in journal['configs']):raise ValueError('Project configs changed after readiness validation')
+            fresh_path=directory/('revalidated-'+uuid.uuid4().hex+'.json');atomic(fresh_path,encoded(fresh))
+            journal.update(state='activating',activationImplemented=True,authorization={'reviewedCheckFile':matches[0].name,'reviewedCheckSHA256':root_go,'freshCheckFile':fresh_path.name,'freshCheckSHA256':sha(fresh_path),'scope':'two project configuration files only'},writtenConfigs=[])
+            atomic(directory/'journal.json',encoded(journal))
+            try:
+                for index,record in enumerate(journal['configs']):
+                    if not self._before(record):raise ValueError('Project destination changed during activation')
+                    atomic(self.runtime/record['name'],read(directory/record['afterImage']),record['mode'])
+                    if checkpoint:checkpoint('activation-config-written',index+1)
+                    journal['writtenConfigs'].append(record['name']);atomic(directory/'journal.json',encoded(journal))
+                for record in journal['configs']:
+                    if sha(self.runtime/record['name'])!=record['afterSHA256']:raise ValueError('Project pointer verification failed')
+                if checkpoint:checkpoint('activation-before-commit',len(journal['configs']))
+                journal['state']='committed';atomic(directory/'journal.json',encoded(journal))
+            except Exception:
+                # All originals/after-images remain durable. Unknown concurrent
+                # data is preserved rather than forcibly overwritten by recovery.
+                try:self._rollback_locked(directory,journal)
+                except Exception as recovery_error:
+                    journal.update(state='rollback-blocked',recoveryError=str(recovery_error));atomic(directory/'journal.json',encoded(journal))
+                raise
+            if checkpoint:checkpoint('activation-committed',len(journal['configs']))
+            return {'state':'committed','activationPerformed':True,'transaction':directory.name,'reviewedCheckSHA256':root_go,'configurationHashes':expected,'beforeImagesRetained':True,'userConfigurationsOrPrefixesTouched':False}
+
     def rollback(self,identifier=None,checkpoint=None):
         if checkpoint and not self.fixture:raise ValueError('Fault callback is fixture-only')
         with self.lease():
-            directory=self.directory(identifier);journal=self.journal(directory)
-            # Preflight both configs and all snapshots before the first write.
-            for r in journal['configs']:
-                live=self.runtime/r['name'];present=live.exists()or live.is_symlink()
-                if present:
-                    mode=stat.S_IMODE(owned(live).st_mode);digest=sha(live)
-                    if digest not in [r['beforeSHA256'],r['afterSHA256']]or mode!=r['mode']:raise ValueError('Unknown project configuration preserved; rollback refused')
-                elif r['beforeExists']:raise ValueError('Project configuration unexpectedly missing; preserved snapshots')
-            journal['state']='rolling-back';atomic(directory/'journal.json',encoded(journal))
-            for i,r in enumerate(journal['configs']):
-                live=self.runtime/r['name']
-                if r['beforeExists']:
-                    if sha(live)!=r['beforeSHA256']:atomic(live,read(directory/r['beforeImage']),r['mode'])
-                elif live.exists():live.unlink();sync_dir(self.runtime)
-                if checkpoint:checkpoint('rollback-restored',i+1)
-            journal['state']='rolled-back';atomic(directory/'journal.json',encoded(journal))
-            return {'state':'rolled-back','transaction':directory.name,'snapshotsRetained':True,'userConfigurationsOrPrefixesTouched':False}
+            directory=self.directory(identifier)
+            return self._rollback_locked(directory,self.journal(directory),checkpoint)
+    def _rollback_locked(self,directory,journal,checkpoint=None):
+        journal=self.journal(directory) # Recheck durable snapshots even on automatic recovery.
+        # Preflight both configs and all snapshots before the first write.
+        for r in journal['configs']:
+            live=self.runtime/r['name'];present=live.exists()or live.is_symlink()
+            if present:
+                mode=stat.S_IMODE(owned(live).st_mode);digest=sha(live)
+                if digest not in [r['beforeSHA256'],r['afterSHA256']]or mode!=r['mode']:raise ValueError('Unknown project configuration preserved; rollback refused')
+            elif r['beforeExists']:raise ValueError('Project configuration unexpectedly missing; preserved snapshots')
+        journal['state']='rolling-back';atomic(directory/'journal.json',encoded(journal))
+        for i,r in enumerate(journal['configs']):
+            live=self.runtime/r['name']
+            if r['beforeExists']:
+                if sha(live)!=r['beforeSHA256']:atomic(live,read(directory/r['beforeImage']),r['mode'])
+            elif live.exists():live.unlink();sync_dir(self.runtime)
+            if checkpoint:checkpoint('rollback-restored',i+1)
+        journal['state']='rolled-back';atomic(directory/'journal.json',encoded(journal))
+        return {'state':'rolled-back','transaction':directory.name,'snapshotsRetained':True,'userConfigurationsOrPrefixesTouched':False}
 
 
 def check_policy(normal,evaluation):
@@ -233,26 +292,72 @@ def check_native(root,config):
     if config['kosmicNativeICD']!=str(provider/'icd/kosmic-arm64.json')or config['nativeVulkanLibrary']!=str(provider/'lib/libvulkan.1.dylib'):raise ValueError('Native path mismatch')
     return {'manifestSHA256':sha(manifest),'validationSHA256':sha(proof),'nativeCases':len(p['tests']),'sandboxControls':5,'runtime68X64BindingsChanged':False}
 
+def bound_path(root,value):
+    path=pathlib.Path(value)
+    if not path.is_absolute():path=root/path
+    resolved=path.resolve(strict=True)
+    owned(resolved,resolved.is_dir())
+    if resolved.is_relative_to(root.resolve()):return resolved
+    for parent in resolved.parents:
+        marker=parent/'.ready-external-workspace'
+        if marker.exists()or marker.is_symlink():
+            owned(parent,True);owned(marker)
+            if parent.stat().st_mode&0o077 or marker.read_text()!='ready project work for thread01a17e79\n':raise ValueError('External evidence workspace is not the authorized private root')
+            return resolved
+    raise ValueError('Evidence/artifact path is outside project and authorized external workspace')
+
+def evidence(root,name):
+    wrapper_path=root/'Evidence'/name;wrapper=load(wrapper_path)
+    key=next((k for k in ['retainedReport','retainedBuildReceipt']if k in wrapper),None)
+    if key:
+        expected_key=key+'SHA256';path=bound_path(root,wrapper[key])
+        if sha(path)!=wrapper[expected_key]:raise ValueError('Retained evidence SHA256 mismatch')
+        return load(path),path,{'wrapperSHA256':sha(wrapper_path),'retainedSHA256':sha(path),'retainedPath':str(path)}
+    return wrapper,wrapper_path,{'reportSHA256':sha(wrapper_path)}
+
+def command_output(build,basename):
+    for command in build['commands']:
+        for index,value in enumerate(command):
+            if value=='-o'and index+1<len(command)and pathlib.Path(command[index+1]).name==basename:return command[index+1]
+            if value.startswith('/out:')and pathlib.Path(value[5:]).name==basename:return value[5:]
+    raise ValueError('Build receipt lacks exact output path: '+basename)
+
 def check_e2e(root,config):
-    path=root/'Evidence/controller-policy-e2e.json';p=load(path);build_path=root/'Evidence/controller-policy-e2e-build.json';b=load(build_path)
+    p,path,report_binding=evidence(root,'controller-policy-e2e.json');b,build_path,build_binding=evidence(root,'controller-policy-e2e-build.json')
     if p.get('passed')is not True or p.get('productionControllerDLLsUsed')is not True or p.get('testControllerDeviceBackendUsed')is not False or p.get('testControllerBackendUsed')is not False or p.get('immutableInputsUnchanged')is not True:raise ValueError('Actual production controller E2E is required')
+    if p['buildReceiptSHA256']!=sha(build_path):raise ValueError('Production run is not bound to this exact build receipt')
     if p['candidateSHA256']!=config['integrationInputs']['sourceCandidateSHA256']:raise ValueError('E2E tested another E6 source config')
     if len(p['cases'])!=5 or {x['case']for x in p['cases']}!=set(CASES):raise ValueError('All five production policy cases are required')
     for case in p['cases']:
         observation=case['windowsObservation'];expected=CASES[case['case']]
         if case['passed']is not True or case['keeperReleasedLease']is not True or case['privateDLLBefore']!=case['privateDLLAfter']or observation['captureFlag']!=('1'if expected else'0')or observation['testBackendExportPresent']is not False or observation['testDeviceBackendLoaded']is not False:raise ValueError('Production case/lease/private-DLL observation failed')
-        if sha(root/case['retainedLog'])!=case['logSHA256']:raise ValueError('Production case log changed')
+        if sha(bound_path(root,case['retainedLog']))!=case['logSHA256']:raise ValueError('Production case log changed')
     if p['productionModuleHashesBefore']!=p['productionModuleHashesAfter']:raise ValueError('Production modules changed during E2E')
     for filename,digest in p['productionModuleHashesAfter'].items():
-        if sha(pathlib.Path(filename))!=digest:raise ValueError('Tested production input changed')
-    for filename,digest in b['sources'].items():
-        if sha(root/filename)!=digest:raise ValueError('E2E source changed after its build')
-    if sha(root/'Build/ReadyControllerPolicyProbe')!=b['harnessSHA256']or sha(root/'Build/libReadyOverlay.dylib')!=p['overlaySHA256']:raise ValueError('E2E harness/overlay changed')
+        if sha(bound_path(root,filename))!=digest:raise ValueError('Tested production input changed')
+    sources=b.get('sources',b.get('sourceHashes'))
+    if not isinstance(sources,dict)or not sources:raise ValueError('Compiled source hashes required')
+    if 'sources'in b and 'sourceHashes'in b and b['sources']!=b['sourceHashes']:raise ValueError('Ambiguous compiled source hashes')
+    for filename,digest in sources.items():
+        if filename=='Scripts/test_controller_policy_e2e.py'and b.get('compileDriverSnapshot'):
+            original=b['compileDriverSnapshot'];snapshot=bound_path(root,original['path'])
+            if sha(snapshot)!=original['sha256']or original['sha256']!=digest:raise ValueError('Original compile-driver snapshot changed')
+            if sha(root/filename)!=digest:
+                driver=b.get('runOnlyDriver')
+                if not driver or driver.get('compilersInvoked')is not False or driver['sha256']!=sha(root/filename):raise ValueError('Current run-only driver is not independently bound')
+        elif sha(bound_path(root,filename))!=digest:raise ValueError('E2E source changed after its build')
+    artifacts={'ReadyControllerPolicyProbe':'harnessSHA256','controller-policy.exe':'windowsProbeSHA256','private-xinput1_4.dll':'privateAppDLLFixtureSHA256','controller-policy-dxmt.exe':'dxmtWindowsProbeSHA256'}
+    artifact_paths={}
+    for name,key in artifacts.items():
+        artifact=bound_path(root,command_output(b,name))
+        if sha(artifact)!=b[key]:raise ValueError('Tested E2E executable changed: '+name)
+        artifact_paths[name]=str(artifact)
+    if sha(root/'Build/libReadyOverlay.dylib')!=p['overlaySHA256']:raise ValueError('E2E overlay changed')
     for filename,digest in b['coreModuleHashes'].items():
-        if sha(pathlib.Path(filename))!=digest:raise ValueError('E2E Core module changed')
-    archives=[pathlib.Path(x)for command in b['commands']for x in command if str(x).endswith('/libLauncherCore.a')]
-    if not archives or sha(archives[-1])!=b['coreArchiveSHA256']:raise ValueError('E2E Core archive changed')
-    return {'reportSHA256':sha(path),'buildReportSHA256':sha(build_path),'productionControllerDLLsUsed':True,'testDeviceBackendUsed':False,'physicalControllerVerified':p['physicalControllerVerified'],'cases':5}
+        if sha(bound_path(root,filename))!=digest:raise ValueError('E2E Core module changed')
+    archives=[x for command in b['commands']for x in command if str(x).endswith('/libLauncherCore.a')]
+    if not archives or sha(bound_path(root,archives[-1]))!=b['coreArchiveSHA256']:raise ValueError('E2E Core archive changed')
+    return {'reportSHA256':sha(path),'buildReportSHA256':sha(build_path),'reportBinding':report_binding,'buildBinding':build_binding,'artifactPaths':artifact_paths,'productionControllerDLLsUsed':True,'testDeviceBackendUsed':False,'physicalControllerVerified':p['physicalControllerVerified'],'cases':5}
 
 def check_core(root):
     path=root/'Evidence/core-probe.json';value=load(path)
@@ -262,19 +367,31 @@ def check_core(root):
     return {'reportSHA256':sha(path),'checks':len(value['checks'])}
 
 def check_ui(root):
-    app=root/'Build/ready.app';support=app/'Contents/Resources/ReadySupport/Build';paths=[app,support/'ReadySessionHost',support/'libReadyOverlay.dylib']
+    # The producer binds the post-signing bundle to the strict pre-signing v2
+    # snapshot; the two executable hashes may legitimately differ after signing.
+    receipt_path=root/'Evidence/frontend-v2-build.json';receipt=load(receipt_path)
+    snapshot=bound_path(root,receipt['snapshot']);app=bound_path(root,receipt['app'])
+    import frontend_snapshot
+    frontend_snapshot.verify_snapshot(root,snapshot)
+    metadata=snapshot/'frontend-snapshot.json';document=load(metadata)
+    if sha(metadata)!=receipt['snapshotMetadataSHA256']or document['inputs']['fingerprintSHA256']!=receipt['sourceFingerprintSHA256']or document['artifacts']['M1Launcher']['sha256']!=receipt['snapshotUIBinarySHA256']:raise ValueError('Fresh v2 snapshot/producer identity mismatch')
+    support=app/'Contents/Resources/ReadySupport/Build';paths=[app,support/'ReadySessionHost',support/'libReadyOverlay.dylib']
     for path in paths:
         result=subprocess.run(['/usr/bin/codesign','--verify','--strict',str(path)],capture_output=True,text=True)
         if result.returncode:raise ValueError('UI/helper code signature verification failed: '+str(path))
-    if sha(support/'libReadyOverlay.dylib')!=sha(root/'Build/libReadyOverlay.dylib'):raise ValueError('Bundled overlay differs from production E2E overlay')
-    main=app/'Contents/MacOS/ready';sources=[*list((root/'Sources/M1Launcher').glob('*.swift')),*list((root/'Sources/LauncherCore').glob('*.swift'))]
-    if main.stat().st_mtime_ns<max(p.stat().st_mtime_ns for p in sources):raise ValueError('UI bundle predates current launcher/Core sources')
-    return {'appExecutableSHA256':sha(main),'sessionHostSHA256':sha(support/'ReadySessionHost'),'overlaySHA256':sha(support/'libReadyOverlay.dylib'),'signaturesVerified':True}
+    if sha(support/'libReadyOverlay.dylib')!=sha(root/'Build/libReadyOverlay.dylib')or sha(support/'libReadyOverlay.dylib')!=receipt['overlaySHA256']or sha(support/'ReadySessionHost')!=receipt['sessionHostSHA256']:raise ValueError('Bundled native support differs from verified build/E2E inputs')
+    main=app/'Contents/MacOS/ready'
+    if sha(main)!=receipt['appExecutableSHA256']:raise ValueError('Published app differs from strict-v2 producer')
+    entries={str(p.relative_to(app)):{'link':os.readlink(p)}if p.is_symlink()else{'sha256':sha(p),'mode':p.stat().st_mode&0o777}for p in sorted(app.rglob('*'))if p.is_file()or p.is_symlink()}
+    fingerprint=hashlib.sha256(json.dumps(entries,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    if fingerprint!=receipt['appTreeFingerprintSHA256']:raise ValueError('Published app tree differs from strict-v2 producer')
+    return {'producerReceiptSHA256':sha(receipt_path),'snapshotMetadataSHA256':sha(metadata),'sourceFingerprintSHA256':document['inputs']['fingerprintSHA256'],'appTreeFingerprintSHA256':fingerprint,'appExecutableSHA256':sha(main),'sessionHostSHA256':sha(support/'ReadySessionHost'),'overlaySHA256':sha(support/'libReadyOverlay.dylib'),'strictV2SourceArtifactMembershipVerified':True,'signaturesVerified':True}
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('operation',choices=['prepare','check','rollback']);p.add_argument('--transaction');a=p.parse_args();t=Transaction()
-    if a.operation=='prepare':print(json.dumps({'prepared':str(t.prepare()),'activationImplemented':False},indent=2))
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('operation',choices=['prepare','check','rollback','activate']);p.add_argument('--transaction');p.add_argument('--root-go',help='Exact Ready check receipt SHA256, only after explicit Root authorization');a=p.parse_args();t=Transaction()
+    if a.operation=='prepare':print(json.dumps({'prepared':str(t.prepare()),'activationImplemented':True,'activationPerformed':False},indent=2))
     elif a.operation=='rollback':print(json.dumps(t.rollback(a.transaction),indent=2))
+    elif a.operation=='activate':print(json.dumps(t.activate(a.transaction,root_go=a.root_go),indent=2))
     else:
         result=t.check(a.transaction);print(json.dumps(result,indent=2));sys_exit=0 if result['readyForRootReview']else 1
         raise SystemExit(sys_exit)

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import AppKit
 import CryptoKit
+import Darwin
 import Foundation
 import LauncherCore
 
@@ -48,8 +49,11 @@ import LauncherCore
     let executable = URL(fileURLWithPath: CommandLine.arguments[4])
     let privateSource = URL(fileURLWithPath: CommandLine.arguments[5])
     let dxmtExecutable = URL(fileURLWithPath: CommandLine.arguments[6])
+    let workRoot = URL(fileURLWithPath: CommandLine.arguments[7]).resolvingSymlinksInPath()
     let fm = FileManager.default, paths = LauncherPaths(root: root.appendingPathComponent("data"))
     try require(fm.fileExists(atPath: root.appendingPathComponent(".ready-controller-policy-test").path), "Missing owned test root marker")
+    try require(root.deletingLastPathComponent().resolvingSymlinksInPath().path == workRoot.appendingPathComponent("tests").resolvingSymlinksInPath().path, "Scratch is not confined to the marked external workspace")
+    try require(fm.fileExists(atPath: workRoot.appendingPathComponent(".ready-external-workspace").path), "Missing external workspace marker")
     try paths.prepare()
     try AtomicFile.writePrivate(Data(contentsOf: candidate), to: paths.runtimes.appendingPathComponent("runtime.json"))
     let runtime = RuntimeConfiguration.load(candidate)
@@ -60,17 +64,29 @@ import LauncherCore
     try AtomicFile.writePrivate(JSONSerialization.data(withJSONObject: ["prefixes":[prefix.path],"servers":Array(Set([server] + Array((runtime.engineWineServers ?? [:]).values)))]), to: root.appendingPathComponent("cleanup.json"))
     let template = project.appendingPathComponent("Runtime/TestPrefixes/wine-11.20")
     try fm.createDirectory(at: prefix.deletingLastPathComponent(), withIntermediateDirectories: true)
-    let copy = Process(); copy.executableURL = URL(fileURLWithPath: "/bin/cp"); copy.arguments = ["-cR", template.path, prefix.path]
-    try copy.run(); copy.waitUntilExit(); try require(copy.terminationStatus == 0, "Owned COW prefix initialization failed")
+    let sourceVolume = try fm.attributesOfItem(atPath: template.path)[.systemNumber] as? NSNumber
+    let targetVolume = try fm.attributesOfItem(atPath: prefix.deletingLastPathComponent().path)[.systemNumber] as? NSNumber
+    var prefixCopyMethod = "copy-preserving-symlinks-cross-volume"
+    if sourceVolume != nil && sourceVolume == targetVolume {
+      let copy = Process(); copy.executableURL = URL(fileURLWithPath: "/bin/cp"); copy.arguments = ["-cR", template.path, prefix.path]
+      try copy.run(); copy.waitUntilExit()
+      if copy.terminationStatus == 0 { prefixCopyMethod = "APFS-COW" }
+      else {
+        if fm.fileExists(atPath: prefix.path) { try fm.removeItem(at: prefix) }
+        try fm.copyItem(at: template, to: prefix)
+        prefixCopyMethod = "copy-preserving-symlinks-clone-fallback"
+      }
+    } else { try fm.copyItem(at: template, to: prefix) }
+    var builtinCloneCount = 0, builtinCopyCount = 0
     // This is an owned, stopped fixture: seed only the production controller
     // builtins so the policy sees known hashes before its first Wineboot plan.
     for (relative, expected) in provider.payloadHashes where relative.hasSuffix(".dll") {
       let folder = relative.hasPrefix("i386-") ? "syswow64" : "system32"
       let target = prefix.appendingPathComponent("drive_c/windows/" + folder + "/" + URL(fileURLWithPath: relative).lastPathComponent)
       let source = URL(fileURLWithPath: provider.wineRoot).appendingPathComponent("lib/wine/" + relative)
-      let pending = target.appendingPathExtension("ready-controller-fixture")
-      let copy = Process(); copy.executableURL = URL(fileURLWithPath: "/bin/cp"); copy.arguments = ["-c", source.path, pending.path]
-      try copy.run(); copy.waitUntilExit(); try require(copy.terminationStatus == 0, "Production builtin COW copy failed")
+      let pending = target.appendingPathExtension("ready-controller-" + UUID().uuidString)
+      if Darwin.clonefile(source.path, pending.path, UInt32(CLONE_NOFOLLOW)) == 0 { builtinCloneCount += 1 }
+      else { try fm.copyItem(at: source, to: pending); builtinCopyCount += 1 }
       if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
       try fm.moveItem(at: pending, to: target)
       try require(try hash(target) == expected, "Fixture production builtin hash differs")
@@ -151,6 +167,7 @@ import LauncherCore
     if fm.fileExists(atPath: privateDLL.path) { try require(try hash(privateDLL) == hash(privateSource), "Final provider transition modified the bystander app DLL") }
     print(String(decoding: try JSONSerialization.data(withJSONObject: ["passed":true,"cases":cases,
       "scope":"production controller DLLs, Core policy and SessionManager; private DLL is app-local disconnected fixture only",
-      "testControllerBackendUsed":false,"physicalControllerVerified":false,"defaultModified":false],options:[.prettyPrinted,.sortedKeys]),as:UTF8.self))
+      "testControllerBackendUsed":false,"physicalControllerVerified":false,"defaultModified":false,
+      "externalWorkRoot":workRoot.path,"prefixCopyMethod":prefixCopyMethod,"builtinCloneCount":builtinCloneCount,"builtinCopyCount":builtinCopyCount],options:[.prettyPrinted,.sortedKeys]),as:UTF8.self))
   }
 }

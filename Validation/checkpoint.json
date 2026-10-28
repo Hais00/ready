@@ -217,7 +217,9 @@
     "wholeApplicationBinaryDistributionApproved": false,
     "consumerAppleEnabled": false,
     "oldRuntimeTreesModified": false,
-    "userConfigurationsOrPrefixesModified": false
+    "userConfigurationsOrPrefixesModified": false,
+    "historicalActivation": true,
+    "supersededByIntegratedProjectConfiguration": true
   },
   "sessionHost": {
     "passed": true,
@@ -348,7 +350,7 @@
     "scope": "headless relocated frontend only; no real GPU, game, account, or full-runtime validation",
     "externalRuntimesBundled": false,
     "proprietaryAppleFilesBundled": false,
-    "runtimeLocationGUIVerified": false,
+    "runtimeLocationGUIVerified": true,
     "wholeApplicationDistributionApproved": false
   },
   "diagnosticXInputCapture": {
@@ -371,39 +373,42 @@
     "fixtureChecks": 14,
     "passed": true,
     "legacyV1Refused": true,
-    "freshV2BuildAndAssemblyVerified": false,
-    "scope": "Synthetic source/recipe/binary/module tamper fixtures only; current-source normal build and actual v2 assembly pending"
+    "freshV2BuildAndAssemblyVerified": true,
+    "scope": "Fresh normal Core/UI release build, exact source/artifact snapshot and signed app;14 separate tamper fixtures"
   },
   "integratedRuntimeProposal": {
     "prepared": true,
-    "fixtureChecks": 9,
-    "activationImplemented": false,
-    "activeProjectConfigurationsChanged": false,
+    "fixtureChecks": 18,
+    "activationImplemented": true,
+    "activeProjectConfigurationsChanged": true,
     "userConfigurationsOrPrefixesChanged": false,
     "controllerBindingsPreserved": true,
     "WineCXInputCaptureApplied": false,
-    "lastCheckReady": false,
-    "remainingCheckGates": [
-      "production-five-case-E2E",
-      "UI-signatures"
-    ]
+    "lastCheckReady": true,
+    "remainingCheckGates": [],
+    "committed": true,
+    "reviewedCheckSHA256": "9d2d985652cda377ffbaee3bf76cc502f302e7627e412a7bce4ba69ee77e720c",
+    "beforeImagesRetained": true,
+    "scope": "two project configurations; no user overrides or prefixes"
   },
   "productionControllerPolicyE2E": {
-    "passed": false,
+    "passed": true,
     "requiredCases": 5,
-    "completedCases": 0,
-    "productionPolicyVerified": false,
-    "guardTriggered": true,
-    "terminalCondition": "disk-reserve",
-    "reserveMiB": 512,
-    "phase": "unknown",
-    "phaseKnown": false,
-    "elapsedAtGuardMonotonicSeconds": null,
-    "freeBytesAtGuard": null,
-    "softwareFailureEstablished": false,
-    "retryPendingSpace": true,
-    "newTelemetryExecuted": false,
-    "physicalControllerVerified": false
+    "completedCases": 5,
+    "productionPolicyVerified": true,
+    "testDeviceBackendUsed": false,
+    "crossVolumePrefixCopy": true,
+    "elapsedSeconds": 97.67,
+    "minimumPrimaryFreeBytes": 4153282560,
+    "minimumWorkFreeBytes": 55035367424,
+    "newTelemetryExecuted": true,
+    "physicalControllerVerified": false,
+    "historicalFirstAttempt": {
+      "completedCases": 0,
+      "terminalCondition": "disk-reserve",
+      "phase": "unknown",
+      "softwareFailureEstablished": false
+    }
   },
   "portableRuntimeProjection": {
     "passed": true,
@@ -453,8 +458,9 @@
     "sourceBuiltLibraries": 4,
     "strongHomebrewDependencies": 0,
     "candidateBytesUnchanged": true,
-    "activated": false,
-    "wholeRuntimeDistributionApproved": false
+    "activated": true,
+    "wholeRuntimeDistributionApproved": false,
+    "activationScope": "project configuration only"
   },
   "overlay": {
     "gpuPaths": 6,
@@ -470,12 +476,27 @@
     "Open DX12 production path; Apple GPU path is verified only for local evaluation under its license",
     "Physical-controller behavior and in-game input suppression",
     "Native macOS game save/account isolation and complete release packaging",
-    "Guided migration UI visual verification (Mac locked during current attempt)",
+    "Guided interrupted migration/recovery dialog visual verification beyond the verified idle panel",
     "Real legacy user-data/game migration beyond synthetic copy and rollback crash fixtures",
     "External updaters that do not participate in the installation lease protocol",
-    "Integrate the separately verified source ARM64 renderer and finish the portable installer without changing defaults prematurely",
-    "Five-case production controller-policy E2E and current-source fresh frontend v2 build/assembly; retry pending additional disk space",
+    "Portable runtime installer and clean-machine runtime validation beyond the source ARM64 renderer integration gates",
     "Historical static-input/binary source correspondence and exact release notices beyond acquired source archives",
     "Whole-application packaging and remaining third-party distribution inventory beyond the approved 25-library dependency payload"
-  ]
+  ],
+  "frontendGUI": {
+    "passed": true,
+    "scope": "isolated AppKit GUI on M1; controller preference save/reopen/profile separation, runtime native folder selection/reopen/restore, idle maintenance dialog",
+    "migrationRecoveryDialogsVerified": false,
+    "physicalControllerVerified": false,
+    "storeAccountsUsed": false
+  },
+  "developmentStorage": {
+    "selectedVolume": "Dati APFS",
+    "separateFilesystem": true,
+    "externalSwiftPMCache": true,
+    "externalTemporaryAndTestData": true,
+    "coreSourcePacketHashVerifiedAfterTransfer": true,
+    "runtimeOrUserDataRelocated": false
+  },
+  "updatedAt": "2026-10-28T09:57:22.149899+00:00"
 }

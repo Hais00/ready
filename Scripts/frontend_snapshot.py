@@ -132,9 +132,30 @@ def support_state(root, fixture=False):
 
 def copy_artifact(source, destination):
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    # Build products stay on this local volume. A failed clone is an explicit
-    # failure; this tool never mutates the source output or a live executable.
-    subprocess.run(['/bin/cp', '-cR', str(source), str(destination)], check=True)
+    # External build caches may be on another volume. Select copying before
+    # attempting clonefile so a partial clone cannot be mistaken for a snapshot.
+    if source.stat().st_dev != destination.parent.stat().st_dev:
+        if source.is_dir():
+            shutil.copytree(source, destination, symlinks=True, copy_function=shutil.copy2)
+        else:
+            shutil.copy2(source, destination, follow_symlinks=False)
+    else:
+        subprocess.run(['/bin/cp', '-cR', str(source), str(destination)], check=True)
+
+
+def compiler_module(products, name):
+    for path in (products / name, products / 'Modules' / name):
+        if path.exists() and not path.is_symlink():
+            return path
+    # Swift6.4/Xcode keeps the executable's module in this target's exact
+    # configuration/architecture output, not in installed Products. Require a
+    # unique real module; never search other configurations or stale caches.
+    if name == 'M1Launcher.swiftmodule' and products.parent.name == 'Products':
+        target = products.parent.parent / 'Intermediates.noindex/M1Launcher.build' / products.name / 'M1Launcher-p.build/Objects-normal'
+        candidates = [p for p in target.glob('*/M1Launcher.swiftmodule') if p.is_file() and not p.is_symlink()]
+        if len(candidates) == 1:
+            return candidates[0]
+    raise ValueError('Compiler module missing, linked, or ambiguous: ' + name)
 
 
 def record_snapshot(root, inputs_file, binary, modules, destination, fixture=False):
@@ -216,8 +237,7 @@ if __name__ == '__main__':
             products = args.products.resolve(strict=True)
             modules = {}
             for name in ('LauncherCore.swiftmodule', 'M1Launcher.swiftmodule'):
-                direct = products / name
-                modules[name] = direct if direct.exists() else products / 'Modules' / name
+                modules[name] = compiler_module(products, name)
             print(record_snapshot(ROOT, args.inputs, products / 'M1Launcher', modules, args.destination))
         else:
             print(verify_snapshot(ROOT, args.snapshot))

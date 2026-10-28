@@ -122,3 +122,5 @@ The optional `--external-runtime` test selects that existing installation using 
 isolated temporary pointer and verifies the original configuration hash is
 unchanged. It never executes that runtime. These commands and the GUI selector do
 not accept vendor terms or change evaluation/consumer policy flags.
+
+The current build has a real strict v2 source/artifact snapshot and signed app, plus 15 relocated-package checks. Native folder selection and previous-location restore have also been exercised through AppKit using isolated data. Build caches and test data may reside on a separate volume; see [build/test storage](BUILD_STORAGE.md).

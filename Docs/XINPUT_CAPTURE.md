@@ -141,9 +141,11 @@ recipes, all API/overlay evidence, complete Wine source and original notices.
 No frozen E5 file, active default configuration or evaluation configuration was
 changed. All synthetic Wine prefixes were stopped and removed before freeze.
 
-The observed actual-overlay result uses explicit flag1 and the earlier compiled
-Metal overlay library; it proves the new reader with actual same-process status.
-The caller's new controller policy and rebuilt overlay still require their own
-Core/Session end-to-end gate before any activation. Physical controllers remain
-unverified. The deterministic backend and observation export exist only in the
+The frozen reader's initial actual-overlay result uses explicit flag1 and the
+earlier compiled Metal overlay library. The separate production policy gate is
+now also complete with the fresh rebuilt overlay and matching release Core: all
+five real SessionManager cases pass, including opt-out, private DLL preservation,
+forced builtin selection and a final same-prefix transition to DXMT. See
+[CONTROLLER_POLICY_E2E.md](CONTROLLER_POLICY_E2E.md) for hash-bound external logs.
+This test does not activate the candidate. Physical controllers remain unverified. The deterministic backend and observation export exist only in the
 separate test variant; production uses Wine's original physical input path.
