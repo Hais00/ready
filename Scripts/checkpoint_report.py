@@ -17,6 +17,8 @@ wine_sessions=read('session-host-wine-real.json')
 wow64=read('runtime-wow64-proof.json')
 store_client=read('store-client-tests.json')
 migration_crash=read('migration-crash.json')
+copy_recovery_crash=read('copy-recovery-crash.json')
+recreation_crash=read('recreation-crash.json')
 apple_gpu=read('runtime-winecx-probes.json')
 apple_overlay=read('overlay-apple-d3d12.json')
 provider_switch=read('provider-switch.json')
@@ -37,6 +39,8 @@ match=re.search(r'Ran (\d+) tests',store_log)
 assert core['pass'] and host['passed'] and manager['passed']
 assert wine_sessions['passed'] and wow64['verified']
 assert store_client['passed'] and migration_crash['passed']
+assert copy_recovery_crash['passed'] and recreation_crash['passed']
+assert copy_recovery_crash['actualSIGKILLCount'] == 6 and recreation_crash['realSIGKILLCount'] == 1
 assert apple_gpu['dx12Verified'] and apple_overlay['passed'] and provider_switch['passed'] and controller['passed']
 assert frontend_lifecycle['passed']
 assert rollback_crash['passed']
@@ -59,6 +63,10 @@ report={
  'storeProtocols':{'checks':int(match.group(1)),'passed':True,'realAccountsVerified':False},
  'storeClient':{'passed':store_client['passed'],'checks':store_client['checks'],'realKeychainUsed':False},
  'migrationCrash':{'passed':migration_crash['passed'],'checks':migration_crash['checks'],'scope':migration_crash['scope']},
+ 'copyRecoveryCrash':{'passed':True,'checks':copy_recovery_crash['checks'],
+  'realSIGKILLCount':copy_recovery_crash['actualSIGKILLCount'],'scope':copy_recovery_crash['scope']},
+ 'prefixRecreationCrash':{'passed':True,'checks':recreation_crash['checks'],
+  'realSIGKILLCount':recreation_crash['realSIGKILLCount'],'scope':recreation_crash['scope']},
  'rollbackCrash':{'passed':True,'checks':rollback_crash['checks'],'realSIGKILLCount':rollback_crash['realSIGKILLCount'],'scope':rollback_crash['scope']},
  'customSaveFolders':{'passed':True,'checks':custom_saves['checks'],'scope':custom_saves['scope']},
  'controllerPolicy':{'passed':True,'checks':controller['checks'],'physicalDeviceVerified':False,'actualModalInteractionVerified':False},
@@ -75,7 +83,8 @@ report={
   'dependencyDistributionScope':source_activation['approvedDistributionScope'],
   'dependencyBinaryRedistributionReady':True,'wholeApplicationBinaryDistributionApproved':False,
   'consumerAppleEnabled':False,'oldRuntimeTreesModified':False,'userConfigurationsOrPrefixesModified':False},
- 'sessionHost':{'passed':host['passed'],'checks':host['checks'],'scope':'real processes, file locks, crash handoff and exact-prefix waiter'},
+ 'sessionHost':{'passed':host['passed'],'checks':host['checks'],'skippedChecks':host.get('skippedChecks',[]),
+  'scope':'real processes, file locks, native wrapper group lifetime, crash handoff and exact-prefix waiter'},
  'sessionManager':{'passed':manager['passed'],'checks':manager['checks'],'scope':manager['testType']},
  'realWineSessions':{'passed':wine_sessions['passed'],'checks':wine_sessions['checks'],
   'scope':wine_sessions['testType'],'runtimeID':wine_sessions['runtimeID']},

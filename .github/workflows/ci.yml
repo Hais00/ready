@@ -21,6 +21,10 @@ jobs:
         run: python3 Scripts/test_migration_crash.py
       - name: Interrupted archival rollback and library recovery
         run: python3 Scripts/test_rollback_crash.py
+      - name: Interrupted copy archive recovery
+        run: python3 Scripts/test_copy_recovery_crash.py
+      - name: Prefix recreation retains persistent save bindings
+        run: python3 Scripts/test_recreation_crash.py
       - name: Overlay compile
         run: |
           sdk_major="$(xcrun --show-sdk-version | cut -d. -f1)"

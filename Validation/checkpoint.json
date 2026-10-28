@@ -1,8 +1,8 @@
 {
-  "createdAt": "2026-10-28T04:57:08.214513+01:00",
+  "createdAt": "2026-10-28T05:39:01.025242+01:00",
   "goalComplete": false,
   "core": {
-    "checks": 26,
+    "checks": 28,
     "passed": true,
     "names": [
       "Valve manifests and malformed input",
@@ -15,7 +15,9 @@
       "Path traversal and symlink escape rejection",
       "Per-game save folders survive recreation and remain isolated",
       "Literal process arguments and verified engine selection",
+      "Wine executable validation rejects directories and accepts file symlinks",
       "Dependencies and registry remain isolated between games",
+      "Interrupted renderer projection recovers both DLL manifests",
       "Non-destructive legacy migration and rollback source",
       "Interrupted rollback restores copies and preserves conflicts",
       "Migration preflight does not leave partial prefixes",
@@ -72,6 +74,41 @@
       "originalUnchangedAfterRetry": true
     },
     "scope": "actual LauncherCore FileManager copy, SIGKILL, journal recovery and retry; synthetic files only"
+  },
+  "copyRecoveryCrash": {
+    "passed": true,
+    "checks": {
+      "actualCopyKilledWithTwoCreatedPrefixes": true,
+      "liveRecoveryLeasesPreventConcurrentMutation": true,
+      "firstRenameCrashRetainsCompleteArchiveIntent": true,
+      "corruptIntentFailsClosedWithoutMovingData": true,
+      "conflictRenameCrashPreservesReplacementAndOriginalCopy": true,
+      "planCommitCrashStillRequiresCopyRecovery": true,
+      "originalJournalArchiveCrashStillRequiresRecovery": true,
+      "finalCommitBoundaryRemainsRecoverable": true,
+      "retriesUseOneArchiveAndPreserveEveryPartialCopyAndOriginal": true,
+      "freshRetryCopiesBothGamesAfterRecoveryCommit": true
+    },
+    "realSIGKILLCount": 6,
+    "scope": "actual multi-prefix copy, recovery renames and commit interrupted by SIGKILL; synthetic files only"
+  },
+  "prefixRecreationCrash": {
+    "passed": true,
+    "checks": {
+      "checkpointRequiresExplicitOwnedSyntheticMarker": true,
+      "corruptDurableRecipeRejectsBeforePrefixMove": true,
+      "extraSaveBytesAndDirectoryIdentitySurvive": true,
+      "freshPrepareWithoutGameRulesReattachesBothExistingTargets": true,
+      "gameAndProfileIsolationPreserved": true,
+      "knownPhysicalSaveImportedBeforePrefixArchive": true,
+      "knownPhysicalSaveVisibleThroughRecoveredNormalPath": true,
+      "legacyRecipePromotedBeforeRealPrefixRename": true,
+      "originalPrefixBackupAndRecipeRetained": true,
+      "repeatPrepareAndHealthyRecreationKeepBindingsAndAllBackups": true,
+      "SIGKILLAfterArchiveLeavesNoNewPrefixMetadata": true
+    },
+    "realSIGKILLCount": 1,
+    "scope": "real PrefixManager rename, stopped child SIGKILL before replacement metadata, fresh empty-rule prepare; only synthetic data, no Wine/account/game"
   },
   "rollbackCrash": {
     "passed": true,
@@ -198,6 +235,12 @@
       "invalidStdinRejected": true,
       "nativeMetalOverlayHandoff": true,
       "atomicKeeperRebuildPreservesLiveSession": true,
+      "nativeWrapperLeaderZombiePinsGroupIdentity": true,
+      "nativeWrapperDescendantsRetainPrefixAndInstallationLeases": true,
+      "nativeWrapperSignalAfterLeaderExitIsIsolated": true,
+      "nativeWrapperNaturalCompletionPreservesLeaderStatus": true,
+      "nativeWrapperLauncherCrashAndHangupRetainBothLeases": true,
+      "nativeWrapperInheritedIgnoredSIGCHLDResetsWaitability": true,
       "nativeReaderBlocksSameNestedAndParentPythonWriters": true,
       "nativeReaderAllowsPythonReaderAndSiblingWriter": true,
       "twoNativeReadersShareInstallation": true,
@@ -206,7 +249,8 @@
       "installationReadCoversExactServerWait": true,
       "invalidInstallationAndUnsafeLockRootRejected": true
     },
-    "scope": "real processes, file locks, crash handoff and exact-prefix waiter"
+    "skippedChecks": [],
+    "scope": "real processes, file locks, native wrapper group lifetime, crash handoff and exact-prefix waiter"
   },
   "sessionManager": {
     "passed": true,

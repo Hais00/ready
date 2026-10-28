@@ -21,6 +21,7 @@ extension LegacyMigration {
   }
   public static func recoveryKind(paths: LauncherPaths) -> String? {
     if rollbackJournalExists(paths) { return "rollback" }
+    if copyRecoveryJournalExists(paths) { return "copy" }
     let file = paths.root.appendingPathComponent("Migration/journal.json")
     if FileManager.default.fileExists(atPath: file.path),
       loadPlan(paths: paths)?.status == "prepared-original-untouched" || loadPlan(paths: paths) == nil
@@ -34,6 +35,7 @@ extension LegacyMigration {
     guard requiresRecovery(paths: paths) else { return false }
     let plan: LegacyMigrationPlan?
     if rollbackJournalExists(paths) { plan = try? readRollbackJournal(paths).plan }
+    else if copyRecoveryJournalExists(paths) { plan = try? readCopyRecoveryJournal(paths).plan }
     else { plan = loadPlan(paths: paths) }
     guard let plan else { return true } // Unknown pending scope must fail closed.
     return plan.ownerProfile == profile && plan.destinations[gameID] != nil
@@ -45,63 +47,8 @@ extension LegacyMigration {
   }
   /// Preserve partial files from an interrupted copy; don't attempt to execute them.
   @discardableResult
-  private static func recoverCopyInterrupted(paths: LauncherPaths) throws -> URL {
-    let fm = FileManager.default
-    let journal = paths.root.appendingPathComponent("Migration/journal.json")
-    guard requiresRecovery(paths: paths), let plan = loadPlan(paths: paths),
-      plan.source == paths.legacyPrefix.path,
-      (try? fm.destinationOfSymbolicLink(atPath: paths.legacyPrefix.path)) == nil,
-      fm.fileExists(atPath: paths.legacyPrefix.path)
-    else {
-      throw LauncherError.invalid(
-        "Il recupero richiede il piano e la sorgente originali: tutti i dati restano conservati.")
-    }
-    let created = try JSONDecoder().decode([String].self, from: Data(contentsOf: journal))
-    let expected = Set(plan.destinations.values)
-    guard Set(created).isSubset(of: expected), Set(created).count == created.count else {
-      throw LauncherError.invalid("Journal della migrazione non valido: nessun dato modificato.")
-    }
-    var leases = [PrefixLease]()
-    for id in plan.destinations.keys.sorted() {
-      guard plan.destinations[id] == paths.prefix(profile: plan.ownerProfile, gameID: id).path
-      else {
-        throw LauncherError.invalid("Destinazione del recupero non valida.")
-      }
-      leases.append(try PrefixLease(paths: paths, profile: plan.ownerProfile, gameID: id))
-    }
-    return try withExtendedLifetime(leases) {
-      let archive = paths.root.appendingPathComponent(
-        "Backups/migration-interrupted-" + UUID().uuidString)
-      try fm.createDirectory(
-        at: archive, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-      var moved = [(URL, URL)]()
-      do {
-        for path in created where fm.fileExists(atPath: path) {
-          guard (try? fm.destinationOfSymbolicLink(atPath: path)) == nil else {
-            throw LauncherError.invalid("Copia interrotta sostituita da un collegamento.")
-          }
-          let source = URL(fileURLWithPath: path)
-          let destination = archive.appendingPathComponent(source.lastPathComponent)
-          try fm.moveItem(at: source, to: destination)
-          moved.append((source, destination))
-        }
-        try fm.moveItem(at: journal, to: archive.appendingPathComponent("copy-journal.json"))
-        var result = plan
-        result.status = "interrupted-copies-archived-original-retained"
-        try record(result, paths: paths)
-        return archive
-      } catch {
-        for (source, destination) in moved.reversed() where !fm.fileExists(atPath: source.path) {
-          try? fm.moveItem(at: destination, to: source)
-        }
-        // If journal was archived, restore it too so the next launch stays blocked.
-        let saved = archive.appendingPathComponent("copy-journal.json")
-        if !fm.fileExists(atPath: journal.path), fm.fileExists(atPath: saved.path) {
-          try? fm.moveItem(at: saved, to: journal)
-        }
-        throw error
-      }
-    }
+  private static func recoverCopyInterrupted(paths: LauncherPaths, checkpoint: ((String, Int) throws -> Void)? = nil) throws -> URL {
+    try archiveInterruptedCopies(paths: paths, checkpoint: checkpoint)
   }
   /// Per-profile bindings prevent a migrated executable in A's prefix from becoming
   /// the launch target of another profile. Shared external installations stay shared.
@@ -476,6 +423,204 @@ extension LegacyMigration {
   public static func recoverInterruptedFixture(paths: LauncherPaths, checkpoint: @escaping (String, Int) throws -> Void) throws -> URL {
     try requireMigrationFixture(paths)
     if rollbackJournalExists(paths) { return try restoreRollback(paths: paths, checkpoint: checkpoint) }
-    return try recoverCopyInterrupted(paths: paths)
+    return try recoverCopyInterrupted(paths: paths, checkpoint: checkpoint)
+  }
+}
+
+private struct CopyArchiveEntry: Codable {
+  var gameID: String
+  var identity: MigrationEntryIdentity?
+}
+private struct CopyRecoveryJournal: Codable {
+  var schema = 1
+  var kind = "copy-recovery"
+  var transaction: UUID
+  var plan: LegacyMigrationPlan
+  var copyJournal: Data
+  var legacyIdentity: MigrationEntryIdentity
+  var archiveIdentity: MigrationEntryIdentity
+  var phase = "archiving"
+  var copies: [CopyArchiveEntry]
+  var conflicts: [RollbackConflictEntry] = []
+}
+
+extension LegacyMigration {
+  private static func copyRecoveryJournalExists(_ paths: LauncherPaths) -> Bool {
+    var info = stat()
+    return lstat(paths.root.appendingPathComponent("Migration/copy-recovery-journal.json").path, &info) == 0
+  }
+  private static func copyRecoveryArchive(_ journal: CopyRecoveryJournal, paths: LauncherPaths) throws -> URL {
+    try rollbackPath("Backups/migration-interrupted-" + journal.transaction.uuidString, paths: paths)
+  }
+  private static func copyRecoveryTarget(_ game: String, journal: CopyRecoveryJournal, paths: LauncherPaths) throws -> URL {
+    try rollbackPath("Backups/migration-interrupted-" + journal.transaction.uuidString + "/" + SafePath.key(game), paths: paths)
+  }
+  private static func copyRecoveryConflict(_ conflict: RollbackConflictEntry, journal: CopyRecoveryJournal, paths: LauncherPaths) throws -> URL {
+    try rollbackPath("Backups/migration-interrupted-" + journal.transaction.uuidString + "/Conflicts/" + SafePath.key(conflict.gameID) + "-" + conflict.id.uuidString, paths: paths)
+  }
+  private static func readPrivateCopyJournal(_ file: URL) throws -> Data {
+    var info = stat()
+    guard lstat(file.path, &info) == 0, info.st_uid == geteuid(),
+      UInt32(info.st_mode) & UInt32(S_IFMT) == UInt32(S_IFREG), info.st_size > 0,
+      info.st_size <= 16 * 1024 * 1024
+    else { throw LauncherError.invalid("Registro del recupero non sicuro: dati conservati.") }
+    return try Data(contentsOf: file)
+  }
+  private static func writeCopyRecoveryJournal(_ journal: CopyRecoveryJournal, paths: LauncherPaths) throws {
+    let file = try rollbackPath("Migration/copy-recovery-journal.json", paths: paths)
+    try AtomicFile.writePrivate(JSONEncoder().encode(journal), to: file)
+    let fd = Darwin.open(file.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+    guard fd >= 0 else { throw LauncherError.failed("Impossibile confermare il journal del recupero.") }
+    defer { Darwin.close(fd) }
+    guard fsync(fd) == 0 else { throw LauncherError.failed("Impossibile sincronizzare il journal del recupero.") }
+  }
+  private static func readCopyRecoveryJournal(_ paths: LauncherPaths) throws -> CopyRecoveryJournal {
+    let file = try rollbackPath("Migration/copy-recovery-journal.json", paths: paths)
+    let journal = try JSONDecoder().decode(CopyRecoveryJournal.self, from: readPrivateCopyJournal(file))
+    let created = try JSONDecoder().decode([String].self, from: journal.copyJournal)
+    let expected = Set(journal.plan.destinations.values)
+    let ids = Set(journal.plan.destinations.filter { created.contains($0.value) }.keys)
+    guard journal.schema == 1, journal.kind == "copy-recovery",
+      journal.plan.source == paths.legacyPrefix.path, journal.plan.status == "prepared-original-untouched",
+      ["archiving", "committing"].contains(journal.phase),
+      journal.legacyIdentity.directory, journal.archiveIdentity.directory,
+      Set(created).isSubset(of: expected), Set(created).count == created.count,
+      Set(journal.copies.map { $0.gameID }) == ids, ids.count == journal.copies.count,
+      journal.copies.allSatisfy({ $0.identity == nil || ($0.identity!.directory && $0.identity!.device == journal.archiveIdentity.device) }),
+      Set(journal.conflicts.map { $0.id }).count == journal.conflicts.count,
+      journal.conflicts.allSatisfy({ ids.contains($0.gameID) && $0.identity.device == journal.archiveIdentity.device })
+    else { throw LauncherError.invalid("Journal dell’archiviazione non valido: nessun dato modificato.") }
+    return journal
+  }
+  private static func validateCopyRecovery(_ journal: CopyRecoveryJournal, paths: LauncherPaths) throws {
+    guard try entryIdentity(rollbackPath("SharedPrefix", paths: paths)) == journal.legacyIdentity,
+      try entryIdentity(copyRecoveryArchive(journal, paths: paths)) == journal.archiveIdentity
+    else { throw LauncherError.invalid("Sorgente o archivio del recupero cambiati: dati conservati.") }
+    for entry in journal.copies {
+      let source = try prefixPath(entry.gameID, plan: journal.plan, paths: paths)
+      if let identity = entry.identity {
+        let saved = try entryIdentity(copyRecoveryTarget(entry.gameID, journal: journal, paths: paths))
+        let current = try entryIdentity(source)
+        guard saved == identity || (saved == nil && current == identity) else {
+          throw LauncherError.invalid("Una copia interrotta non è identificabile: dati conservati.")
+        }
+      }
+    }
+    for conflict in journal.conflicts {
+      let saved = try entryIdentity(copyRecoveryConflict(conflict, journal: journal, paths: paths))
+      let current = try entryIdentity(prefixPath(conflict.gameID, plan: journal.plan, paths: paths))
+      guard saved == conflict.identity || (saved == nil && current == conflict.identity) else {
+        throw LauncherError.invalid("Una copia conflittuale del recupero è cambiata: dati conservati.")
+      }
+    }
+    let original = try rollbackPath("Migration/journal.json", paths: paths)
+    if FileManager.default.fileExists(atPath: original.path) {
+      guard try readPrivateCopyJournal(original) == journal.copyJournal else {
+        throw LauncherError.invalid("Il journal originale del recupero è cambiato: dati conservati.")
+      }
+    }
+  }
+  private static func archiveInterruptedCopies(paths: LauncherPaths, checkpoint: ((String, Int) throws -> Void)?) throws -> URL {
+    _ = try privateRollbackDirectory("Migration", paths: paths)
+    let operation = try RollbackOperationLease(rollbackPath("Migration/rollback-operation.lock", paths: paths))
+    let existing = copyRecoveryJournalExists(paths)
+    var journal: CopyRecoveryJournal
+    if existing {
+      journal = try readCopyRecoveryJournal(paths)
+    } else {
+      guard requiresRecovery(paths: paths), let plan = loadPlan(paths: paths), plan.source == paths.legacyPrefix.path,
+        plan.status == "prepared-original-untouched"
+      else { throw LauncherError.invalid("Il recupero richiede il piano e la sorgente originali: dati conservati.") }
+      let copyFile = try rollbackPath("Migration/journal.json", paths: paths)
+      let bytes = try readPrivateCopyJournal(copyFile)
+      let created = try JSONDecoder().decode([String].self, from: bytes)
+      guard Set(created).isSubset(of: Set(plan.destinations.values)), Set(created).count == created.count else {
+        throw LauncherError.invalid("Journal della copia non valido: dati conservati.")
+      }
+      // The directory/identity fields are populated only after acquiring every prefix lease below.
+      journal = CopyRecoveryJournal(transaction: UUID(), plan: plan, copyJournal: bytes,
+        legacyIdentity: .init(device: 0, inode: 0, directory: true), archiveIdentity: .init(device: 0, inode: 0, directory: true), copies: [])
+    }
+    var leases = [PrefixLease]()
+    for id in journal.plan.destinations.keys.sorted() {
+      _ = try prefixPath(id, plan: journal.plan, paths: paths)
+      leases.append(try PrefixLease(paths: paths, profile: journal.plan.ownerProfile, gameID: id))
+    }
+    return try withExtendedLifetime((operation, leases)) {
+      if !existing {
+        guard let legacy = try entryIdentity(rollbackPath("SharedPrefix", paths: paths)), legacy.directory else {
+          throw LauncherError.invalid("Sorgente originale del recupero non disponibile.")
+        }
+        let created = try JSONDecoder().decode([String].self, from: journal.copyJournal)
+        var entries = [CopyArchiveEntry]()
+        for id in journal.plan.destinations.keys.sorted() where created.contains(journal.plan.destinations[id]!) {
+          let identity = try entryIdentity(prefixPath(id, plan: journal.plan, paths: paths))
+          guard identity == nil || identity!.directory else { throw LauncherError.invalid("Copia interrotta non valida: dati conservati.") }
+          entries.append(.init(gameID: id, identity: identity))
+        }
+        let archive = try privateRollbackDirectory("Backups/migration-interrupted-" + journal.transaction.uuidString, paths: paths)
+        guard let archiveIdentity = try entryIdentity(archive), entries.allSatisfy({ $0.identity == nil || $0.identity!.device == archiveIdentity.device }) else {
+          throw LauncherError.invalid("Il recupero richiede spostamenti atomici sullo stesso filesystem.")
+        }
+        journal.legacyIdentity = legacy; journal.archiveIdentity = archiveIdentity; journal.copies = entries
+        try writeCopyRecoveryJournal(journal, paths: paths) // Complete move intent before the first rename.
+      }
+      try validateCopyRecovery(journal, paths: paths)
+      let archive = try copyRecoveryArchive(journal, paths: paths)
+      var moved = 0
+      for entry in journal.copies {
+        if let identity = entry.identity {
+          let target = try copyRecoveryTarget(entry.gameID, journal: journal, paths: paths)
+          if try entryIdentity(target) == nil {
+            guard try entryIdentity(prefixPath(entry.gameID, plan: journal.plan, paths: paths)) == identity else { throw LauncherError.invalid("Copia del recupero cambiata.") }
+            try renameRollback(prefixPath(entry.gameID, plan: journal.plan, paths: paths), target)
+            moved += 1
+            try checkpoint?("copy-recovery.moved", moved)
+          }
+        }
+      }
+      for conflict in journal.conflicts {
+        let target = try copyRecoveryConflict(conflict, journal: journal, paths: paths)
+        if try entryIdentity(target) == nil {
+          try renameRollback(prefixPath(conflict.gameID, plan: journal.plan, paths: paths), target)
+          try checkpoint?("copy-recovery.conflict-moved", moved)
+        }
+      }
+      // A replacement created after the crash is preserved and tracked separately, never overwritten.
+      for entry in journal.copies {
+        let source = try prefixPath(entry.gameID, plan: journal.plan, paths: paths)
+        if let identity = try entryIdentity(source) {
+          let conflict = RollbackConflictEntry(id: UUID(), gameID: entry.gameID, identity: identity)
+          _ = try privateRollbackDirectory("Backups/migration-interrupted-" + journal.transaction.uuidString + "/Conflicts", paths: paths)
+          journal.conflicts.append(conflict); try writeCopyRecoveryJournal(journal, paths: paths)
+          try renameRollback(source, copyRecoveryConflict(conflict, journal: journal, paths: paths))
+          try checkpoint?("copy-recovery.conflict-moved", moved)
+        }
+      }
+      try validateCopyRecovery(journal, paths: paths)
+      for entry in journal.copies {
+        guard try entryIdentity(prefixPath(entry.gameID, plan: journal.plan, paths: paths)) == nil else { throw LauncherError.invalid("Destinazione del recupero cambiata: journal conservato.") }
+      }
+      journal.phase = "committing"; try writeCopyRecoveryJournal(journal, paths: paths)
+      var result = journal.plan; result.status = "interrupted-copies-archived-original-retained"
+      try AtomicFile.writePrivate(JSONEncoder().encode(result), to: archive.appendingPathComponent("plan.json"))
+      try recordRollbackPlan(result, paths: paths)
+      try checkpoint?("copy-recovery.plan-recorded", journal.copies.count)
+      let originalJournal = try rollbackPath("Migration/journal.json", paths: paths)
+      let savedJournal = archive.appendingPathComponent("copy-journal.json")
+      if FileManager.default.fileExists(atPath: originalJournal.path) {
+        try renameRollback(originalJournal, savedJournal)
+      } else if !FileManager.default.fileExists(atPath: savedJournal.path) {
+        try AtomicFile.writePrivate(journal.copyJournal, to: savedJournal)
+      }
+      guard try readPrivateCopyJournal(savedJournal) == journal.copyJournal else { throw LauncherError.invalid("Journal archiviato del recupero cambiato: dati conservati.") }
+      try checkpoint?("copy-recovery.journal-archived", journal.copies.count)
+      let outcome: [String: Any] = ["outcome": result.status, "planID": result.id.uuidString, "archive": archive.path,
+        "copyEntries": journal.copies.count, "conflictsPreserved": journal.conflicts.count, "legacyOriginalRetained": true]
+      try AtomicFile.writePrivate(JSONSerialization.data(withJSONObject: outcome, options: [.sortedKeys]), to: archive.appendingPathComponent("recovery-result.json"))
+      try checkpoint?("copy-recovery.commit-pending", journal.copies.count)
+      try renameRollback(rollbackPath("Migration/copy-recovery-journal.json", paths: paths), archive.appendingPathComponent("recovery-journal.json"))
+      return archive
+    }
   }
 }

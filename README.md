@@ -19,7 +19,7 @@ See [portable frontend packaging](Docs/FRONTEND_PACKAGING.md), [requirements and
 
 ## Build and test
 
-macOS 14+ and Swift 5.10+; Metal4/GPTK4 testing requires compatible newer SDK/OS and Apple Silicon.
+The build targets macOS 14+ and Swift 5.10+; current runtime validation is on macOS 27.0.1. Metal4/GPTK4 testing requires a compatible newer SDK/OS and Apple Silicon. The native group-lifetime checks have not been run on macOS 14/15.
 
 ```sh
 swift build --product M1Launcher --jobs 2
@@ -51,9 +51,11 @@ Apple D3DMetal/GPTK evaluation libraries are **proprietary optional local inputs
 
 ## Verified so far / still open
 
-The [sanitized checkpoint](Validation/checkpoint.json) records 26 domain checks, 64 store protocol/concurrency tests, real process/session coordination, and real Wine registry/folder API checks across game/profile prefixes. Two actual Windows sessions also verify that terminating A leaves B running with its lease intact. Game readers and store writers now protect shared installation files with an interoperable lease. Sixteen real-process StoreClient checks cover cancellation and private credential transport without accessing real Keychain accounts. Actual Metal overlay rendering passes six ARM64/x64 paths and a Windows Vulkan → Wine → KosmicKrisp path. The launcher releases its canvas texture during play; a local Metal allocation measurement falls from about 47 MB to 0.74 MB.
+The [sanitized checkpoint](Validation/checkpoint.json) records 28 domain checks, 64 store protocol/concurrency tests, real process/session coordination, and real Wine registry/folder API checks across game/profile prefixes. Two actual Windows sessions also verify that terminating A leaves B running with its lease intact. Game readers and store writers now protect shared installation files with an interoperable lease. Twenty-eight keeper checks include native wrappers that exit before their child, isolated termination, crash survival and actual Metal overlay handoff. Sixteen real-process StoreClient checks cover cancellation and private credential transport without accessing real Keychain accounts. Actual Metal overlay rendering passes six ARM64/x64 paths and a Windows Vulkan → Wine → KosmicKrisp path. The launcher releases its canvas texture during play; a local Metal allocation measurement falls from about 47 MB to 0.74 MB.
 
 The Library menu and settings expose **Dati e ripristino** for guided legacy migration, interrupted-copy recovery and archival rollback. The copy crash probe passes; visual verification of the new dialogs is pending because the Mac was locked during the attempt.
+
+Save-folder recipes persist outside disposable prefixes. Eleven recreation-crash checks include a real SIGKILL before replacement metadata exists; ten archive-recovery checks include six real SIGKILL boundaries and preserve one stable recovery archive. These use synthetic data and do not certify migrations of real user games. Interrupted renderer DLL projections also recover under the prefix lease, retaining before/after custom versions.
 
 The relocatable frontend passes 14 packaging/configuration checks, including a saved central-runtime location, restoration and invalid-path rejection. **Libreria → Motori…** selects that location without copying engines or changing their configuration. The graphical selection flow still needs visual verification. A separate [diagnostic XInput provider](Docs/XINPUT_CAPTURE.md) passes ten DLL/architecture combinations and actual injected-overlay integration with simulated controller input; it is not the active runtime and does not establish physical-controller or other input-API support.
 

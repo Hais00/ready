@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import Foundation
+import Darwin
 
 /// Personal data is outside disposable Wine prefixes. AppData remains isolated by game AND profile.
 public final class PrefixManager {
@@ -93,19 +94,43 @@ public final class PrefixManager {
   /// Never deletes the old prefix. Caller gets a rollback path, and personal directories are reused.
   @discardableResult
   public func recreate(profile: UUID, gameID: String) throws -> URL? {
+    try recreateTransaction(profile: profile, gameID: gameID, afterArchive: nil)
+  }
+  /// Deterministic crash boundary for an explicitly marked owned synthetic
+  /// fixture. Production never consults an environment variable or checkpoint.
+  public func recreateFixture(
+    profile: UUID, gameID: String, afterArchive: @escaping (URL) throws -> Void
+  ) throws -> URL? {
+    var info = stat()
+    let marker = paths.root.appendingPathComponent(".ready-synthetic-prefix-recreate")
+    guard lstat(marker.path, &info) == 0, info.st_uid == getuid(),
+      info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else {
+      throw LauncherError.invalid("Il punto di controllo richiede una fixture sintetica marcata dell’utente.")
+    }
+    return try recreateTransaction(profile: profile, gameID: gameID, afterArchive: afterArchive)
+  }
+  private func recreateTransaction(
+    profile: UUID, gameID: String, afterArchive: ((URL) throws -> Void)?
+  ) throws -> URL? {
     let lease = try PrefixLease(paths: paths, profile: profile, gameID: gameID)
     return try withExtendedLifetime(lease) {
       let prefix = paths.prefix(profile: profile, gameID: gameID)
       let fm = FileManager.default
-      let saveRules = try PersistentGameFolders.storedRules(prefix: prefix)
+      let saveRules = try PersistentGameFolders.preserveRulesBeforeRecreation(
+        profile: profile, gameID: gameID, paths: paths, prefix: prefix)
       var backup: URL?
       if fm.fileExists(atPath: prefix.path) {
+        // A previous import may have recorded a known rule while its directory
+        // is still physical. Import/redirect those saves before archiving the
+        // prefix, so its replacement never points at an empty persistent target.
+        try prepare(profile: profile, gameID: gameID, saveRules: saveRules)
         let b = paths.root.appendingPathComponent("Backups/prefix-" + UUID().uuidString)
         try fm.createDirectory(at: b.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.moveItem(at: prefix, to: b)
         backup = b
       }
       do {
+        if let backup, let afterArchive { try afterArchive(backup) }
         try prepare(profile: profile, gameID: gameID, saveRules: saveRules)
         return backup
       } catch {
