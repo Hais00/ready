@@ -1,0 +1,359 @@
+{
+  "schema": 1,
+  "createdUTC": "2026-10-28T05:03:11.713088+00:00",
+  "packetID": "core-sources-fab45a108a11b5d83fa9",
+  "dxmtSourceCommit": "3b252590cb0290e36fca6f088b5255b871d2d95a",
+  "dxmtWorkflow": "DXMTIntegration/Source/.github/workflows/ci.yml",
+  "dxmtWorkflowSHA256": "577eb101f24dd64c9bca2e7ae6eda45d55c93ba729fc990550979ba2173f8210",
+  "wineGenerator": "Vendor/wine/tools/make_unicode",
+  "wineGeneratorSHA256": "9150f5cb3a18def4227573831fc89b1610fc193f5a750b7b1c2b4a000fa50ce0",
+  "reserveBytes": 536870912,
+  "components": [
+    {
+      "id": "wine-11.20",
+      "kind": "source-code",
+      "url": "https://dl.winehq.org/wine/source/11.x/wine-11.20.tar.xz",
+      "filename": "wine-11.20.tar.xz",
+      "archiveSHA256": "eac8ca448f9c0087f963026b4dc276d1e2b7fbb64056edc093e59bbb7e56fe28",
+      "role": "active Wine upstream source plus its bundled source/fonts/data; local patches are separate",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "wine-data-ucd",
+      "kind": "preferred-generator-input",
+      "datasetID": "ucd",
+      "url": "https://www.unicode.org/Public/18.0.0/ucd/UCD.zip",
+      "filename": "ucd-UCD-18.0.0.zip",
+      "generatorCacheName": "UCD-18.0.0.zip",
+      "archiveSHA256": "7b3e555514060b92290d154f53655c5eb0fa62b16eb04c03434ff72d1a66a0d8",
+      "role": "preferred input to Wine make_unicode; data terms remain separately unreviewed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "wine-data-unihan",
+      "kind": "preferred-generator-input",
+      "datasetID": "unihan",
+      "url": "https://www.unicode.org/Public/18.0.0/ucd/Unihan.zip",
+      "filename": "unihan-Unihan-18.0.0.zip",
+      "generatorCacheName": "Unihan-18.0.0.zip",
+      "archiveSHA256": "4c93ea9c1f636451729a840978f1667a53886af37ba854fdcce109721c63d43e",
+      "role": "preferred input to Wine make_unicode; data terms remain separately unreviewed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "wine-data-idna",
+      "kind": "preferred-generator-input",
+      "datasetID": "idna",
+      "url": "https://www.unicode.org/Public/18.0.0/idna/IdnaMappingTable.txt",
+      "filename": "idna-IdnaMappingTable-18.0.0.txt",
+      "generatorCacheName": "IdnaMappingTable-18.0.0.txt",
+      "archiveSHA256": "a03b1eb38032268c696406a83f0972d6a815acd2c8d4151d42ec0fda70ffced1",
+      "role": "preferred input to Wine make_unicode; data terms remain separately unreviewed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "wine-data-cldr",
+      "kind": "preferred-generator-input",
+      "datasetID": "cldr",
+      "url": "https://github.com/unicode-org/cldr/archive/refs/tags/release-48.zip",
+      "filename": "cldr-release-48.zip",
+      "generatorCacheName": "release-48.zip",
+      "archiveSHA256": "fa6d331e52d59771009c424bd1c9df311b6b2bf0bf2f6c1ddf6c952c32da4702",
+      "role": "preferred input to Wine make_unicode; data terms remain separately unreviewed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "wine-data-cldr33",
+      "kind": "preferred-generator-input",
+      "datasetID": "cldr33",
+      "url": "https://www.unicode.org/Public/cldr/33/cldr-common-33.0.zip",
+      "filename": "cldr33-cldr-common-33.0.zip",
+      "generatorCacheName": "cldr-common-33.0.zip",
+      "archiveSHA256": "fa3490082c086d21257153609642f54fcf788fcfda4966fe67f3f6daca0d58b9",
+      "role": "preferred input to Wine make_unicode; data terms remain separately unreviewed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "wine-data-sorting",
+      "kind": "preferred-generator-input",
+      "datasetID": "sorting",
+      "url": "https://download.microsoft.com/download/C/F/7/CF713A5E-9FBC-4FD6-9246-275F65C0E498/Windows 11 Sorting Weight Table.txt",
+      "filename": "sorting-Windows 11 Sorting Weight Table.txt",
+      "generatorCacheName": "Windows 11 Sorting Weight Table.txt",
+      "archiveSHA256": "f0bab873ed8901ae17afc4848c7d9e0a7de4310942effb2b54b538411b26d542",
+      "role": "preferred input to Wine make_unicode; data terms remain separately unreviewed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "wine-data-codepages",
+      "kind": "preferred-generator-input",
+      "datasetID": "codepages",
+      "url": "https://download.microsoft.com/download/C/F/7/CF713A5E-9FBC-4FD6-9246-275F65C0E498/Windows Supported Code Page Data Files.zip",
+      "filename": "codepages-Windows Supported Code Page Data Files.zip",
+      "generatorCacheName": "Windows Supported Code Page Data Files.zip",
+      "archiveSHA256": "5074e6dd253056ba61fc6c870c9a955467855129c6ad3a51761c386b301b125a",
+      "role": "preferred input to Wine make_unicode; data terms remain separately unreviewed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "wine-data-iso639",
+      "kind": "preferred-generator-input",
+      "datasetID": "iso639",
+      "url": "https://iso639-3.sil.org/sites/iso639-3/files/downloads/iso-639-3_Code_Tables_20230123.zip",
+      "filename": "iso639-iso-639-3_Code_Tables_20230123.zip",
+      "generatorCacheName": "iso-639-3_Code_Tables_20230123.zip",
+      "archiveSHA256": "884faa6cc5ac5181ed7969eed75355c1bc665447614cf4c06c62e87b38fe6a97",
+      "role": "preferred input to Wine make_unicode; data terms remain separately unreviewed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "wine-data-ksx1001",
+      "kind": "preferred-generator-input",
+      "datasetID": "ksx1001",
+      "url": "https://www.unicode.org/Public/MAPPINGS/OBSOLETE/EASTASIA/KSC/KSX1001.TXT",
+      "filename": "ksx1001-KSX1001.TXT",
+      "generatorCacheName": "KSX1001.TXT",
+      "archiveSHA256": "d8d2a35206ac0ea2865f5d801c9d6717f735bf46f263a658a64a960abe59e371",
+      "role": "preferred input to Wine make_unicode; data terms remain separately unreviewed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "wine-data-jis0208",
+      "kind": "preferred-generator-input",
+      "datasetID": "jis0208",
+      "url": "https://www.unicode.org/Public/MAPPINGS/OBSOLETE/EASTASIA/JIS/JIS0208.TXT",
+      "filename": "jis0208-JIS0208.TXT",
+      "generatorCacheName": "JIS0208.TXT",
+      "archiveSHA256": "1c571870457f19c97720631fa83ee491549a96ba1436da1296786a67d8632e87",
+      "role": "preferred input to Wine make_unicode; data terms remain separately unreviewed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "wine-data-jis0212",
+      "kind": "preferred-generator-input",
+      "datasetID": "jis0212",
+      "url": "https://www.unicode.org/Public/MAPPINGS/OBSOLETE/EASTASIA/JIS/JIS0212.TXT",
+      "filename": "jis0212-JIS0212.TXT",
+      "generatorCacheName": "JIS0212.TXT",
+      "archiveSHA256": "477820bb3055bbcc90880d788cd95607d221dc94457bae249231adecf13c12e6",
+      "role": "preferred input to Wine make_unicode; data terms remain separately unreviewed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "wine-data-tzdata",
+      "kind": "preferred-generator-input",
+      "datasetID": "tzdata",
+      "url": "https://data.iana.org/time-zones/releases/tzdata2026a.tar.gz",
+      "filename": "tzdata-tzdata2026a.tar.gz",
+      "generatorCacheName": "tzdata2026a.tar.gz",
+      "archiveSHA256": "77b541725937bb53bd92bd484c0b43bec8545e2d3431ee01f04ef8f2203ba2b7",
+      "role": "preferred input to Wine make_unicode; data terms remain separately unreviewed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "wine-data-glyphs",
+      "kind": "preferred-generator-input",
+      "datasetID": "glyphs",
+      "url": "https://github.com/adobe-type-tools/agl-aglfn/raw/4036a9ca80a62f64f9de4f7321a9a045ad0ecfd6/glyphlist.txt",
+      "filename": "glyphs-glyphlist.txt",
+      "generatorCacheName": "glyphlist.txt",
+      "archiveSHA256": "a3b2f61ced9f3644cc0d4ecde5c59df34ca286c689d9484a43a710a81c466789",
+      "role": "preferred input to Wine make_unicode; data terms remain separately unreviewed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "wine-data-psfonts",
+      "kind": "preferred-generator-input",
+      "datasetID": "psfonts",
+      "url": "https://mirrors.ctan.org/fonts/adobe/afm/Adobe-Core35_AFMs-229.tar.gz",
+      "filename": "psfonts-Adobe-Core35_AFMs-229.tar.gz",
+      "generatorCacheName": "Adobe-Core35_AFMs-229.tar.gz",
+      "archiveSHA256": "034ed3025cff4c48bbefae90f9eff7dc6237dd384443c594c017b571e49d0649",
+      "role": "preferred input to Wine make_unicode; data terms remain separately unreviewed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "wine-data-icu",
+      "kind": "preferred-generator-input",
+      "datasetID": "icu",
+      "url": "https://github.com/microsoft/icu/releases/download/v72.1.0.3/msicu-icu4c-v72.1.0.3-src.tgz",
+      "filename": "icu-msicu-icu4c-v72.1.0.3-src.tgz",
+      "generatorCacheName": "msicu-icu4c-v72.1.0.3-src.tgz",
+      "archiveSHA256": "8b769d613dddca081c4f77e09395a63f41b1e25496419ff17448131836f30b6f",
+      "role": "preferred input to Wine make_unicode; data terms remain separately unreviewed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false
+    },
+    {
+      "id": "llvm15-airconv",
+      "kind": "source-code",
+      "repository": "llvm/llvm-project",
+      "requestedRef": "llvmorg-15.0.7",
+      "resolvedCommit": "8dfdcc7b7bf66834a761bd8de445840ef68e4d1a",
+      "url": "https://codeload.github.com/llvm/llvm-project/tar.gz/8dfdcc7b7bf66834a761bd8de445840ef68e4d1a",
+      "filename": "llvm15-airconv.tar.gz",
+      "archiveSHA256": "b7f15ee379144b0c26a64ff9a1f27d0ea341a0db0c91b71c66bbfa8b310788ac",
+      "role": "LLVM code linked statically into DXMT airconv/winemetal; entire LLVM project source retained compressed",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false,
+      "hashPinOrigin": "first verified HTTPS acquisition from immutable recorded Git commit; not binary correspondence proof"
+    },
+    {
+      "id": "wine-ci-startup",
+      "kind": "source-code",
+      "repository": "3Shain/wine",
+      "requestedRef": "v8.16-3shain",
+      "resolvedCommit": "4dd8a2d6dca39a116d0911f247bbaf1ad5e29471",
+      "url": "https://codeload.github.com/3Shain/wine/tar.gz/4dd8a2d6dca39a116d0911f247bbaf1ad5e29471",
+      "filename": "wine-ci-startup.tar.gz",
+      "archiveSHA256": "3ca8eb27439ad5788ac1ba599d9f68537e126ea3cc9f32f76f916aad95e21d71",
+      "role": "Wine CI startup/import library source candidate; runtime Wine11.20 is a separate source input",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false,
+      "hashPinOrigin": "first verified HTTPS acquisition from immutable recorded Git commit; not binary correspondence proof"
+    },
+    {
+      "id": "llvm-mingw-recipes",
+      "kind": "source-code",
+      "repository": "mstorsjo/llvm-mingw",
+      "requestedRef": "20260908",
+      "resolvedCommit": "030097eeee87fcfd0f3bfe536b21cbd6e5d3b324",
+      "url": "https://codeload.github.com/mstorsjo/llvm-mingw/tar.gz/030097eeee87fcfd0f3bfe536b21cbd6e5d3b324",
+      "filename": "llvm-mingw-recipes.tar.gz",
+      "archiveSHA256": "d2c147b5e315b606f39c79ea48bd7e300ed72b3e27581d41739b4e0634dc9234",
+      "role": "toolchain provider build recipes; recipe source is not automatically incorporated runtime code",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false,
+      "hashPinOrigin": "first verified HTTPS acquisition from immutable recorded Git commit; not binary correspondence proof"
+    },
+    {
+      "id": "llvm-mingw-runtime-sources",
+      "kind": "source-code",
+      "repository": "llvm/llvm-project",
+      "requestedRef": "llvmorg-23.1.1",
+      "resolvedCommit": "6dfe1677ab8dffbc6ec13d53a1e0215d75147689",
+      "url": "https://codeload.github.com/llvm/llvm-project/tar.gz/6dfe1677ab8dffbc6ec13d53a1e0215d75147689",
+      "filename": "llvm-mingw-runtime-sources.tar.gz",
+      "archiveSHA256": "16bb7789e3721de2a36284b2cdcf15b36ba3b62033145807b8a9e189c898b26d",
+      "role": "compiler-rt/libc++/libc++abi/libunwind runtime source candidates and compiler source in same archive; exact incorporated objects still need proof",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false,
+      "hashPinOrigin": "first verified HTTPS acquisition from immutable recorded Git commit; not binary correspondence proof"
+    },
+    {
+      "id": "mingw-w64-crt",
+      "kind": "source-code",
+      "repository": "mingw-w64/mingw-w64",
+      "requestedRef": "9f55f4a2d3b9783dab76d9808be3d6279b99ec2a",
+      "resolvedCommit": "9f55f4a2d3b9783dab76d9808be3d6279b99ec2a",
+      "url": "https://codeload.github.com/mingw-w64/mingw-w64/tar.gz/9f55f4a2d3b9783dab76d9808be3d6279b99ec2a",
+      "filename": "mingw-w64-crt.tar.gz",
+      "archiveSHA256": "42b54413471ecedb316ea98bc681f0152cade9e93cc631751f8bfdc6ea46e245",
+      "role": "MinGW-w64 headers/CRT runtime source candidate from pinned LLVM-MinGW build default",
+      "artifactCorrespondenceVerified": false,
+      "licenseApproval": false,
+      "hashPinOrigin": "first verified HTTPS acquisition from immutable recorded Git commit; not binary correspondence proof"
+    }
+  ],
+  "primaryMetadata": {
+    "llvm15": {
+      "requestURL": "https://api.github.com/repos/llvm/llvm-project/commits/llvmorg-15.0.7",
+      "apiStatus": 403,
+      "gitRemote": "https://github.com/llvm/llvm-project.git",
+      "advertisedRefs": {
+        "refs/tags/llvmorg-15.0.7": "d2b30c38ff585ddec8fe05fac734c0bb2a6bacc3",
+        "refs/tags/llvmorg-15.0.7^{}": "8dfdcc7b7bf66834a761bd8de445840ef68e4d1a"
+      },
+      "resolvedCommit": "8dfdcc7b7bf66834a761bd8de445840ef68e4d1a",
+      "resolution": "public Git ref advertisement, annotated tags peeled"
+    },
+    "wine-ci": {
+      "requestURL": "https://api.github.com/repos/3Shain/wine/commits/v8.16-3shain",
+      "apiStatus": 403,
+      "gitRemote": "https://github.com/3Shain/wine.git",
+      "advertisedRefs": {
+        "refs/tags/v8.16-3shain": "4dd8a2d6dca39a116d0911f247bbaf1ad5e29471"
+      },
+      "resolvedCommit": "4dd8a2d6dca39a116d0911f247bbaf1ad5e29471",
+      "resolution": "public Git ref advertisement, annotated tags peeled"
+    },
+    "llvm-mingw": {
+      "requestURL": "https://api.github.com/repos/mstorsjo/llvm-mingw/commits/20260908",
+      "apiStatus": 403,
+      "gitRemote": "https://github.com/mstorsjo/llvm-mingw.git",
+      "advertisedRefs": {
+        "refs/tags/20260908": "bdd1c28943bc0aaa4e33ebf7a42408a81d69380c",
+        "refs/tags/20260908^{}": "030097eeee87fcfd0f3bfe536b21cbd6e5d3b324"
+      },
+      "resolvedCommit": "030097eeee87fcfd0f3bfe536b21cbd6e5d3b324",
+      "resolution": "public Git ref advertisement, annotated tags peeled"
+    },
+    "llvm-mingw-runtime-sources": {
+      "requestURL": "https://api.github.com/repos/llvm/llvm-project/commits/llvmorg-23.1.1",
+      "apiStatus": 403,
+      "gitRemote": "https://github.com/llvm/llvm-project.git",
+      "advertisedRefs": {
+        "refs/tags/llvmorg-23.1.1": "e7ce3600b55034ddf819638f395e3c475fad5be2",
+        "refs/tags/llvmorg-23.1.1^{}": "6dfe1677ab8dffbc6ec13d53a1e0215d75147689"
+      },
+      "resolvedCommit": "6dfe1677ab8dffbc6ec13d53a1e0215d75147689",
+      "resolution": "public Git ref advertisement, annotated tags peeled"
+    },
+    "mingw-w64-crt": {
+      "requestURL": "https://api.github.com/repos/mingw-w64/mingw-w64/commits/9f55f4a2d3b9783dab76d9808be3d6279b99ec2a",
+      "apiStatus": 403,
+      "resolvedCommit": "9f55f4a2d3b9783dab76d9808be3d6279b99ec2a",
+      "resolution": "immutable source-recipe commit; existence additionally checked by archive download"
+    }
+  },
+  "llvmMinGWDriverSnapshots": {
+    "build-llvm.sh": {
+      "url": "https://raw.githubusercontent.com/mstorsjo/llvm-mingw/030097eeee87fcfd0f3bfe536b21cbd6e5d3b324/build-llvm.sh",
+      "finalURL": "https://raw.githubusercontent.com/mstorsjo/llvm-mingw/030097eeee87fcfd0f3bfe536b21cbd6e5d3b324/build-llvm.sh",
+      "sha256": "0a734bd349222cd25e0d4e33bfd2930b577b50e2c2d91ee2aa1208cff4e2517e",
+      "text": "#!/bin/sh\n#\n# Copyright (c) 2018 Martin Storsjo\n#\n# Permission to use, copy, modify, and/or distribute this software for any\n# purpose with or without fee is hereby granted, provided that the above\n# copyright notice and this permission notice appear in all copies.\n#\n# THE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES\n# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF\n# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR\n# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES\n# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN\n# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF\n# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.\n\nset -e\n\n: ${LLVM_REPOSITORY:=https://github.com/llvm/llvm-project.git}\n: ${LLVM_VERSION:=llvmorg-23.1.1}\nASSERTS=OFF\nunset HOST\nBUILDDIR=\"build\"\nLINK_DYLIB=ON\nASSERTSSUFFIX=\"\"\nLLDB=ON\nCLANG_TOOLS_EXTRA=ON\nINSTRUMENTED=OFF\n\nwhile [ $# -gt 0 ]; do\n    case \"$1\" in\n    --disable-asserts)\n        ASSERTS=OFF\n        ASSERTSSUFFIX=\"\"\n        ;;\n    --enable-asserts)\n        ASSERTS=ON\n        ASSERTSSUFFIX=\"-asserts\"\n        ;;\n    --with-clang)\n        WITH_CLANG=1\n        BUILDDIR=\"$BUILDDIR-withclang\"\n        ;;\n    --use-linker=*)\n        USE_LINKER=\"${1#*=}\"\n        ;;\n    --thinlto)\n        LTO=\"thin\"\n        BUILDDIR=\"$BUILDDIR-thinlto\"\n        ;;\n    --lto)\n        LTO=\"full\"\n        BUILDDIR=\"$BUILDDIR-lto\"\n        ;;\n    --disable-dylib)\n        LINK_DYLIB=OFF\n        ;;\n    --full-llvm)\n        FULL_LLVM=1\n        ;;\n    --host=*)\n        HOST=\"${1#*=}\"\n        ;;\n    --with-python)\n        WITH_PYTHON=1\n        ;;\n    --disable-lldb)\n        unset LLDB\n        ;;\n    --disable-clang-tools-extra)\n        unset CLANG_TOOLS_EXTRA\n        ;;\n    --no-llvm-tool-reuse)\n        NO_LLVM_TOOL_REUSE=1\n        ;;\n    --macos-native-tools)\n        MACOS_NATIVE_TOOLS=1\n        unset CLEAN\n        ;;\n    --instrumented|--instrumented=*)\n        INSTRUMENTED=\"${1#--instrumented}\"\n        INSTRUMENTED=\"${INSTRUMENTED#=}\"\n        INSTRUMENTED=\"${INSTRUMENTED:-Frontend}\"\n        : ${LLVM_PROFILE_DATA_DIR:=/tmp/llvm-profile}\n        # A fixed BUILDDIR is set at the end for this case.\n        ;;\n    --pgo|--pgo=*)\n        LLVM_PROFDATA_FILE=\"${1#--pgo}\"\n        LLVM_PROFDATA_FILE=\"${LLVM_PROFDATA_FILE#=}\"\n        LLVM_PROFDATA_FILE=\"${LLVM_PROFDATA_FILE:-profile.profdata}\"\n        if [ ! -e \"$LLVM_PROFDATA_FILE\" ]; then\n            echo Profile \\\"$LLVM_PROFDATA_FILE\\\" not found\n            exit 1\n        fi\n        LLVM_PROFDATA_FILE=\"$(cd \"$(dirname \"$LLVM_PROFDATA_FILE\")\" && pwd)/$(basename \"$LLVM_PROFDATA_FILE\")\"\n        BUILDDIR=\"$BUILDDIR-pgo\"\n        ;;\n    *)\n        if [ -n \"$PREFIX\" ]; then\n            echo Unrecognized parameter $1\n            exit 1\n        fi\n        PREFIX=\"$1\"\n        ;;\n    esac\n    shift\ndone\nBUILDDIR=\"$BUILDDIR$ASSERTSSUFFIX\"\nif [ -z \"$CHECKOUT_ONLY\" ]; then\n    if [ -z \"$PREFIX\" ]; then\n        echo $0 [--enable-asserts] [--with-clang] [--use-linker=linker] [--thinlto] [--lto] [--instrumented[=type]] [--pgo[=profile]] [--disable-dylib] [--full-llvm] [--with-python] [--disable-lldb] [--disable-clang-tools-extra] [--host=triple] [--no-llvm-tool-reuse] [--macos-native-tools] dest\n        exit 1\n    fi\n\n    if [ \"$INSTRUMENTED\" = \"OFF\" ]; then\n        mkdir -p \"$PREFIX\"\n        PREFIX=\"$(cd \"$PREFIX\" && pwd)\"\n    fi\nfi\n\nif [ ! -d llvm-project ]; then\n    mkdir llvm-project\n    cd llvm-project\n    git init\n    git remote add origin \"${LLVM_REPOSITORY}\"\n    cd ..\n    CHECKOUT=1\nfi\n\nif [ -n \"$SYNC\" ] || [ -n \"$CHECKOUT\" ]; then\n    cd llvm-project\n    # Check if the intended commit or tag exists in the local repo. If it\n    # exists, just check it out instead of trying to fetch it.\n    # (Redoing a shallow fetch will refetch the data even if the commit\n    # already exists locally, unless fetching a tag with the \"tag\"\n    # argument.)\n    if git cat-file -e \"$LLVM_VERSION\" 2> /dev/null; then\n        # Exists; just check it out\n        git checkout \"$LLVM_VERSION\"\n    else\n        case \"$LLVM_VERSION\" in\n        llvmorg-*)\n            # If $LLVM_VERSION looks like a tag, fetch it with the\n            # \"tag\" keyword. This makes sure that the local repo\n            # gets the tag too, not only the commit itself. This allows\n            # later fetches to realize that the tag already exists locally.\n            git fetch --depth 1 origin tag \"$LLVM_VERSION\"\n            git checkout \"$LLVM_VERSION\"\n            ;;\n        *)\n            git fetch --depth 1 origin \"$LLVM_VERSION\"\n            git checkout FETCH_HEAD\n            ;;\n        esac\n    fi\n    cd ..\nfi\n\n[ -z \"$CHECKOUT_ONLY\" ] || exit 0\n\nif [ -n \"$HOST\" ]; then\n    case $HOST in\n    *-mingw32)\n        TARGET_WINDOWS=1\n        ;;\n    esac\nelse\n    case $(uname) in\n    MINGW*)\n        TARGET_WINDOWS=1\n        ;;\n    esac\nfi\n\nif command -v ninja >/dev/null; then\n    CMAKE_GENERATOR=\"Ninja\"\nelse\n    : ${CORES:=$(nproc 2>/dev/null)}\n    : ${CORES:=$(sysctl -n hw.ncpu 2>/dev/null)}\n    : ${CORES:=4}\n\n    case $(uname) in\n    MINGW*)\n        CMAKE_GENERATOR=\"MSYS Makefiles\"\n        ;;\n    esac\nfi\n\nCMAKEFLAGS=\"$LLVM_CMAKEFLAGS\"\n\nif [ -n \"$HOST\" ]; then\n    ARCH=\"${HOST%%-*}\"\n\n    if [ -n \"$WITH_CLANG\" ]; then\n        CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_C_COMPILER=clang\"\n        CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_CXX_COMPILER=clang++\"\n        CMAKEFLAGS=\"$CMAKEFLAGS -DLLVM_USE_LINKER=${USE_LINKER:-lld}\"\n        CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_ASM_COMPILER_TARGET=$HOST\"\n        CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_C_COMPILER_TARGET=$HOST\"\n        CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_CXX_COMPILER_TARGET=$HOST\"\n        if command -v $HOST-strip >/dev/null; then\n            CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_STRIP=$(command -v $HOST-strip)\"\n        fi\n    else\n        CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_C_COMPILER=$HOST-gcc\"\n        CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_CXX_COMPILER=$HOST-g++\"\n        CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_SYSTEM_PROCESSOR=$ARCH\"\n    fi\n    case $HOST in\n    *-mingw32)\n        CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_SYSTEM_NAME=Windows\"\n        CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_RC_COMPILER=$HOST-windres\"\n        ;;\n    *-linux*)\n        CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_SYSTEM_NAME=Linux\"\n        ;;\n    *)\n        echo \"Unrecognized host $HOST\"\n        exit 1\n        ;;\n    esac\n\n    native=\"\"\n    for dir in llvm-project/llvm/build/bin llvm-project/llvm/build-asserts/bin; do\n        if [ -x \"$dir/llvm-tblgen.exe\" ]; then\n            native=\"$(pwd)/$dir\"\n            break\n        elif [ -x \"$dir/llvm-tblgen\" ]; then\n            native=\"$(pwd)/$dir\"\n            break\n        fi\n    done\n    if [ -z \"$native\" ] && command -v llvm-tblgen >/dev/null; then\n        native=\"$(dirname $(command -v llvm-tblgen))\"\n    fi\n\n\n    if [ -n \"$native\" ] && [ -z \"$NO_LLVM_TOOL_REUSE\" ]; then\n        CMAKEFLAGS=\"$CMAKEFLAGS -DLLVM_NATIVE_TOOL_DIR=$native\"\n    fi\n    CROSS_ROOT=$(cd $(dirname $(command -v $HOST-gcc))/../$HOST && pwd)\n    CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_FIND_ROOT_PATH=$CROSS_ROOT\"\n    CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER\"\n    CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY\"\n    CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY\"\n    CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY\"\n\n    BUILDDIR=$BUILDDIR-$HOST\n\n    if [ -n \"$WITH_PYTHON\" ] && [ -n \"$TARGET_WINDOWS\" ]; then\n        EXT_SUFFIX=\"$(python3 $PREFIX/python/bin/python3-config --extension-suffix)\"\n        PYTHON_RELATIVE_PATH=\"$(cd \"$PREFIX\" && echo python/lib/python*/site-packages)\"\n        PYTHON_INCLUDE_DIR=\"$(echo $PREFIX/python/include/python*)\"\n        PYTHON_LIB=\"$(echo $PREFIX/python/lib/libpython3.*.dll.a)\"\n        CMAKEFLAGS=\"$CMAKEFLAGS -DLLDB_ENABLE_PYTHON=ON\"\n        CMAKEFLAGS=\"$CMAKEFLAGS -DPYTHON_HOME=$PREFIX/python\"\n        CMAKEFLAGS=\"$CMAKEFLAGS -DLLDB_PYTHON_HOME=../python\"\n        # Relative to the lldb install root\n        CMAKEFLAGS=\"$CMAKEFLAGS -DLLDB_PYTHON_RELATIVE_PATH=$PYTHON_RELATIVE_PATH\"\n        # Relative to LLDB_PYTHON_HOME\n        CMAKEFLAGS=\"$CMAKEFLAGS -DLLDB_PYTHON_EXE_RELATIVE_PATH=bin/python3.exe\"\n        CMAKEFLAGS=\"$CMAKEFLAGS -DLLDB_PYTHON_EXT_SUFFIX=$EXT_SUFFIX\"\n\n        CMAKEFLAGS=\"$CMAKEFLAGS -DPython3_INCLUDE_DIRS=$PYTHON_INCLUDE_DIR\"\n        CMAKEFLAGS=\"$CMAKEFLAGS -DPython3_LIBRARIES=$PYTHON_LIB\"\n    fi\nelif [ -n \"$WITH_CLANG\" ]; then\n    # Build using clang and lld (from $PATH), rather than the system default\n    # tools.\n    CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_C_COMPILER=clang\"\n    CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_CXX_COMPILER=clang++\"\n    CMAKEFLAGS=\"$CMAKEFLAGS -DLLVM_USE_LINKER=${USE_LINKER:-lld}\"\nelse\n    # Native compilation with the system default compiler.\n\n    # Use a faster linker, if available.\n    if [ -n \"$USE_LINKER\" ]; then\n        CMAKEFLAGS=\"$CMAKEFLAGS -DLLVM_USE_LINKER=$USE_LINKER\"\n    elif command -v ld.lld >/dev/null; then\n        CMAKEFLAGS=\"$CMAKEFLAGS -DLLVM_USE_LINKER=lld\"\n    elif command -v ld.gold >/dev/null; then\n        CMAKEFLAGS=\"$CMAKEFLAGS -DLLVM_USE_LINKER=gold\"\n    fi\nfi\n\nif [ -n \"$COMPILER_LAUNCHER\" ]; then\n    CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_C_COMPILER_LAUNCHER=$COMPILER_LAUNCHER\"\n    CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_CXX_COMPILER_LAUNCHER=$COMPILER_LAUNCHER\"\n    # Make the LLVM build system set options for forcing relative paths\n    # within the files, e.g. for source file references within assert\n    # messages. This on its own isn't enough for making the cache reusable\n    # across different worktrees though; one also needs to set the ccache\n    # base_dir (CCACHE_BASEDIR) option. When setting that ccache option, this\n    # option here doesn't really have any effect either, except for debug info.\n    CMAKEFLAGS=\"$CMAKEFLAGS -DLLVM_USE_RELATIVE_PATHS_IN_FILES=ON\"\nfi\n\nif [ -n \"$LTO\" ]; then\n    CMAKEFLAGS=\"$CMAKEFLAGS -DLLVM_ENABLE_LTO=$LTO\"\nfi\n\nif [ -n \"$MACOS_REDIST\" ]; then\n    : ${MACOS_REDIST_ARCHS:=arm64 x86_64}\n    : ${MACOS_REDIST_VERSION:=10.12}\n    ARCH_LIST=\"\"\n    NATIVE=\n    for arch in $MACOS_REDIST_ARCHS; do\n        if [ -n \"$ARCH_LIST\" ]; then\n            ARCH_LIST=\"$ARCH_LIST;\"\n        fi\n        ARCH_LIST=\"$ARCH_LIST$arch\"\n        if [ \"$(uname -m)\" = \"$arch\" ]; then\n            NATIVE=1\n        fi\n    done\n    CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_OSX_ARCHITECTURES=$ARCH_LIST\"\n    CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_OSX_DEPLOYMENT_TARGET=$MACOS_REDIST_VERSION\"\n    if [ -z \"$NATIVE\" ]; then\n        # If we're not building for the native arch, flag to CMake that we're\n        # cross compiling, to let it build native versions of tools used\n        # during the build.\n        ARCH=\"$(echo $MACOS_REDIST_ARCHS | awk '{print $1}')\"\n        CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_SYSTEM_NAME=Darwin\"\n        CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_SYSTEM_PROCESSOR=$ARCH\"\n    fi\nfi\n\nif [ -z \"$HOST\" ] && [ \"$(uname)\" = \"Darwin\" ]; then\n    if [ -n \"$LLDB\" ]; then\n        # Building LLDB for macOS fails unless building libc++ is enabled at the\n        # same time, or unless the LLDB tests are disabled.\n        CMAKEFLAGS=\"$CMAKEFLAGS -DLLDB_INCLUDE_TESTS=OFF\"\n        # Don't build our own debugserver - use the system provided one.\n        # The newly built debugserver needs to be properly code signed to work.\n        # This silences a cmake warning.\n        CMAKEFLAGS=\"$CMAKEFLAGS -DLLDB_USE_SYSTEM_DEBUGSERVER=ON\"\n    fi\n    if [ -n \"$WITH_CLANG\" ] && [ -n \"$LTO\" ]; then\n        # If doing LTO, we need to make sure other related tools are used.\n        # CMAKE_LIBTOOL is not a standard cmake tool, but an LLVM specific\n        # thing. It defaults to looking up the tool with xcrun rather than\n        # looking in paths first.\n        # If building for multiple architectures at once\n        # (CMAKE_OSX_ARCHITECTURES), we also need to provide a tool named\n        # \"lipo\" in the PATH (this is invoked by Clang directly, so we can't\n        # specify it here unless we pass in the option \"-fuse-lipo=\"). If\n        # the LLVM CMake build wasn't using libtool, we would also need to\n        # specify LLVM_AR and LLVM_RANLIB.\n        CMAKEFLAGS=\"$CMAKEFLAGS -DCMAKE_LIBTOOL=$(command -v llvm-libtool-darwin)\"\n    fi\nfi\n\nif [ \"$INSTRUMENTED\" != \"OFF\" ]; then\n    # For instrumented build, use a hardcoded builddir that we can\n    # locate, and don't install the built files.\n    BUILDDIR=\"build-instrumented\"\nfi\n\nTOOLCHAIN_ONLY=ON\nif [ -n \"$FULL_LLVM\" ]; then\n    TOOLCHAIN_ONLY=OFF\nfi\n\ncd llvm-project/llvm\n\nPROJECTS=\"clang;lld\"\nif [ -n \"$LLDB\" ]; then\n    PROJECTS=\"$PROJECTS;lldb\"\nfi\nif [ -n \"$CLANG_TOOLS_EXTRA\" ]; then\n    PROJECTS=\"$PROJECTS;clang-tools-extra\"\nfi\n\n[ -z \"$CLEAN\" ] || rm -rf $BUILDDIR\nmkdir -p $BUILDDIR\ncd $BUILDDIR\n\nif [ -n \"$MACOS_NATIVE_TOOLS\" ]; then\n    # Build tools needed for targeting macOS with LTO.\n    #\n    # The install-<tool>(-stripped) targets are unavailable for\n    # tools that are excluded due to LLVM_INSTALL_TOOLCHAIN_ONLY=ON and\n    # LLVM_TOOLCHAIN_TOOLS, so install those manually.\n    cmake --build . --target llvm-lipo --target llvm-libtool-darwin\n    # Install ld64.lld, required for -fuse-ld=lld\n    cmake --install . --strip --component lld\n    # Install llvm-libtool-darwin and lipo, needed for building with LTO.\n    # See the comment further above for more details about this.\n    cp bin/llvm-lipo bin/llvm-libtool-darwin $PREFIX/bin\n    strip $PREFIX/bin/llvm-lipo $PREFIX/bin/llvm-libtool-darwin\n    ln -sf llvm-lipo $PREFIX/bin/lipo\n    exit 0\nfi\n\n[ -n \"$NO_RECONF\" ] || rm -rf CMake*\ncmake \\\n    ${CMAKE_GENERATOR+-G} \"$CMAKE_GENERATOR\" \\\n    -DCMAKE_INSTALL_PREFIX=\"$PREFIX\" \\\n    -DCMAKE_BUILD_TYPE=Release \\\n    -DLLVM_ENABLE_ASSERTIONS=$ASSERTS \\\n    -DLLVM_ENABLE_PROJECTS=\"$PROJECTS\" \\\n    -DLLVM_ENABLE_BINDINGS=OFF \\\n    -DLLVM_TARGETS_TO_BUILD=\"ARM;AArch64;X86;NVPTX\" \\\n    -DLLVM_INSTALL_TOOLCHAIN_ONLY=$TOOLCHAIN_ONLY \\\n    -DLLVM_LINK_LLVM_DYLIB=$LINK_DYLIB \\\n    -DLLVM_TOOLCHAIN_TOOLS=\"llvm-ar;llvm-ranlib;llvm-objdump;llvm-rc;llvm-cvtres;llvm-nm;llvm-strings;llvm-readobj;llvm-dlltool;llvm-pdbutil;llvm-objcopy;llvm-strip;llvm-cov;llvm-profdata;llvm-addr2line;llvm-symbolizer;llvm-windres;llvm-ml;llvm-readelf;llvm-size;llvm-cxxfilt;llvm-lib\" \\\n    ${HOST+-DLLVM_HOST_TRIPLE=$HOST} \\\n    -DLLVM_BUILD_INSTRUMENTED=$INSTRUMENTED \\\n    ${LLVM_PROFILE_DATA_DIR+-DLLVM_PROFILE_DATA_DIR=$LLVM_PROFILE_DATA_DIR} \\\n    ${LLVM_PROFDATA_FILE+-DLLVM_PROFDATA_FILE=$LLVM_PROFDATA_FILE} \\\n    $CMAKEFLAGS \\\n    ..\n\nif [ \"$INSTRUMENTED\" != \"OFF\" ]; then\n    # For instrumented builds, don't install the built files (so $PREFIX\n    # is entirely unused).\n    cmake --build . ${CORES:+-j${CORES}} --target clang --target lld\nelse\n    cmake --build . ${CORES:+-j${CORES}}\n    cmake --install . --strip\n\n    cp ../LICENSE.TXT $PREFIX\nfi\n"
+    },
+    "build-mingw-w64.sh": {
+      "url": "https://raw.githubusercontent.com/mstorsjo/llvm-mingw/030097eeee87fcfd0f3bfe536b21cbd6e5d3b324/build-mingw-w64.sh",
+      "finalURL": "https://raw.githubusercontent.com/mstorsjo/llvm-mingw/030097eeee87fcfd0f3bfe536b21cbd6e5d3b324/build-mingw-w64.sh",
+      "sha256": "8d5dcd6dab80ff2fec5ad1d86a34666f63135508872af45b9d18b545777c7fa5",
+      "text": "#!/bin/sh\n#\n# Copyright (c) 2018 Martin Storsjo\n#\n# Permission to use, copy, modify, and/or distribute this software for any\n# purpose with or without fee is hereby granted, provided that the above\n# copyright notice and this permission notice appear in all copies.\n#\n# THE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES\n# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF\n# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR\n# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES\n# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN\n# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF\n# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.\n\nset -e\n\n: ${DEFAULT_WIN32_WINNT:=0x601}\n: ${DEFAULT_MSVCRT:=ucrt}\n: ${MINGW_W64_VERSION:=9f55f4a2d3b9783dab76d9808be3d6279b99ec2a}\n\nCFGUARD_FLAGS=\"--enable-cfguard\"\n\nwhile [ $# -gt 0 ]; do\n    case \"$1\" in\n    --skip-include-triplet-prefix)\n        SKIP_INCLUDE_TRIPLET_PREFIX=1\n        ;;\n    --with-default-win32-winnt=*)\n        DEFAULT_WIN32_WINNT=\"${1#*=}\"\n        ;;\n    --with-default-msvcrt=*)\n        DEFAULT_MSVCRT=\"${1#*=}\"\n        ;;\n    --enable-cfguard)\n        CFGUARD_FLAGS=\"--enable-cfguard\"\n        ;;\n    --disable-cfguard)\n        CFGUARD_FLAGS=\n        ;;\n    *)\n        PREFIX=\"$1\"\n        ;;\n    esac\n    shift\ndone\nif [ -z \"$CHECKOUT_ONLY\" ]; then\n    if [ -z \"$PREFIX\" ]; then\n        echo \"$0 [--skip-include-triplet-prefix] [--with-default-win32-winnt=0x601] [--with-default-msvcrt=ucrt] [--enable-cfguard|--disable-cfguard] dest\"\n        exit 1\n    fi\n\n    mkdir -p \"$PREFIX\"\n    PREFIX=\"$(cd \"$PREFIX\" && pwd)\"\nfi\n\nif [ ! -d mingw-w64 ]; then\n    git clone https://github.com/mingw-w64/mingw-w64\n    CHECKOUT=1\nfi\n\ncd mingw-w64\n\nif [ -n \"$SYNC\" ] || [ -n \"$CHECKOUT\" ]; then\n    [ -z \"$SYNC\" ] || git fetch\n    git checkout $MINGW_W64_VERSION\nfi\n\n[ -z \"$CHECKOUT_ONLY\" ] || exit 0\n\nMAKE=make\nif command -v gmake >/dev/null; then\n    MAKE=gmake\nfi\n\ncase $(uname) in\nMINGW*|MSYS*|CYGWIN*)\n    CRT_CONFIG_FLAGS=\"--disable-dependency-tracking\"\n    ;;\nesac\n\nexport PATH=\"$PREFIX/bin:$PATH\"\n\nunset CC\n\n: ${CORES:=$(nproc 2>/dev/null)}\n: ${CORES:=$(sysctl -n hw.ncpu 2>/dev/null)}\n: ${CORES:=4}\n: ${ARCHS:=${TOOLCHAIN_ARCHS-i686 x86_64 armv7 aarch64 arm64ec}}\n\nif [ -z \"$SKIP_INCLUDE_TRIPLET_PREFIX\" ]; then\n    HEADER_ROOT=\"$PREFIX/generic-w64-mingw32\"\nelse\n    HEADER_ROOT=\"$PREFIX\"\nfi\n\ncd mingw-w64-headers\n[ -z \"$CLEAN\" ] || rm -rf build\nmkdir -p build\ncd build\n../configure --prefix=\"$HEADER_ROOT\" \\\n    --enable-idl --with-default-win32-winnt=$DEFAULT_WIN32_WINNT --with-default-msvcrt=$DEFAULT_MSVCRT INSTALL=\"install -C\"\n$MAKE install\ncd ../..\nif [ -z \"$SKIP_INCLUDE_TRIPLET_PREFIX\" ]; then\n    for arch in $ARCHS; do\n        case $arch in\n        arm64ec) continue ;;\n        esac\n\n        mkdir -p \"$PREFIX/$arch-w64-mingw32\"\n        if [ ! -e \"$PREFIX/$arch-w64-mingw32/include\" ]; then\n            ln -sfn ../generic-w64-mingw32/include \"$PREFIX/$arch-w64-mingw32/include\"\n        fi\n    done\nfi\n\nARM64X_FLAGS=\"\"\nfor arch in $ARCHS; do\n    case $arch in\n    arm64ec) ARM64X_FLAGS=\"--enable-arm64x\" ;;\n    esac\ndone\n\ncd mingw-w64-crt\nfor arch in $ARCHS; do\n    case $arch in\n    armv7)\n        FLAGS=\"--disable-lib32 --disable-lib64 --enable-libarm32\"\n        ;;\n    aarch64)\n        FLAGS=\"--disable-lib32 --disable-lib64 --enable-libarm64 $ARM64X_FLAGS\"\n        ;;\n    arm64ec)\n        continue\n        ;;\n    i686)\n        FLAGS=\"--enable-lib32 --disable-lib64\"\n        ;;\n    x86_64)\n        FLAGS=\"--disable-lib32 --enable-lib64\"\n        ;;\n    esac\n    FLAGS=\"$FLAGS --with-default-msvcrt=$DEFAULT_MSVCRT\"\n    FLAGS=\"$FLAGS --enable-silent-rules\"\n    [ -z \"$CLEAN\" ] || rm -rf build-$arch\n    mkdir -p build-$arch\n    cd build-$arch\n    ../configure --host=$arch-w64-mingw32 --prefix=\"$PREFIX/$arch-w64-mingw32\" $FLAGS $CFGUARD_FLAGS $CRT_CONFIG_FLAGS\n    $MAKE -j$CORES\n    $MAKE install\n    cd ..\ndone\ncd ..\n\nfor arch in $ARCHS; do\n    case $arch in\n    arm64ec) continue ;;\n    esac\n\n    if [ ! -f $PREFIX/$arch-w64-mingw32/lib/libssp.a ]; then\n        # Create empty dummy archives, to avoid failing when the compiler\n        # driver adds \"-lssp -lssh_nonshared\" when linking.\n        llvm-ar rcs $PREFIX/$arch-w64-mingw32/lib/libssp.a\n        llvm-ar rcs $PREFIX/$arch-w64-mingw32/lib/libssp_nonshared.a\n    fi\n\n    mkdir -p \"$PREFIX/$arch-w64-mingw32/share/mingw32\"\n    for file in COPYING COPYING.MinGW-w64/COPYING.MinGW-w64.txt COPYING.MinGW-w64-runtime/COPYING.MinGW-w64-runtime.txt; do\n        install -m644 \"$file\" \"$PREFIX/$arch-w64-mingw32/share/mingw32\"\n    done\ndone\n"
+    },
+    "build-compiler-rt.sh": {
+      "url": "https://raw.githubusercontent.com/mstorsjo/llvm-mingw/030097eeee87fcfd0f3bfe536b21cbd6e5d3b324/build-compiler-rt.sh",
+      "finalURL": "https://raw.githubusercontent.com/mstorsjo/llvm-mingw/030097eeee87fcfd0f3bfe536b21cbd6e5d3b324/build-compiler-rt.sh",
+      "sha256": "090356aef7ddadaa597f5f8be51b3d3bec9aa0dc6846f55eb5d296653d945055",
+      "text": "#!/bin/sh\n#\n# Copyright (c) 2018 Martin Storsjo\n#\n# Permission to use, copy, modify, and/or distribute this software for any\n# purpose with or without fee is hereby granted, provided that the above\n# copyright notice and this permission notice appear in all copies.\n#\n# THE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES\n# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF\n# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR\n# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES\n# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN\n# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF\n# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.\n\nset -e\n\nSRC_DIR=../lib/builtins\nBUILD_SUFFIX=\nBUILD_BUILTINS=TRUE\nENABLE_CFGUARD=1\nCFGUARD_CFLAGS=\"-mguard=cf\"\n\nwhile [ $# -gt 0 ]; do\n    if [ \"$1\" = \"--build-sanitizers\" ]; then\n        SRC_DIR=..\n        BUILD_SUFFIX=-sanitizers\n        SANITIZERS=1\n        BUILD_BUILTINS=FALSE\n        # Override the default cfguard options here; this unfortunately\n        # also overrides the user option if --enable-cfguard is passed\n        # before --build-sanitizers (although that combination isn't\n        # really intended/supported anyway).\n        CFGUARD_CFLAGS=\n        ENABLE_CFGUARD=\n    elif [ \"$1\" = \"--enable-cfguard\" ]; then\n        CFGUARD_CFLAGS=\"-mguard=cf\"\n        ENABLE_CFGUARD=1\n    elif [ \"$1\" = \"--disable-cfguard\" ]; then\n        CFGUARD_CFLAGS=\n        ENABLE_CFGUARD=\n    elif [ \"$1\" = \"--native\" ]; then\n        NATIVE=1\n        SRC_DIR=..\n    else\n        PREFIX=\"$1\"\n    fi\n    shift\ndone\nif [ -z \"$PREFIX\" ]; then\n    echo \"$0 [--build-sanitizers] [--enable-cfguard|--disable-cfguard] [--native] dest\"\n    exit 1\nfi\nif [ -n \"$SANITIZERS\" ] && [ -n \"$ENABLE_CFGUARD\" ]; then\n    echo \"warning: Sanitizers may not work correctly with Control Flow Guard enabled.\" 1>&2\nfi\n\nmkdir -p \"$PREFIX\"\nPREFIX=\"$(cd \"$PREFIX\" && pwd)\"\nexport PATH=\"$PREFIX/bin:$PATH\"\n\n: ${ARCHS:=${TOOLCHAIN_ARCHS-i686 x86_64 armv7 aarch64 arm64ec}}\n\nCLANG_RESOURCE_DIR=\"$(\"$PREFIX/bin/clang\" --print-resource-dir)\"\n\nif [ ! -d llvm-project/compiler-rt ] || [ -n \"$SYNC\" ]; then\n    CHECKOUT_ONLY=1 ./build-llvm.sh\nfi\n\nif command -v ninja >/dev/null; then\n    CMAKE_GENERATOR=\"Ninja\"\nelse\n    : ${CORES:=$(nproc 2>/dev/null)}\n    : ${CORES:=$(sysctl -n hw.ncpu 2>/dev/null)}\n    : ${CORES:=4}\n\n    case $(uname) in\n    MINGW*)\n        CMAKE_GENERATOR=\"MSYS Makefiles\"\n        ;;\n    esac\nfi\n\ncat<<EOF > is-ucrt.c\n#include <corecrt.h>\n#if !defined(_UCRT)\n#error not ucrt\n#endif\nEOF\nANY_ARCH=$(echo $ARCHS | awk '{print $1}')\nif $ANY_ARCH-w64-mingw32-gcc$TOOLEXT -E is-ucrt.c > /dev/null 2>&1; then\n    IS_UCRT=1\nfi\nrm -f is-ucrt.c\n\ncd llvm-project/compiler-rt\n\nINSTALL_PREFIX=\"$CLANG_RESOURCE_DIR\"\n\nif [ -h \"$CLANG_RESOURCE_DIR/include\" ]; then\n    # Symlink to system headers; use a staging directory in case parts\n    # of the resource dir are immutable\n    WORKDIR=\"$(mktemp -d)\"; trap \"rm -rf $WORKDIR\" 0\n    INSTALL_PREFIX=\"$WORKDIR/install\"\nfi\n\nif [ -n \"$NATIVE\" ]; then\n    [ -z \"$CLEAN\" ] || rm -rf build-native\n    mkdir -p build-native\n    cd build-native\n    [ -n \"$NO_RECONF\" ] || rm -rf CMake*\n    cmake \\\n        ${CMAKE_GENERATOR+-G} \"$CMAKE_GENERATOR\" \\\n        -DCMAKE_BUILD_TYPE=Release \\\n        -DCMAKE_INSTALL_PREFIX=\"$CLANG_RESOURCE_DIR\" \\\n        -DCMAKE_C_COMPILER=clang \\\n        -DCMAKE_CXX_COMPILER=clang++ \\\n        -DLLVM_CONFIG_PATH=\"\" \\\n        -DCMAKE_FIND_ROOT_PATH=$PREFIX \\\n        -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \\\n        -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY \\\n        -DCOMPILER_RT_USE_LIBCXX=OFF \\\n        $SRC_DIR\n    cmake --build . ${CORES:+-j${CORES}}\n    cmake --install . --prefix \"$INSTALL_PREFIX\"\n\n    if [ \"$INSTALL_PREFIX\" != \"$CLANG_RESOURCE_DIR\" ]; then\n        # symlink to system headers - skip copy\n        rm -rf \"$INSTALL_PREFIX/include\"\n\n        cp -r \"$INSTALL_PREFIX/.\" $CLANG_RESOURCE_DIR\n    fi\n    exit 0\nfi\n\nARM64X_FLAGS=\"\"\nif [ -z \"$SANITIZERS\" ]; then\n    for arch in $ARCHS; do\n        case $arch in\n        arm64ec) ARM64X_FLAGS=\"-marm64x\" ;;\n        esac\n    done\nfi\n\nfor arch in $ARCHS; do\n    FLAGS=\"\"\n    case $arch in\n    aarch64)\n        FLAGS=\"$ARM64X_FLAGS\"\n        ;;\n    arm64ec)\n        continue\n        ;;\n    esac\n\n    [ -z \"$CLEAN\" ] || rm -rf build-$arch$BUILD_SUFFIX\n    mkdir -p build-$arch$BUILD_SUFFIX\n    cd build-$arch$BUILD_SUFFIX\n    [ -n \"$NO_RECONF\" ] || rm -rf CMake*\n    cmake \\\n        ${CMAKE_GENERATOR+-G} \"$CMAKE_GENERATOR\" \\\n        -DCMAKE_BUILD_TYPE=Release \\\n        -DCMAKE_INSTALL_PREFIX=\"$CLANG_RESOURCE_DIR\" \\\n        -DCMAKE_C_COMPILER=$arch-w64-mingw32-clang \\\n        -DCMAKE_CXX_COMPILER=$arch-w64-mingw32-clang++ \\\n        -DCMAKE_SYSTEM_NAME=Windows \\\n        -DCMAKE_AR=\"$PREFIX/bin/llvm-ar\" \\\n        -DCMAKE_RANLIB=\"$PREFIX/bin/llvm-ranlib\" \\\n        -DCMAKE_C_COMPILER_WORKS=1 \\\n        -DCMAKE_CXX_COMPILER_WORKS=1 \\\n        -DCMAKE_C_COMPILER_TARGET=$arch-w64-windows-gnu \\\n        -DCOMPILER_RT_DEFAULT_TARGET_ONLY=TRUE \\\n        -DCOMPILER_RT_USE_BUILTINS_LIBRARY=TRUE \\\n        -DCOMPILER_RT_BUILD_BUILTINS=$BUILD_BUILTINS \\\n        -DCOMPILER_RT_EXCLUDE_ATOMIC_BUILTIN=FALSE \\\n        -DLLVM_CONFIG_PATH=\"\" \\\n        -DCMAKE_FIND_ROOT_PATH=$PREFIX/$arch-w64-mingw32 \\\n        -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \\\n        -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY \\\n        -DSANITIZER_CXX_ABI=libc++ \\\n        -DCMAKE_C_FLAGS_INIT=\"$CFGUARD_CFLAGS $FLAGS\" \\\n        -DCMAKE_CXX_FLAGS_INIT=\"$CFGUARD_CFLAGS $FLAGS\" \\\n        -DCMAKE_ASM_FLAGS_INIT=\"$FLAGS\" \\\n        $SRC_DIR\n    cmake --build . ${CORES:+-j${CORES}}\n\n    cmake --install . --prefix \"$INSTALL_PREFIX\"\n    mkdir -p \"$PREFIX/$arch-w64-mingw32/bin\"\n    if [ -n \"$SANITIZERS\" ]; then\n        if [ -z \"$IS_UCRT\" ]; then\n            # For msvcrt builds, remove the asan files; asan doesn't work\n            # properly on top of msvcrt, only on top of UCRT. Make this clear\n            # by omitting the installed files altogether.\n            rm -f \"$INSTALL_PREFIX/lib/windows/libclang_rt.asan\"*\n        else\n            case $arch in\n            aarch64)\n                # asan doesn't work on aarch64 or armv7; make this clear by omitting\n                # the installed files altogether.\n                rm -f \"$INSTALL_PREFIX/lib/windows/libclang_rt.asan\"*aarch64*\n                ;;\n            armv7)\n                rm -f \"$INSTALL_PREFIX/lib/windows/libclang_rt.asan\"*arm*\n                ;;\n            *)\n                mv \"$INSTALL_PREFIX/lib/windows/\"*.dll \"$PREFIX/$arch-w64-mingw32/bin\"\n                ;;\n            esac\n        fi\n    fi\n    cd ..\ndone\n\nif [ \"$INSTALL_PREFIX\" != \"$CLANG_RESOURCE_DIR\" ]; then\n    # symlink to system headers - skip copy\n    rm -rf \"$INSTALL_PREFIX/include\"\n\n    cp -r \"$INSTALL_PREFIX/.\" $CLANG_RESOURCE_DIR\nfi\n"
+    },
+    "build-libcxx.sh": {
+      "url": "https://raw.githubusercontent.com/mstorsjo/llvm-mingw/030097eeee87fcfd0f3bfe536b21cbd6e5d3b324/build-libcxx.sh",
+      "finalURL": "https://raw.githubusercontent.com/mstorsjo/llvm-mingw/030097eeee87fcfd0f3bfe536b21cbd6e5d3b324/build-libcxx.sh",
+      "sha256": "8af09b1afb92659a976f38897e5cee7ee202428153b6dfc510da88b09079bf7c",
+      "text": "#!/bin/sh\n#\n# Copyright (c) 2018 Martin Storsjo\n#\n# Permission to use, copy, modify, and/or distribute this software for any\n# purpose with or without fee is hereby granted, provided that the above\n# copyright notice and this permission notice appear in all copies.\n#\n# THE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES\n# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF\n# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR\n# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES\n# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN\n# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF\n# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.\n\nset -e\n\nBUILD_STATIC=ON\nBUILD_SHARED=ON\nCFGUARD_CFLAGS=\"-mguard=cf\"\n\nwhile [ $# -gt 0 ]; do\n    if [ \"$1\" = \"--disable-shared\" ]; then\n        BUILD_SHARED=OFF\n    elif [ \"$1\" = \"--enable-shared\" ]; then\n        BUILD_SHARED=ON\n    elif [ \"$1\" = \"--disable-static\" ]; then\n        BUILD_STATIC=OFF\n    elif [ \"$1\" = \"--enable-static\" ]; then\n        BUILD_STATIC=ON\n    elif [ \"$1\" = \"--enable-cfguard\" ]; then\n        CFGUARD_CFLAGS=\"-mguard=cf\"\n    elif [ \"$1\" = \"--disable-cfguard\" ]; then\n        CFGUARD_CFLAGS=\n    else\n        PREFIX=\"$1\"\n    fi\n    shift\ndone\nif [ -z \"$PREFIX\" ]; then\n    echo \"$0 [--disable-shared] [--disable-static] [--enable-cfguard|--disable-cfguard] dest\"\n    exit 1\nfi\n\nmkdir -p \"$PREFIX\"\nPREFIX=\"$(cd \"$PREFIX\" && pwd)\"\n\nexport PATH=\"$PREFIX/bin:$PATH\"\n\n: ${ARCHS:=${TOOLCHAIN_ARCHS-i686 x86_64 armv7 aarch64 arm64ec}}\n\nif [ ! -d llvm-project/libunwind ] || [ -n \"$SYNC\" ]; then\n    CHECKOUT_ONLY=1 ./build-llvm.sh\nfi\n\ncd llvm-project\n\ncd runtimes\n\nif command -v ninja >/dev/null; then\n    CMAKE_GENERATOR=\"Ninja\"\nelse\n    : ${CORES:=$(nproc 2>/dev/null)}\n    : ${CORES:=$(sysctl -n hw.ncpu 2>/dev/null)}\n    : ${CORES:=4}\n\n    case $(uname) in\n    MINGW*)\n        CMAKE_GENERATOR=\"MSYS Makefiles\"\n        ;;\n    esac\nfi\n\nfor arch in $ARCHS; do\n    case $arch in\n    arm64ec) ARM64X_FLAGS=\"-marm64x\" ;;\n    esac\ndone\n\nfor arch in $ARCHS; do\n    [ -z \"$CLEAN\" ] || rm -rf build-$arch\n    mkdir -p build-$arch\n    cd build-$arch\n    [ -n \"$NO_RECONF\" ] || rm -rf CMake*\n\n    EXTRA_CFLAGS=\"\"\n    EXTRA_LDFLAGS=\"\"\n    case $arch in\n    i686|x86_64)\n        # Force using the mingw stdio functions, for correct long double\n        # printing.\n        EXTRA_CFLAGS=\"-D__USE_MINGW_ANSI_STDIO=1\"\n        ;;\n    aarch64)\n        EXTRA_CFLAGS=\"$ARM64X_FLAGS\"\n        EXTRA_LDFLAGS=\"$ARM64X_FLAGS\"\n        ;;\n    arm64ec)\n        continue\n        ;;\n    esac\n\n    cmake \\\n        ${CMAKE_GENERATOR+-G} \"$CMAKE_GENERATOR\" \\\n        -DCMAKE_BUILD_TYPE=Release \\\n        -DCMAKE_INSTALL_PREFIX=\"$PREFIX/$arch-w64-mingw32\" \\\n        -DCMAKE_C_COMPILER=$arch-w64-mingw32-clang \\\n        -DCMAKE_CXX_COMPILER=$arch-w64-mingw32-clang++ \\\n        -DCMAKE_CXX_COMPILER_TARGET=$arch-w64-windows-gnu \\\n        -DCMAKE_SYSTEM_NAME=Windows \\\n        -DCMAKE_C_COMPILER_WORKS=TRUE \\\n        -DCMAKE_CXX_COMPILER_WORKS=TRUE \\\n        -DCMAKE_AR=\"$PREFIX/bin/llvm-ar\" \\\n        -DCMAKE_RANLIB=\"$PREFIX/bin/llvm-ranlib\" \\\n        -DLLVM_ENABLE_RUNTIMES=\"libunwind;libcxxabi;libcxx\" \\\n        -DLIBUNWIND_USE_COMPILER_RT=TRUE \\\n        -DLIBUNWIND_ENABLE_SHARED=$BUILD_SHARED \\\n        -DLIBUNWIND_ENABLE_STATIC=$BUILD_STATIC \\\n        -DLIBCXX_USE_COMPILER_RT=ON \\\n        -DLIBCXX_ENABLE_SHARED=$BUILD_SHARED \\\n        -DLIBCXX_ENABLE_STATIC=$BUILD_STATIC \\\n        -DLIBCXX_ENABLE_STATIC_ABI_LIBRARY=TRUE \\\n        -DLIBCXX_CXX_ABI=libcxxabi \\\n        -DLIBCXX_LIBDIR_SUFFIX=\"\" \\\n        -DLIBCXX_INCLUDE_TESTS=FALSE \\\n        -DLIBCXX_INSTALL_MODULES=ON \\\n        -DLIBCXX_INSTALL_MODULES_DIR=\"$PREFIX/share/libc++/v1\" \\\n        -DLIBCXX_ENABLE_ABI_LINKER_SCRIPT=FALSE \\\n        -DLIBCXXABI_USE_COMPILER_RT=ON \\\n        -DLIBCXXABI_USE_LLVM_UNWINDER=ON \\\n        -DLIBCXXABI_ENABLE_SHARED=OFF \\\n        -DLIBCXXABI_LIBDIR_SUFFIX=\"\" \\\n        -DCMAKE_C_FLAGS_INIT=\"$CFGUARD_CFLAGS $EXTRA_CFLAGS\" \\\n        -DCMAKE_CXX_FLAGS_INIT=\"$CFGUARD_CFLAGS $EXTRA_CFLAGS\" \\\n        -DCMAKE_ASM_FLAGS_INIT=\"$EXTRA_CFLAGS\" \\\n        -DCMAKE_SHARED_LINKER_FLAGS=\"$EXTRA_LDFLAGS\" \\\n        ..\n\n    cmake --build . ${CORES:+-j${CORES}}\n    cmake --install .\n    cd ..\ndone\n"
+    },
+    "build-all.sh": {
+      "url": "https://raw.githubusercontent.com/mstorsjo/llvm-mingw/030097eeee87fcfd0f3bfe536b21cbd6e5d3b324/build-all.sh",
+      "finalURL": "https://raw.githubusercontent.com/mstorsjo/llvm-mingw/030097eeee87fcfd0f3bfe536b21cbd6e5d3b324/build-all.sh",
+      "sha256": "6217aa0016aeeedeb06cc49f7135a052c5c04df05f7e6d1480fa40dda4654191",
+      "text": "#!/bin/sh\n#\n# Copyright (c) 2018 Martin Storsjo\n#\n# Permission to use, copy, modify, and/or distribute this software for any\n# purpose with or without fee is hereby granted, provided that the above\n# copyright notice and this permission notice appear in all copies.\n#\n# THE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES\n# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF\n# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR\n# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES\n# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN\n# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF\n# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.\n\nset -e\n\nHOST_CLANG=\nLLVM_ARGS=\"\"\nMINGW_ARGS=\"\"\nCFGUARD_ARGS=\"--enable-cfguard\"\nHOST_ARGS=\"\"\n\nwhile [ $# -gt 0 ]; do\n    case \"$1\" in\n    --enable-asserts|--disable-dylib|--with-clang|--thinlto|--use-linker=*)\n        LLVM_ARGS=\"$LLVM_ARGS $1\"\n        ;;\n    --host-clang|--host-clang=*)\n        HOST_CLANG=${1#--host-clang}\n        HOST_CLANG=${HOST_CLANG#=}\n        HOST_CLANG=${HOST_CLANG:-clang}\n        ;;\n    --full-llvm)\n        LLVM_ARGS=\"$LLVM_ARGS $1\"\n        FULL_LLVM=1\n        ;;\n    --disable-lldb)\n        LLVM_ARGS=\"$LLVM_ARGS $1\"\n        NO_LLDB=1\n        ;;\n    --disable-lldb-mi)\n        NO_LLDB_MI=1\n        ;;\n    --disable-clang-tools-extra)\n        LLVM_ARGS=\"$LLVM_ARGS $1\"\n        ;;\n    --with-default-msvcrt=*)\n        MINGW_ARGS=\"$MINGW_ARGS $1\"\n        ;;\n    --with-default-win32-winnt=*)\n        MINGW_ARGS=\"$MINGW_ARGS $1\"\n        ;;\n    --enable-cfguard)\n        CFGUARD_ARGS=\"--enable-cfguard\"\n        ;;\n    --disable-cfguard)\n        CFGUARD_ARGS=\"--disable-cfguard\"\n        ;;\n    --no-runtimes)\n        NO_RUNTIMES=1\n        ;;\n    --host=*)\n        HOST_ARGS=\"$HOST_ARGS $1\"\n        ;;\n    --no-tools)\n        NO_TOOLS=1\n        ;;\n    --wipe-runtimes)\n        WIPE_RUNTIMES=1\n        ;;\n    --clean-runtimes)\n        CLEAN_RUNTIMES=1\n        ;;\n    --llvm-only)\n        LLVM_ONLY=1\n        ;;\n    --stage1)\n        STAGE1=1\n        LLVM_ARGS=\"$LLVM_ARGS --disable-lldb --disable-clang-tools-extra\"\n        NO_LLDB=1\n        ;;\n    --profile|--profile=*)\n        case \"$1\" in\n        --profile=*)\n            INSTRUMENTATION=\"=${1#*=}\"\n            ;;\n        esac\n        PROFILE=1\n        LLVM_ARGS=\"$LLVM_ARGS --disable-lldb --disable-clang-tools-extra --with-clang --disable-dylib --instrumented$INSTRUMENTATION\"\n        NO_LLDB=1\n        LLVM_ONLY=1\n        ;;\n    --pgo|--pgo=*)\n        PGO=1\n        LLVM_ARGS=\"$LLVM_ARGS --with-clang $1\"\n        ;;\n    --full-pgo|--full-pgo=*)\n        case \"$1\" in\n        --full-pgo=*)\n            INSTRUMENTATION=\"=${1#*=}\"\n            ;;\n        esac\n        PGO=1\n        FULL_PGO=1\n        ;;\n    *)\n        if [ -n \"$PREFIX\" ]; then\n            if [ -n \"$PREFIX_PGO\" ]; then\n                echo Unrecognized parameter $1\n                exit 1\n            fi\n            PREFIX_PGO=\"$1\"\n        else\n            PREFIX=\"$1\"\n        fi\n        ;;\n    esac\n    shift\ndone\nif [ -z \"$PREFIX\" ]; then\n    echo \"$0 [--host-clang[=clang]] [--enable-asserts] [--disable-dylib] [--with-clang] [--use-linker=linker] [--thinlto] [--full-llvm] [--disable-lldb] [--disable-lldb-mi] [--disable-clang-tools-extra] [--host=triple] [--with-default-win32-winnt=0x601] [--with-default-msvcrt=ucrt] [--enable-cfguard|--disable-cfguard] [--no-runtimes] [--llvm-only] [--no-tools] [--wipe-runtimes] [--clean-runtimes] [--stage1] [--profile[=type]] [--pgo[=profile]] [--full-pgo[=type]] dest [pgo-dest]\"\n    exit 1\nfi\nif [ -n \"$PREFIX_PGO\" ] && [ -z \"$PGO\" ] && [ -z \"$FULL_PGO\" ]; then\n    echo Unrecognized parameter $PREFIX_PGO\n    exit 1\nfi\n\nfor dep in git cmake ${HOST_CLANG}; do\n    if ! command -v $dep >/dev/null; then\n        echo \"$dep not installed. Please install it and retry\" 1>&2\n        exit 1\n    fi\ndone\n\nif [ -n \"${HOST_CLANG}\" ] && [ \"${CFGUARD_ARGS}\" = \"--enable-cfguard\"  ]; then\n    \"${HOST_CLANG}\" -target x86_64-w64-mingw32 -c -x c -o - - -Werror -mguard=cf </dev/null >/dev/null 2>/dev/null || CFGUARD_ARGS=\"--disable-cfguard\"\nfi\n\nif [ -n \"$FULL_PGO\" ]; then\n    if [ -z \"$PREFIX_PGO\" ]; then\n        echo Must provide a second destination for a PGO build\n        exit 1\n    fi\n    ./build-all.sh \"$PREFIX\" --stage1 $LLVM_ARGS $MINGW_ARGS $CFGUARD_ARGS\n    unset COMPILER_LAUNCHER\n    ./build-all.sh \"$PREFIX\" --profile$INSTRUMENTATION $LLVM_ARGS\n    ./build-all.sh \"$PREFIX\" \"$PREFIX_PGO\" --thinlto --pgo --llvm-only $LLVM_ARGS\n    # If one already has a usable profile, one could also do the following\n    # two steps only:\n    # ./build-all.sh \"$PREFIX\" --stage1 --llvm-only\n    # ./build-all.sh \"$PREFIX\" \"$PREFIX_PGO\" --pgo\n    exit 0\nfi\n\nif [ -n \"$PROFILE\" ]; then\n    export PATH=$PREFIX/bin:$PATH\n    STAGE1_PREFIX=$PREFIX\n    PREFIX=/tmp/dummy-prefix\nelif [ -n \"$PGO\" ]; then\n    if [ -z \"$PREFIX_PGO\" ]; then\n        echo Must provide a second destination for a PGO build\n        exit 1\n    fi\n    export PATH=$PREFIX/bin:$PATH\n    STAGE1_PREFIX=$PREFIX\n    PREFIX=$PREFIX_PGO\n\n    if [ -n \"$LLVM_ONLY\" ] && [ \"$PREFIX\" != \"$STAGE1_PREFIX\" ] ; then\n        # Only rebuilding LLVM, not any runtimes. Copy the stage1 toolchain\n        # and rebuild LLVM on top of it.\n        rm -rf $PREFIX\n        mkdir -p \"$(dirname \"$PREFIX\")\"\n        cp -a \"$STAGE1_PREFIX\" \"$PREFIX\"\n        # Remove the native Linux/macOS runtimes which aren't needed in\n        # the final distribution.\n        rm -rf \"$PREFIX\"/lib/clang/*/lib/darwin\n        rm -rf \"$PREFIX\"/lib/clang/*/lib/linux\n    fi\nfi\n\nif [ \"$(uname)\" = \"Darwin\" ]; then\n    if [ -n \"$PROFILE\" ] || [ -n \"$PGO\" ]; then\n        # Using a custom Clang, which doesn't find the SDK automatically.\n        # CMake sets this automatically, but if using the compiler directly,\n        # this is needed. (If compilation uses \"cc\" or \"gcc\", it will miss\n        # the stage1 llvm-mingw toolchain and use the system compiler anyway.)\n        export SDKROOT=$(xcrun --show-sdk-path)\n    fi\nfi\n\nif [ -z \"$NO_TOOLS\" ]; then\n    if [ -z \"${HOST_CLANG}\" ]; then\n        ./build-llvm.sh $PREFIX $LLVM_ARGS $HOST_ARGS\n        if [ -n \"$PROFILE\" ]; then\n            ./pgo-training.sh llvm-project/llvm/build-instrumented $STAGE1_PREFIX\n            exit 0\n        fi\n        if [ -z \"$NO_LLDB\" ] && [ -z \"$NO_LLDB_MI\" ]; then\n            ./build-lldb-mi.sh $PREFIX $HOST_ARGS\n        fi\n        if [ -z \"$FULL_LLVM\" ]; then\n            ./strip-llvm.sh $PREFIX $HOST_ARGS\n        fi\n        if [ -n \"$STAGE1\" ]; then\n            if [ \"$(uname)\" = \"Darwin\" ]; then\n                ./build-llvm.sh $PREFIX --macos-native-tools\n            fi\n            # Build runtimes. On Linux, this is needed for profiling.\n            # On macOS, it is also needed for OS availability helpers like\n            # __isPlatformVersionAtLeast.\n            ./build-compiler-rt.sh --native $PREFIX\n        fi\n    fi\n    if [ -n \"$LLVM_ONLY\" ]; then\n        exit 0\n    fi\n    ./install-wrappers.sh $PREFIX $HOST_ARGS ${HOST_CLANG:+--host-clang=$HOST_CLANG}\n    ./build-mingw-w64-tools.sh $PREFIX $HOST_ARGS\nfi\nif [ -n \"$NO_RUNTIMES\" ]; then\n    exit 0\nfi\nif [ -n \"$WIPE_RUNTIMES\" ]; then\n    # Remove the runtime code built previously.\n    #\n    # This roughly matches the setup as if --no-runtimes had been passed,\n    # except that compiler-rt headers are left installed in lib/clang/*/include.\n    rm -rf $PREFIX/*-w64-mingw32 $PREFIX/lib/clang/*/lib\nfi\nif [ -n \"$CLEAN_RUNTIMES\" ]; then\n    export CLEAN=1\nfi\n./build-mingw-w64.sh $PREFIX $MINGW_ARGS $CFGUARD_ARGS\n./build-compiler-rt.sh $PREFIX $CFGUARD_ARGS\n./build-libcxx.sh $PREFIX $CFGUARD_ARGS\n./build-mingw-w64-libraries.sh $PREFIX $CFGUARD_ARGS\n./build-compiler-rt.sh $PREFIX --build-sanitizers # CFGUARD_ARGS intentionally omitted\n./build-openmp.sh $PREFIX $CFGUARD_ARGS\n"
+    }
+  },
+  "artifactCorrespondenceVerified": false,
+  "licenseApproval": false,
+  "sourceSelectionNote": "CI source refs and default recipe refs, not attestation that cached build inputs were used unchanged"
+}
