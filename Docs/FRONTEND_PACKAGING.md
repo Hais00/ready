@@ -1,9 +1,34 @@
 # Portable frontend, external runtimes
 
 `sh Scripts/build_app.sh` stages and signs `Build/ready.app` before atomically
-publishing it. Previous apps remain in `Build/AppBackups`; a failed staging or
-signature check leaves the published app intact. The app does not contain or read
+publishing it. Previous bundle bytes remain in `Build/AppBackups` as
+`ready-<timestamp>-<pid>.ready-backup` directories, with a private sibling
+`.manifest.json` recording their file bytes, modes and tree fingerprint. They use
+an extension outside `.app` so Launch Services does not select an old build by
+name. A failed staging or signature check leaves the published app intact. The app does not contain or read
 `development-root.txt`.
+
+After verified publication, the recipe refreshes Launch Services only for the
+absolute `Build/ready.app` path. Before moving the previous published bundle, it
+unregisters only that exact path. A failed publication restores the old bundle
+and refreshes its registration. It never resets the database, scans application
+directories or unregisters other apps. Close running ready processes before
+building or manually restoring a backup; open the current app by its full path
+when validating a particular build.
+
+To restore, first quit ready and select one exact `.ready-backup` directory.
+Verify the sibling manifest against `frontend_snapshot.tree(backup)`, including
+`treeFingerprintSHA256 = SHA256(frontend_snapshot.encoded(files))`, and check the
+bundle signature with `codesign --verify --strict <backup>`. Keep the current
+bundle under another owned, inventoried `.ready-backup` name before renaming the
+chosen backup to `Build/ready.app`; never overwrite or delete either version.
+Run the system `lsregister -f` with only the restored absolute app path afterward.
+The sibling manifests remain recovery records and never go inside the bundle.
+
+Older `.app` backups need a one-time, separately coordinated migration. Inventory
+and verify each owned, signed bundle, ensure no process has it open, unregister
+only that exact old path, then rename it to `.ready-backup` and verify the inventory
+again. Do not bulk-rename unknown bundles or alter any backup contents.
 
 `Contents/Resources/ReadySupport` contains our built overlay, native session host,
 Python StoreBridge source, original Swift/C/Objective-C sources and frontend build

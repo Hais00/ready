@@ -1,0 +1,31 @@
+ready source MoltenVK integration — GPL-3.0-only
+Copyright2026 ready contributors. See the project LICENSE.
+
+The builder, verifier and original probes are ready integration code, not
+modifications or contributions to upstream MoltenVK. The retained source packet
+pins unchanged MoltenVK1.4.2 commitdb66022459ffb663aa2b50f6b018bc2e124f5edf.
+SPIRV-Cross, SPIRV-Tools, SPIRV-Headers, Vulkan-Headers and cereal are selected
+by that commit's ExternalRevisions files; complete source archives and their
+actual notices are retained. Additional upstream Volk/Vulkan-Tools sources stay
+in the complete source packet, though these CMake library targets do not use them.
+
+MoltenVK and SPIRV projects retain their Apache-2.0/per-file notices. Cereal
+retains BSD-3-Clause/per-file notices. Vulkan header terms must be read from its
+retained exact files. Build-only CPM0.40.8 is pinned by both bootstrap-file and
+complete-source SHA256; it is not runtime code. Ready's GPL does not replace any
+upstream license. Full notices are under candidate/share/ready/notices, and full
+source archives preserve individual headers under candidate/share/ready/sources.
+
+Git metadata is recreated ONLY in owned copied build trees to supply the correct
+upstream revision headers. Every copied tracked blob is checked against primary
+Git tree SHA1 values. Recreated metadata is not historical artifact attestation.
+
+No Apple evaluation framework, new Xcode, Metal CLI compiler, NVIDIA optional
+payload, Homebrew runtime dylib/static archive, active provider or game DLL is
+added or altered. Apple's OS Metal/Foundation and other system APIs remain
+platform requirements, not copied free implementations. Current code is built
+for macOS27. No older OS or full Vulkan/game conformance guarantee is made.
+
+Real native shader/readback and Metal-surface presentations plus real Wine Vulkan
+buffer/readback and600presentations pass for this separate component. This does
+not authorize whole-runtime distribution or automatically promote the candidate.

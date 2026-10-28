@@ -6,7 +6,7 @@ Repository: https://github.com/Hais00/ready (currently private). Our code is **G
 
 ## Design
 
-- Native AppKit window with one opaque Metal canvas, rendered only when the UI changes. Reference-inspired sidebar, game cards, controller/keyboard navigation, fullscreen.
+- Native AppKit window with one opaque Metal canvas, rendered only when the UI changes. Visible hover/pressed/focus feedback, proportionate icons, controller/keyboard navigation and fullscreen. Search, profiles, options, errors, authentication and maintenance use asynchronous panels inside the launcher; file/folder browsing is also internal.
 - Explicit teardown of launcher textures/drawables during play. In-process overlay draws in the game's existing drawable rather than creating another window. **Fullscreen/direct-display eligibility is not proof of actual direct-to-display.**
 - Steam, Epic, GOG and Amazon integration through open protocols and open-source helpers. Login/library/download code exists; real account/entitlement end-to-end validation remains pending.
 - macOS and Windows builds are distinguished. A macOS store flag is not labelled Apple Silicon native until its installed Mach-O executable is inspected.
@@ -15,7 +15,7 @@ Repository: https://github.com/Hais00/ready (currently private). Our code is **G
 - Automatic renderer selection uses runtime availability and verification evidence, exact game/runtime rules when available, and advanced overrides. No arbitrary simultaneous loading of DXVK and D3DMetal.
 - Store tokens are stored in the macOS Keychain, scoped to the launcher profile. No telemetry.
 
-See [build/test storage](Docs/BUILD_STORAGE.md), [portable frontend packaging](Docs/FRONTEND_PACKAGING.md), [requirements and evidence gates](Docs/REQUIREMENTS.md), [prefix architecture](Docs/PREFIXES.md), [store integration](Docs/STORES.md), [overlay](Docs/OVERLAY.md), and [current work state](Docs/STATUS.md).
+See [interface behavior and verification](Docs/INTERFACE.md), [local runtime installation](Docs/LOCAL_RUNTIME_INSTALLER.md), [build/test storage](Docs/BUILD_STORAGE.md), [portable frontend packaging](Docs/FRONTEND_PACKAGING.md), [requirements and evidence gates](Docs/REQUIREMENTS.md), [prefix architecture](Docs/PREFIXES.md), [store integration](Docs/STORES.md), [overlay](Docs/OVERLAY.md), and [current work state](Docs/STATUS.md).
 
 ## Build and test
 
@@ -57,7 +57,7 @@ Apple D3DMetal/GPTK evaluation libraries are **proprietary optional local inputs
 
 The [sanitized checkpoint](Validation/checkpoint.json) records 30 domain checks, 64 store protocol/concurrency tests, real process/session coordination, and real Wine registry/folder API checks across game/profile prefixes. Two actual Windows sessions also verify that terminating A leaves B running with its lease intact. Game readers and store writers now protect shared installation files with an interoperable lease. Twenty-eight keeper checks include native wrappers that exit before their child, isolated termination, crash survival and actual Metal overlay handoff. Sixteen real-process StoreClient checks cover cancellation and private credential transport without accessing real Keychain accounts. Actual Metal overlay rendering passes six ARM64/x64 paths and a Windows Vulkan → Wine → KosmicKrisp path. The launcher releases its canvas texture during play; a local Metal allocation measurement falls from about 47 MB to 0.74 MB.
 
-The Library menu and settings expose **Dati e ripristino** for guided legacy migration, interrupted-copy recovery and archival rollback. The copy crash probe passes; the idle maintenance dialog has been visually checked; interrupted migration/recovery dialogs still need their own GUI validation.
+The Library menu and settings expose **Dati e ripristino** for guided legacy migration, interrupted-copy recovery and archival rollback. The copy crash probe passes; owner selection, copy, archival rollback and recovery after real copy/rollback interruptions have also been exercised through AppKit with synthetic files. Originals remain hash-identical; real legacy games and saves still require validation.
 
 Save-folder recipes persist outside disposable prefixes. Eleven recreation-crash checks include a real SIGKILL before replacement metadata exists; ten archive-recovery checks include six real SIGKILL boundaries and preserve one stable recovery archive. These use synthetic data and do not certify migrations of real user games. Interrupted renderer DLL projections also recover under the prefix lease, retaining before/after custom versions.
 

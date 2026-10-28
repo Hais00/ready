@@ -20,7 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   var session: SessionManager!
   var controllerObserver: NSObjectProtocol?
   var storeClient: StoreClient!
-  var qrPanel: NSPanel?
+  lazy var dialogs = ReadyDialogPresenter(window: { [weak self] in self?.window })
+  var qrDialog: UUID?
+  var qrImage: NSImageView?
   var authenticationSession: UUID?
   var authenticationRequest: UUID?
   var pendingLaunch: UUID?
@@ -64,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     canvas.evaluationMode = activeRuntime().evaluationModeEnabled == true
     canvas.onAction = { [weak self] in self?.action($0) }
     window.contentView = canvas
+    dialogs.attach()
     window.center()
     setupMenu()
     setupControllers()
@@ -118,20 +121,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     !CommandLine.arguments.contains("--graphics-self-test") && !session.running
       && !maintenanceInProgress
   }
-  func windowShouldClose(_ sender: NSWindow) -> Bool { !maintenanceInProgress }
-  func windowWillClose(_ notification: Notification) {
-    if let panel = qrPanel, (notification.object as? NSWindow) === panel {
-      cancelAuthentication(closePanel: false)
-      qrPanel = nil
+  func windowShouldClose(_ sender: NSWindow) -> Bool {
+    if dialogs.isPresenting {
+      dialogs.cancelCurrent()
+      return false
     }
+    return !maintenanceInProgress
+  }
+  func windowWillClose(_ notification: Notification) {
+    if (notification.object as? NSWindow) === window { cancelAuthentication() }
   }
   func cancelAuthentication(closePanel: Bool = true) {
     authenticationSession = nil
     if let request = authenticationRequest { storeClient?.cancel(request) }
     authenticationRequest = nil
     if closePanel {
-      qrPanel?.close()
-      qrPanel = nil
+      if let id = qrDialog { dismissDialog(id) }
+      qrDialog = nil
+      qrImage = nil
     }
   }
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -141,13 +148,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       )
       return .terminateCancel
     }
+    if dialogs.isPresenting { return .terminateCancel }
     if session?.running == true {
-      let a = NSAlert()
-      a.messageText = "Chiudere il gioco e ready?"
-      a.addButton(withTitle: "Chiudi sessione")
-      a.addButton(withTitle: "Annulla")
-      if a.runModal() != .alertFirstButtonReturn { return .terminateCancel }
-      session.quit()
+      window.contentView = canvas
+      window.makeKeyAndOrderFront(nil)
+      presentDialog(
+        title: "Chiudere il gioco e ready?", message: "La sessione in corso verrà terminata.",
+        actions: [.init("Chiudi sessione", role: .destructive), .init("Annulla", role: .cancel)]
+      ) { [weak self] choice in
+        guard let self else {
+          NSApp.reply(toApplicationShouldTerminate: false)
+          return
+        }
+        if choice == 0 {
+          self.session.quit()
+          self.storeClient?.cancelAll()
+        } else {
+          self.window.orderOut(nil)
+          self.window.contentView = nil
+        }
+        NSApp.reply(toApplicationShouldTerminate: choice == 0)
+      }
+      return .terminateLater
     }
     storeClient?.cancelAll()
     return .terminateNow
@@ -158,11 +180,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     session = SessionManager(paths: paths, project: project, runtimeRoot: runtimeRoot)
     session.onWillLaunch = { [weak self] in
       guard let self else { return }
+      // Authentication is excluded by launchGame and all pending/session input gates.
+      for notice in self.dialogs.detachForSession() where !self.backgroundNotices.contains(notice) {
+        self.backgroundNotices.append(notice)
+      }
+      if self.backgroundNotices.count > 8 {
+        self.backgroundNotices = Array(self.backgroundNotices.suffix(8))
+      }
       self.canvas.releaseGraphics()
       self.window.orderOut(nil)
       self.window.contentView = nil
     }
-    session.onFinish = { [weak self] message in self?.restoreLauncher(message) }
+    session.onFinish = { [weak self] message in
+      self?.restoreLauncher(message)
+      self?.dialogs.attach()
+    }
     storeClient = StoreClient(project: project, stateRoot: paths.root, runtimeRoot: runtimeRoot)
   }
   func setupMenu() {
@@ -196,10 +228,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     NSApp.mainMenu = menu
   }
   func validateMenuItem(_ item: NSMenuItem) -> Bool {
-    let busy = session?.running == true || maintenanceInProgress || pendingLaunch != nil
+    let busy =
+      session?.running == true || maintenanceInProgress || pendingLaunch != nil
+      || dialogs.isPresenting
     let interfaceActions: [Selector] = [
       #selector(importGame), #selector(search), #selector(profiles),
-      #selector(settings), #selector(runtimeLocationSettings), #selector(dataMaintenance), #selector(showNotifications),
+      #selector(settings), #selector(runtimeLocationSettings), #selector(dataMaintenance),
+      #selector(showNotifications),
       #selector(toggleFullscreen),
     ]
     if let action = item.action, interfaceActions.contains(action) {
@@ -209,7 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     return true
   }
   func action(_ action: CanvasAction) {
-    guard !maintenanceInProgress else { return }
+    guard !maintenanceInProgress, !dialogs.isPresenting else { return }
     switch action {
     case .game(let id): activateGame(id)
     case .gameOptions(let id): gameOptions(id)
@@ -258,77 +293,115 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     canvas.refresh()
   }
   @objc func importGame() {
-    guard !maintenanceInProgress else { return }
-    let panel = NSOpenPanel()
-    panel.title = "Importa un’app macOS o un eseguibile Windows"
-    panel.canChooseDirectories = false
-    panel.canChooseFiles = true
-    panel.allowsMultipleSelection = false
-    guard panel.runModal() == .OK, let url = panel.url else { return }
-    do {
-      var game = try LocalDiscovery.importGame(url)
-      game.profileIDs = [state.activeProfile]
-      state.games.append(game)
-      canvas.filter = nil
-      try persist()
-    } catch { showError(error) }
+    guard !maintenanceInProgress, !dialogs.isPresenting else { return }
+    let profile = state.activeProfile
+    selectLocalFile(
+      title: "Importa un’app macOS o un eseguibile Windows", prompt: "Importa",
+      directory: FileManager.default.homeDirectoryForCurrentUser, mode: .file
+    ) { [weak self] url in
+      guard let self, let url else { return }
+      do {
+        guard !self.maintenanceInProgress, !self.session.running, self.pendingLaunch == nil,
+          self.state.activeProfile == profile
+        else { throw LauncherError.busy }
+        var game = try LocalDiscovery.importGame(url)
+        let importedExecutable = URL(fileURLWithPath: game.storeID).resolvingSymlinksInPath()
+        if let existing = self.state.games.firstIndex(where: {
+          $0.store == .local
+            && URL(fileURLWithPath: $0.storeID).resolvingSymlinksInPath() == importedExecutable
+        }) {
+          let previous = self.state.games[existing]
+          game.id = previous.id
+          game.profileIDs = previous.profileIDs.map { Array(Set($0 + [profile])) }
+          game.lastPlayed = previous.lastPlayed
+          game.engine = previous.engine
+          game.selectedVariant = previous.selectedVariant
+          game.saveRules = previous.saveRules
+          self.state.games[existing] = game
+        } else {
+          game.profileIDs = [profile]
+          self.state.games.append(game)
+        }
+        self.canvas.filter = nil
+        self.canvas.query = ""
+        try self.persist()
+        self.canvas.selected = self.canvas.visibleGames.firstIndex(where: { $0.id == game.id }) ?? 0
+        self.canvas.refresh()
+      } catch { self.showError(error) }
+    }
   }
   @objc func search() {
-    let a = NSAlert()
-    a.messageText = "Cerca nella libreria"
-    let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 28))
+    let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 540, height: 28))
     input.stringValue = canvas.query
-    a.accessoryView = input
-    a.addButton(withTitle: "Cerca")
-    a.addButton(withTitle: "Annulla")
-    if a.runModal() == .alertFirstButtonReturn {
-      canvas.query = input.stringValue
-      canvas.selected = 0
-      canvas.refresh()
+    input.placeholderString = "Titolo del gioco"
+    presentDialog(
+      title: "Cerca nella libreria", message: "", content: input,
+      actions: [.init("Cerca", role: .primary), .init("Annulla", role: .cancel)]
+    ) { [weak self] choice in
+      guard let self, choice == 0 else { return }
+      self.canvas.query = input.stringValue
+      self.canvas.selected = 0
+      self.canvas.refresh()
     }
   }
   @objc func profiles() {
-    guard authenticationSession == nil else {
-      showError(
-        LauncherError.unavailable(
-          "Completa o annulla l’accesso allo store prima di cambiare profilo."))
-      return
-    }
-    guard !session.running, pendingLaunch == nil, !maintenanceInProgress,
-      authenticationSession == nil
+    guard authenticationSession == nil, !session.running, pendingLaunch == nil,
+      !maintenanceInProgress
     else {
-      showError(LauncherError.busy)
+      showError(
+        LauncherError.unavailable("Completa le operazioni in corso prima di cambiare profilo."))
       return
     }
-    let a = NSAlert()
-    a.messageText = "Profili ready"
-    a.informativeText =
-      "Ogni gioco Windows ha un ambiente isolato per questo profilo. Motori e installazioni restano condivisi."
-    let pick = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 340, height: 30))
-    pick.addItems(withTitles: state.profiles.map { $0.name })
-    pick.selectItem(at: state.profiles.firstIndex { $0.id == state.activeProfile } ?? 0)
-    a.accessoryView = pick
-    a.addButton(withTitle: "Seleziona")
-    a.addButton(withTitle: "Nuovo profilo")
-    a.addButton(withTitle: "Annulla")
-    let result = a.runModal()
-    if result == .alertFirstButtonReturn {
-      state.activeProfile = state.profiles[pick.indexOfSelectedItem].id
-      try? persist()
-    } else if result == .alertSecondButtonReturn {
-      let b = NSAlert()
-      b.messageText = "Nome del profilo"
-      let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 28))
-      b.accessoryView = input
-      b.addButton(withTitle: "Crea")
-      b.addButton(withTitle: "Annulla")
-      if b.runModal() == .alertFirstButtonReturn,
-        !input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-      {
-        let p = Profile(name: input.stringValue)
-        state.profiles.append(p)
-        state.activeProfile = p.id
-        try? persist()
+    let profiles = state.profiles
+    let pick = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 540, height: 30))
+    pick.addItems(withTitles: profiles.map { $0.name })
+    pick.selectItem(at: profiles.firstIndex { $0.id == state.activeProfile } ?? 0)
+    presentDialog(
+      title: "Profili ready",
+      message:
+        "Ogni gioco Windows ha un ambiente isolato per questo profilo. Motori e installazioni restano condivisi.",
+      content: pick,
+      actions: [
+        .init("Seleziona", role: .primary), .init("Nuovo profilo"), .init("Annulla", role: .cancel),
+      ]
+    ) { [weak self] choice in
+      guard let self, choice == 0 || choice == 1 else { return }
+      guard self.authenticationSession == nil, !self.session.running, self.pendingLaunch == nil,
+        !self.maintenanceInProgress
+      else {
+        self.showError(LauncherError.busy)
+        return
+      }
+      if choice == 0 {
+        guard profiles.indices.contains(pick.indexOfSelectedItem),
+          self.state.profiles.contains(where: { $0.id == profiles[pick.indexOfSelectedItem].id })
+        else { return }
+        self.state.activeProfile = profiles[pick.indexOfSelectedItem].id
+        do { try self.persist() } catch { self.showError(error) }
+      } else {
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 540, height: 28))
+        input.placeholderString = "Nome del profilo"
+        self.presentDialog(
+          title: "Nuovo profilo", message: "", content: input,
+          actions: [.init("Crea", role: .primary), .init("Annulla", role: .cancel)]
+        ) { [weak self] choice in
+          guard let self, choice == 0 else { return }
+          guard self.authenticationSession == nil, !self.session.running, self.pendingLaunch == nil,
+            !self.maintenanceInProgress
+          else {
+            self.showError(LauncherError.busy)
+            return
+          }
+          let name = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+          guard !name.isEmpty else {
+            self.showError(LauncherError.invalid("Inserisci il nome del profilo."))
+            return
+          }
+          let profile = Profile(name: name)
+          self.state.profiles.append(profile)
+          self.state.activeProfile = profile.id
+          do { try self.persist() } catch { self.showError(error) }
+        }
       }
     }
   }
@@ -352,9 +425,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     guard let index = state.games.firstIndex(where: { $0.id == id }) else { return }
     var game = state.configured(state.games[index])
     let preferenceKey = GamePreferences.key(profile: state.activeProfile, gameID: game.id)
-    let a = NSAlert()
-    a.messageText = game.title
-    a.informativeText =
+    let profile = state.activeProfile
+    var detail =
       advanced
       ? "Opzioni avanzate. Il percorso automatico usa solo combinazioni disponibili e verificate."
       : "Scegli la versione da installare. Il launcher prepara automaticamente il suo ambiente."
@@ -363,9 +435,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let engine = NSPopUpButton(frame: NSRect(x: 0, y: 47, width: 470, height: 28))
     let controller = NSPopUpButton(frame: NSRect(x: 0, y: 4, width: 470, height: 28))
     controller.addItems(withTitles: ControllerInputMode.allCases.map { $0.title })
-    controller.selectItem(at: ControllerInputMode.allCases.firstIndex(of: game.controllerInputMode ?? .automatic) ?? 0)
+    controller.selectItem(
+      at: ControllerInputMode.allCases.firstIndex(of: game.controllerInputMode ?? .automatic) ?? 0)
     if advanced {
-      a.informativeText += "\nController per questo profilo, dal prossimo avvio. Automatico rispetta le DLL XInput note del gioco; Forza richiede i builtin Wine senza modificare i file."
+      detail +=
+        "\nController per questo profilo, dal prossimo avvio. Automatico rispetta le DLL XInput note del gioco; Forza richiede i builtin Wine senza modificare i file."
     }
     version.addItems(
       withTitles: game.variants.map {
@@ -379,39 +453,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     engine.addItems(withTitles: GraphicsEngine.allCases.map { $0.title })
     engine.selectItem(at: GraphicsEngine.allCases.firstIndex(of: game.engine) ?? 0)
     host.addSubview(version)
-    if advanced { host.addSubview(engine); host.addSubview(controller) }
-    a.accessoryView = host
-    a.addButton(withTitle: game.currentVariant?.installed == false ? "Installa" : "Gioca")
-    a.addButton(withTitle: advanced ? "Salva opzioni" : "Opzioni avanzate…")
-    a.addButton(withTitle: "Annulla")
-    let result = a.runModal()
-    guard result == .alertFirstButtonReturn || result == .alertSecondButtonReturn else { return }
-    if !advanced, result == .alertSecondButtonReturn {
-      gameOptions(id, advanced: true)
-      return
+    if advanced {
+      host.addSubview(engine)
+      host.addSubview(controller)
     }
-    game.engine = GraphicsEngine.allCases[engine.indexOfSelectedItem]
-    if advanced { game.controllerInputMode = ControllerInputMode.allCases[controller.indexOfSelectedItem] }
-    guard game.variants.indices.contains(version.indexOfSelectedItem) else {
-      showError(
-        LauncherError.unavailable(
-          "Nessun eseguibile verificato. Importa la versione installata o collega lo store."))
-      return
-    }
-    game.selectedVariant = game.variants[version.indexOfSelectedItem].id
-    if state.gamePreferences == nil { state.gamePreferences = [:] }
-    let scopedVariants = state.gamePreferences?[preferenceKey]?.variants
-    state.gamePreferences?[preferenceKey] = GamePreferences(
-      engine: game.engine, selectedVariant: game.selectedVariant,
-      variants: scopedVariants, controllerInputMode: game.controllerInputMode)
-    try? persist()
-    if result == .alertFirstButtonReturn {
-      if !game.variants[version.indexOfSelectedItem].installed {
-        installGame(index: index, variant: game.variants[version.indexOfSelectedItem])
+    presentDialog(
+      title: game.title, message: detail, content: host,
+      actions: [
+        .init(
+          game.currentVariant?.installed == false ? "Installa" : "Gioca", role: .primary,
+          enabled: !game.variants.isEmpty),
+        .init(advanced ? "Salva opzioni" : "Opzioni avanzate…"), .init("Annulla", role: .cancel),
+      ]
+    ) { [weak self] result in
+      guard let self, result == 0 || result == 1 else { return }
+      guard !self.maintenanceInProgress, !self.session.running, self.pendingLaunch == nil,
+        self.authenticationSession == nil, self.state.activeProfile == profile,
+        let index = self.state.games.firstIndex(where: { $0.id == id })
+      else {
+        self.showError(LauncherError.busy)
         return
       }
-      launchGame(game, variant: game.variants[version.indexOfSelectedItem])
+      if !advanced, result == 1 {
+        self.gameOptions(id, advanced: true)
+        return
+      }
+      guard game.variants.indices.contains(version.indexOfSelectedItem),
+        GraphicsEngine.allCases.indices.contains(engine.indexOfSelectedItem),
+        ControllerInputMode.allCases.indices.contains(controller.indexOfSelectedItem)
+      else {
+        self.showError(LauncherError.unavailable("Nessuna versione disponibile."))
+        return
+      }
+      let chosen = game.variants[version.indexOfSelectedItem]
+      let current = self.state.configured(self.state.games[index])
+      guard let currentVariant = current.variants.first(where: { $0.id == chosen.id }),
+        currentVariant == chosen
+      else {
+        self.showError(
+          LauncherError.unavailable(
+            "La versione del gioco è cambiata. Riapri le opzioni prima di continuare."))
+        return
+      }
+      game = current
+      game.engine = GraphicsEngine.allCases[engine.indexOfSelectedItem]
+      if advanced {
+        game.controllerInputMode = ControllerInputMode.allCases[controller.indexOfSelectedItem]
+      }
+      guard game.variants.indices.contains(version.indexOfSelectedItem) else {
+        self.showError(
+          LauncherError.unavailable(
+            "Nessun eseguibile verificato. Importa la versione installata o collega lo store."))
+        return
+      }
+      game.selectedVariant = currentVariant.id
+      if self.state.gamePreferences == nil { self.state.gamePreferences = [:] }
+      let scopedVariants = self.state.gamePreferences?[preferenceKey]?.variants
+      self.state.gamePreferences?[preferenceKey] = GamePreferences(
+        engine: game.engine, selectedVariant: game.selectedVariant,
+        variants: scopedVariants, controllerInputMode: game.controllerInputMode)
+      try? self.persist()
+      if result == 0 {
+        if !currentVariant.installed {
+          self.installGame(index: index, variant: currentVariant)
+          return
+        }
+        self.launchGame(game, variant: currentVariant)
 
+      }
     }
   }
   func launchGame(_ game: Game, variant: GameVariant) {
@@ -490,44 +599,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   }
   @objc func settings() {
     let cfg = activeRuntime()
-    let a = NSAlert()
-    a.messageText = "Account e runtime"
-    a.informativeText =
+    let detail =
       "Wine: \(cfg.wineVersion ?? "in preparazione")\nKosmicKrisp: \(cfg.kosmicICD == nil ? "in preparazione":"rilevato")\nGPTK 4 beta 3: componente proprietario opzionale per valutazione\n\nAmbienti isolati per gioco e profilo. Motori condivisi.\n\nDurante il gioco il frontend rilascia texture e drawable. Il direct-to-display deve essere verificato con Metal HUD."
-    a.addButton(withTitle: "Chiudi")
-    a.addButton(withTitle: "Collega uno store…")
-    a.addButton(withTitle: "Dati e ripristino…")
-    a.addButton(withTitle: "Valutazione Apple…")
-    a.addButton(withTitle: "Motori…")
-    let choice = a.runModal()
-    if choice == .alertSecondButtonReturn { connectStore() }
-    if choice == .alertThirdButtonReturn { dataMaintenance() }
-    if choice.rawValue == NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + 3 {
-      evaluationSettings()
-    }
-    if choice.rawValue == NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + 4 {
-      runtimeLocationSettings()
+    presentDialog(
+      title: "Account e runtime", message: detail,
+      actions: [
+        .init("Collega uno store…", role: .primary), .init("Motori…"), .init("Dati e ripristino…"),
+        .init("Valutazione Apple…"), .init("Chiudi", role: .cancel),
+      ]
+    ) { [weak self] choice in
+      guard let self else { return }
+      switch choice {
+      case 0: self.connectStore()
+      case 1: self.runtimeLocationSettings()
+      case 2: self.dataMaintenance()
+      case 3: self.evaluationSettings()
+      default: break
+      }
     }
   }
   func connectStore() {
     guard !maintenanceInProgress else { return }
     cancelAuthentication()
     let profile = state.activeProfile
-    let a = NSAlert()
-    a.messageText = "Account degli store"
-    a.informativeText =
-      "Gli accessi appartengono solo al profilo selezionato e sono conservati nel Portachiavi."
     let stores: [Store] = [.steam, .epic, .gog, .amazon]
-    let pick = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 380, height: 30))
+    let pick = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 540, height: 30))
     pick.addItems(withTitles: stores.map { $0.title })
-    a.accessoryView = pick
-    a.addButton(withTitle: "Accedi")
-    a.addButton(withTitle: "Sincronizza libreria")
-    a.addButton(withTitle: "Annulla")
-    let choice = a.runModal()
-    guard choice == .alertFirstButtonReturn || choice == .alertSecondButtonReturn else { return }
-    let store = stores[pick.indexOfSelectedItem]
-    if choice == .alertSecondButtonReturn {
+    presentDialog(
+      title: "Account degli store",
+      message:
+        "Gli accessi appartengono solo al profilo selezionato e sono conservati nel Portachiavi.",
+      content: pick,
+      actions: [
+        .init("Accedi", role: .primary), .init("Sincronizza libreria"),
+        .init("Annulla", role: .cancel),
+      ]
+    ) { [weak self] choice in
+      guard let self, choice == 0 || choice == 1 else { return }
+      guard !self.maintenanceInProgress, !self.session.running, self.pendingLaunch == nil,
+        self.state.activeProfile == profile
+      else {
+        self.showError(LauncherError.busy)
+        return
+      }
+      self.beginStoreConnection(
+        stores[pick.indexOfSelectedItem], profile: profile, synchronize: choice == 1)
+    }
+  }
+  private func beginStoreConnection(_ store: Store, profile: UUID, synchronize: Bool) {
+    if synchronize {
       syncStore(store, profile: profile)
       return
     }
@@ -544,87 +664,107 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       case "error":
         self.authenticationSession = nil
         self.authenticationRequest = nil
-        self.qrPanel?.close()
+        if let id = self.qrDialog { self.dismissDialog(id) }
+        self.qrDialog = nil
+        self.qrImage = nil
         self.showError(LauncherError.failed(event["message"] as? String ?? "Accesso non riuscito"))
       case "qr":
         if let url = event["url"] as? String ?? event["challengeUrl"] as? String {
           self.showQR(url)
+        } else {
+          self.cancelAuthentication()
+          self.showError(LauncherError.invalid("Risposta QR dello store non valida."))
         }
       case "auth_url":
         guard let address = event["url"] as? String, let url = URL(string: address),
-          url.scheme == "https", let authState = event["authState"] as? [String: Any]
-        else { return }
-        NSWorkspace.shared.open(url)
-        let prompt = NSAlert()
-        prompt.messageText = "Completa l’accesso a \(store.title)"
-        prompt.informativeText =
-          "Accedi nel browser e incolla qui l’URL finale o il codice di autorizzazione. Il valore non viene registrato nei log."
-        let input = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 460, height: 28))
-        prompt.accessoryView = input
-        prompt.addButton(withTitle: "Collega")
-        prompt.addButton(withTitle: "Annulla")
-        guard prompt.runModal() == .alertFirstButtonReturn, !input.stringValue.isEmpty else {
-          self.authenticationSession = nil
-          self.authenticationRequest = nil
+          url.scheme == "https", url.host?.isEmpty == false,
+          let authState = event["authState"] as? [String: Any]
+        else {
+          self.cancelAuthentication()
+          self.showError(LauncherError.invalid("Risposta di accesso dello store non valida."))
           return
         }
-        let value = input.stringValue
-        let options: [String: Any] = [
-          "authState": authState, value.hasPrefix("https://") ? "redirectURL" : "code": value,
-        ]
-        self.authenticationRequest = self.storeClient.request(
-          operation: "auth_complete", store: store, profile: profile, options: options
-        ) { [weak self] e in
+        if let id = self.qrDialog { self.dismissDialog(id) }
+        self.qrDialog = nil
+        self.qrImage = nil
+        NSWorkspace.shared.open(url)
+        let input = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 540, height: 28))
+        self.qrDialog = self.presentDialog(
+          title: "Completa l’accesso a \(store.title)",
+          message:
+            "Accedi nel browser e incolla qui l’URL finale o il codice di autorizzazione. Il valore non viene registrato nei log.",
+          content: input,
+          actions: [.init("Collega", role: .primary), .init("Annulla", role: .cancel)],
+          onCancel: { [weak self] in self?.cancelAuthentication() }
+        ) { [weak self] choice in
           guard let self, self.authenticationSession == authentication else { return }
-          if e["type"] as? String == "result" {
-            self.authenticationSession = nil
-            self.authenticationRequest = nil
-            self.syncStore(store, profile: profile)
-          } else if e["type"] as? String == "error" {
-            self.authenticationSession = nil
-            self.authenticationRequest = nil
-            self.showError(LauncherError.failed(e["message"] as? String ?? "Accesso non riuscito"))
+          self.qrDialog = nil
+          guard choice == 0, !input.stringValue.isEmpty else {
+            self.cancelAuthentication()
+            return
+          }
+          let value = input.stringValue
+          let options: [String: Any] = [
+            "authState": authState, value.hasPrefix("https://") ? "redirectURL" : "code": value,
+          ]
+          self.authenticationRequest = self.storeClient.request(
+            operation: "auth_complete", store: store, profile: profile, options: options
+          ) { [weak self] e in
+            guard let self, self.authenticationSession == authentication else { return }
+            if e["type"] as? String == "result" {
+              self.authenticationSession = nil
+              self.authenticationRequest = nil
+              self.syncStore(store, profile: profile)
+            } else if e["type"] as? String == "error" {
+              self.authenticationSession = nil
+              self.authenticationRequest = nil
+              self.showError(
+                LauncherError.failed(e["message"] as? String ?? "Accesso non riuscito"))
+            }
           }
         }
       case "result":
         self.authenticationSession = nil
         self.authenticationRequest = nil
-        self.qrPanel?.close()
-        self.qrPanel = nil
+        if let id = self.qrDialog { self.dismissDialog(id) }
+        self.qrDialog = nil
+        self.qrImage = nil
         self.syncStore(store, profile: profile)
       default: break
       }
     }
   }
   func showQR(_ value: String) {
-    guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return }
+    guard let filter = CIFilter(name: "CIQRCodeGenerator") else {
+      cancelAuthentication()
+      showError(LauncherError.failed("Codice QR non disponibile."))
+      return
+    }
     filter.setValue(Data(value.utf8), forKey: "inputMessage")
     guard let image = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 9, y: 9)),
       let cg = CIContext().createCGImage(image, from: image.extent)
-    else { return }
-    if let panel = qrPanel,
-      let view = panel.contentView?.subviews.compactMap({ $0 as? NSImageView }).first
-    {
-      view.image = NSImage(cgImage: cg, size: NSSize(width: 300, height: 300))
-      panel.makeKeyAndOrderFront(nil)
+    else {
+      cancelAuthentication()
+      showError(LauncherError.failed("Codice QR non valido."))
       return
     }
-    let panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 360, height: 390), styleMask: [.titled, .closable],
-      backing: .buffered, defer: false)
-    panel.title = "Accedi con Steam Guard"
-    panel.delegate = self
-    let view = NSImageView(frame: NSRect(x: 30, y: 70, width: 300, height: 300))
-    view.image = NSImage(cgImage: cg, size: NSSize(width: 300, height: 300))
+    let qr = NSImage(cgImage: cg, size: NSSize(width: 280, height: 280))
+    if let view = qrImage {
+      view.image = qr
+      return
+    }
+    let view = NSImageView(frame: NSRect(x: 130, y: 0, width: 280, height: 280))
+    view.image = qr
     view.imageScaling = .scaleProportionallyUpOrDown
-    let label = NSTextField(labelWithString: "Scansiona con l’app Steam del tuo telefono.")
-    label.frame = NSRect(x: 20, y: 18, width: 330, height: 45)
-    label.maximumNumberOfLines = 2
-    panel.contentView?.addSubview(view)
-    panel.contentView?.addSubview(label)
-    panel.center()
-    panel.makeKeyAndOrderFront(nil)
-    qrPanel = panel
+    let host = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 280))
+    host.addSubview(view)
+    qrImage = view
+    qrDialog = presentDialog(
+      title: "Accedi con Steam Guard", message: "Scansiona con l’app Steam del tuo telefono.",
+      content: host,
+      actions: [.init("Annulla accesso", role: .cancel)],
+      onCancel: { [weak self] in self?.cancelAuthentication() }
+    ) { _ in }
   }
   func syncStore(_ store: Store, profile: UUID) {
     canvas.message = "Sincronizzazione \(store.title)…"
@@ -640,7 +780,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let incoming = try? JSONDecoder().decode([Game].self, from: data)
       else { return }
       for var game in incoming {
-        game.controllerInputMode = nil // Only owned per-profile preferences select input policy.
+        game.controllerInputMode = nil  // Only owned per-profile preferences select input policy.
         if let index = self.state.games.firstIndex(where: { $0.id == game.id }) {
           let old = self.state.games[index]
           game.engine = old.engine
@@ -713,19 +853,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
           try? self.persist()
           return
         }
-        let message = NSAlert()
-        message.messageText = "File di \(game.title) scaricati"
-        message.informativeText = "Seleziona il programma di avvio per verificare l’architettura."
-        message.addButton(withTitle: "Seleziona eseguibile")
-        message.addButton(withTitle: "Più tardi")
-        if message.runModal() == .alertFirstButtonReturn {
-          let panel = NSOpenPanel()
-          panel.directoryURL = base
-          if panel.runModal() == .OK, let url = panel.url,
-            let imported = try? LocalDiscovery.importGame(url),
-            let checked = imported.variants.first,
-            let i = self.state.games.firstIndex(where: { $0.id == game.id })
-          {
+        self.presentDialog(
+          title: "File di \(game.title) scaricati",
+          message: "Seleziona il programma di avvio per verificare l’architettura.",
+          actions: [
+            .init("Seleziona eseguibile", role: .primary), .init("Più tardi", role: .cancel),
+          ]
+        ) { [weak self] choice in
+          guard let self, choice == 0 else { return }
+          self.selectLocalFile(
+            title: "Programma di avvio", prompt: "Seleziona", directory: base, mode: .file
+          ) { [weak self] url in
+            guard let self, !self.maintenanceInProgress, !self.session.running,
+              self.pendingLaunch == nil,
+              self.state.activeProfile == profile, let url,
+              let imported = try? LocalDiscovery.importGame(url),
+              let checked = imported.variants.first,
+              let i = self.state.games.firstIndex(where: { $0.id == game.id })
+            else { return }
             var v = checked
             v.id = variant.id
             v.installationRoot = base.path
@@ -750,6 +895,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       var stick = ControllerNavigation.AxisGate()
       let route: (ControllerNavigation.Action) -> Void = { [weak self] action in
         guard let self else { return }
+        if self.dialogs.isPresenting {
+          guard !self.session.running, NSApp.isActive else { return }
+          self.dialogs.handleController(action)
+          return
+        }
         let modal = NSApp.modalWindow ?? self.window.attachedSheet
         switch ControllerNavigation.destination(
           running: self.session.running, maintenance: self.maintenanceInProgress,
@@ -846,22 +996,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       }
       return
     }
-    let a = NSAlert()
-    a.messageText = "ready"
-    a.informativeText = error.localizedDescription
-    a.alertStyle = .warning
-    a.runModal()
+    presentDialog(
+      title: "Operazione non riuscita", message: error.localizedDescription,
+      actions: [.init("Chiudi", role: .cancel)]
+    ) { _ in }
   }
   @objc func showNotifications() {
     guard session?.running != true, !maintenanceInProgress, pendingLaunch == nil else { return }
-    let prompt = NSAlert()
-    prompt.messageText = "Notifiche"
-    prompt.informativeText =
-      backgroundNotices.isEmpty
-      ? "Nessuna notifica in attesa." : backgroundNotices.joined(separator: "\n\n")
-    prompt.addButton(withTitle: "Chiudi")
-    prompt.runModal()
-    backgroundNotices.removeAll()
+    let notices = backgroundNotices
+    presentDialog(
+      title: "Notifiche",
+      message: notices.isEmpty ? "Nessuna notifica in attesa." : notices.joined(separator: "\n\n"),
+      actions: [.init("Chiudi", role: .cancel)]
+    ) { [weak self] _ in self?.backgroundNotices.removeAll { notices.contains($0) } }
   }
 }
 
@@ -876,13 +1023,18 @@ if let index = args.firstIndex(of: "--data-root") {
   }
   dataPaths = LauncherPaths(root: URL(fileURLWithPath: args[index + 1]))
 }
-let runtimeLocationActions = ["--set-runtime-root", "--reset-runtime-root", "--restore-runtime-root"]
+let runtimeLocationActions = [
+  "--set-runtime-root", "--reset-runtime-root", "--restore-runtime-root",
+]
 if runtimeLocationActions.contains(where: args.contains) {
   do {
     let actions = runtimeLocationActions.filter(args.contains)
     guard actions.count == 1, let dataIndex = args.firstIndex(of: "--data-root"),
-      args[dataIndex + 1] == dataPaths.root.path else {
-      throw LauncherError.invalid("Runtime location changes require exactly one action and an explicit canonical --data-root.")
+      args[dataIndex + 1] == dataPaths.root.path
+    else {
+      throw LauncherError.invalid(
+        "Runtime location changes require exactly one action and an explicit canonical --data-root."
+      )
     }
     if let index = args.firstIndex(of: "--set-runtime-root") {
       guard args.indices.contains(index + 1), args[index + 1].hasPrefix("/") else {
@@ -901,15 +1053,20 @@ if runtimeLocationActions.contains(where: args.contains) {
 }
 let support = FrontendSupportPaths(paths: dataPaths)
 let project = support.codeRoot
-if runtimeLocationActions.contains(where: args.contains) || args.contains("--diagnostics") || args.contains("--frontend-self-test") {
+if runtimeLocationActions.contains(where: args.contains) || args.contains("--diagnostics")
+  || args.contains("--frontend-self-test")
+{
   // Report generation is headless and read-only. Only an explicit location
   // action above writes its owned pointer/history; no accounts or engines run.
-  let config = FrontendSupportPaths.configuration(paths: dataPaths, runtimeRoot: support.runtimeRoot)
+  let config = FrontendSupportPaths.configuration(
+    paths: dataPaths, runtimeRoot: support.runtimeRoot)
   let fm = FileManager.default
-  let complete = [support.sessionHost, support.overlay, support.storeBridge,
-    project.appendingPathComponent("StoreBridge/supervisor.py"),
-    project.appendingPathComponent("LICENSE"), project.appendingPathComponent("Docs/LICENSES.md")
-  ].allSatisfy { fm.isReadableFile(atPath: $0.path) }
+  let complete =
+    [
+      support.sessionHost, support.overlay, support.storeBridge,
+      project.appendingPathComponent("StoreBridge/supervisor.py"),
+      project.appendingPathComponent("LICENSE"), project.appendingPathComponent("Docs/LICENSES.md"),
+    ].allSatisfy { fm.isReadableFile(atPath: $0.path) }
     && fm.isExecutableFile(atPath: support.sessionHost.path)
   var record: [String: Any] = [
     "prefixRoot": dataPaths.root.appendingPathComponent("Prefixes").path,
@@ -930,8 +1087,10 @@ if runtimeLocationActions.contains(where: args.contains) || args.contains("--dia
     record["gpuAllocatedBytes"] = device?.currentAllocatedSize ?? 0
     record["recommendedWorkingSet"] = device?.recommendedMaxWorkingSetSize ?? 0
   }
-  print(String(data: try JSONSerialization.data(
-    withJSONObject: record, options: [.prettyPrinted, .sortedKeys]), encoding: .utf8)!)
+  print(
+    String(
+      data: try JSONSerialization.data(
+        withJSONObject: record, options: [.prettyPrinted, .sortedKeys]), encoding: .utf8)!)
   if args.contains("--frontend-self-test") && !complete { exit(1) }
 } else {
   let app = NSApplication.shared

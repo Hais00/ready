@@ -14,9 +14,16 @@ stage=$(mktemp -d "$PWD/Build/.ready-app.XXXXXX")
 app="$stage/ready.app"
 final="$PWD/Build/ready.app"
 previous=""
+refresh_registration=0
+lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 cleanup() {
   if [ ! -e "$final" ] && [ -n "$previous" ] && [ -e "$previous" ]; then
     mv "$previous" "$final"
+  fi
+  # Refresh only this exact published (or restored) bundle. Never scan/reset the
+  # Launch Services database or register the recoverable, non-app backup.
+  if [ "$refresh_registration" = 1 ] && [ -d "$final" ] && [ -x "$lsregister" ]; then
+    "$lsregister" -f "$final" >/dev/null 2>&1 || echo "Could not refresh Launch Services for $final" >&2
   fi
   rm -rf "$stage"
 }
@@ -60,8 +67,37 @@ python3 Scripts/frontend_snapshot.py verify "$snapshot" >/dev/null
 /usr/bin/codesign --verify --strict "$app"
 if [ -e "$final" ]; then
   mkdir -p "$PWD/Build/AppBackups"
-  previous="$PWD/Build/AppBackups/ready-$(date +%Y%m%d%H%M%S)-$$.app"
+  previous="$PWD/Build/AppBackups/ready-$(date +%Y%m%d%H%M%S)-$$.ready-backup"
+  # Inventory is a sibling, so changing the extension preserves every bundle byte.
+  python3 - "$final" "$previous" <<'PY'
+import hashlib, os, stat, sys
+from pathlib import Path
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path.cwd() / 'Scripts'))
+import frontend_snapshot as snapshot
+bundle, destination = map(Path, sys.argv[1:])
+if destination.exists() or destination.is_symlink(): raise ValueError('Existing backup is never overwritten')
+parent_info = destination.parent.lstat()
+if not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != os.getuid():
+    raise ValueError('Owned normal backup directory required')
+for path in [bundle, *bundle.rglob('*')]:
+    info = path.lstat()
+    if info.st_uid != os.getuid() or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+        raise ValueError('Backup must be an owned bundle without aliases/special files')
+files = snapshot.tree(bundle)
+if not files: raise ValueError('Empty frontend backup refused')
+snapshot.write_new(Path(str(destination) + '.manifest.json'), snapshot.encoded({
+    'schema': 1, 'kind': 'ready-frontend-backup-v1', 'bundle': destination.name,
+    'originalPath': str(bundle), 'files': files,
+    'treeFingerprintSHA256': hashlib.sha256(snapshot.encoded(files)).hexdigest(),
+}))
+PY
+  if [ -x "$lsregister" ]; then
+    "$lsregister" -u "$final" >/dev/null 2>&1 || echo "Could not unregister previous $final" >&2
+  fi
+  refresh_registration=1
   mv "$final" "$previous"
 fi
+refresh_registration=1
 mv "$app" "$final"
 printf '%s\n' "$final"

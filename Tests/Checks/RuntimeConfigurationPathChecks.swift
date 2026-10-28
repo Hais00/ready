@@ -45,6 +45,9 @@ enum RuntimeConfigurationPathChecks {
       "kosmicNativeICD": "icd/kosmic.json", "moltenICD": "icd/kosmic.json",
       "vulkanLibrary": "engine/vulkan.dylib", "immutableRuntimeSet": "engine",
       "sourceDependencyPrefix": "engine/dependencies", "builtin32Directory": "engine/pe32",
+      "nativeVulkanLibrary": "native/libvulkan.dylib",
+      "nativeRendererManifestPath": "native/manifest.json",
+      "nativeRendererValidationPath": "origin/native-validation.json",
       "engineDLLs": ["dxmtMetal": "engine/pe64"], "engineDLLs32": ["dxmtMetal": "engine/pe32"],
       "engineWineBinaries": ["dxmtMetal": "engine/bin/wine"],
       "engineWineServers": ["dxmtMetal": "engine/bin/wine"],
@@ -74,7 +77,8 @@ enum RuntimeConfigurationPathChecks {
     try require(resolved["pathFormat"] == nil, "Resolved configuration could be rebased a second time")
     try require((resolved["provenance"] as? [String: String])?["originalBuildRoot"] == original.path, "Historical provenance paths were rewritten")
     try require((resolved["engineOverrides"] as? [String: String])?["dxmtMetal"] == "d3d11,dxgi,winemetal=b", "DLL load policy was treated as a path")
-    for key in ["wineBinary", "kosmicNativeICD", "immutableRuntimeSet", "sourceDependencyPrefix"] {
+    for key in ["wineBinary", "kosmicNativeICD", "immutableRuntimeSet", "sourceDependencyPrefix",
+                "nativeVulkanLibrary", "nativeRendererManifestPath", "nativeRendererValidationPath"] {
       try require((resolved[key] as? String)?.hasPrefix(resolvedRoot.path + "/") == true, "Operational metadata did not relocate: " + key)
     }
     var invalid = document

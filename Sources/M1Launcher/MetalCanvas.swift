@@ -12,6 +12,7 @@ enum CanvasAction {
   case profiles, importGame, settings, search, fullscreen, refresh
 }
 struct CanvasHit {
+  let id: String
   let rect: CGRect
   let action: CanvasAction
 }
@@ -63,14 +64,35 @@ final class MetalCanvas: NSView {
   var state = LibraryState.initial()
   var filter: Store?
   var query = ""
-  var selected = 0
+  var selected = 0 {
+    didSet {
+      if oldValue != selected {
+        focusID = visibleGames.indices.contains(selected) ? "game." + visibleGames[selected].id : nil
+      }
+    }
+  }
   var message = ""
   var evaluationMode = false
   var onAction: ((CanvasAction) -> Void)?
   private var hits = [CanvasHit]()
+  private var hoverID: String?
+  private var pressedID: String?
+  private var focusID: String?
+  private var pointerLocation: CGPoint?
+  private var pointerTracking: NSTrackingArea?
+  private var hoverRedrawScheduled = false
+  var interactionEnabled = true {
+    didSet {
+      guard oldValue != interactionEnabled else { return }
+      hoverID = nil; pressedID = nil
+      window?.invalidateCursorRects(for: self)
+      redraw()
+    }
+  }
   private var suspended = false
+  var interactionSnapshot: (hover: String?, pressed: String?, focus: String?, hits: [CanvasHit]) { (hoverID, pressedID, focusID, hits) }
   var allocatedTextureBytes: Int { texture.map { $0.width * $0.height * 4 } ?? 0 }
-  override var acceptsFirstResponder: Bool { true }
+  override var acceptsFirstResponder: Bool { interactionEnabled && !suspended }
   override var isFlipped: Bool { true }
   init(frame: NSRect, device: MTLDevice) {
     self.device = device
@@ -81,18 +103,7 @@ final class MetalCanvas: NSView {
   required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
   private func configure() throws {
     queue = device.makeCommandQueue()
-    let src = """
-      #include <metal_stdlib>
-      using namespace metal;
-      struct V { float4 position [[position]]; float2 uv; };
-      vertex V vertexMain(uint i [[vertex_id]]) {
-        float2 p[3]={float2(-1,-1),float2(3,-1),float2(-1,3)};
-        V o;o.position=float4(p[i],0,1);o.uv=float2((p[i].x+1)*0.5,1-(p[i].y+1)*0.5);return o;
-      }
-      fragment float4 fragmentMain(V v [[stage_in]],texture2d<float> image [[texture(0)]]) {
-        constexpr sampler s(filter::linear,address::clamp_to_edge);return image.sample(s,v.uv);
-      }
-      """
+    let src = CanvasShader.source
     let lib = try device.makeLibrary(source: src, options: nil)
     let desc = MTLRenderPipelineDescriptor()
     desc.vertexFunction = lib.makeFunction(name: "vertexMain")
@@ -117,6 +128,59 @@ final class MetalCanvas: NSView {
         && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query))
     }.sorted { ($0.lastPlayed ?? .distantPast) > ($1.lastPlayed ?? .distantPast) }
   }
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    window?.acceptsMouseMovedEvents = true
+    updateTrackingAreas()
+  }
+  override func updateTrackingAreas() {
+    if let pointerTracking { removeTrackingArea(pointerTracking) }
+    let tracking = NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect, .enabledDuringMouseDrag], owner: self, userInfo: nil)
+    addTrackingArea(tracking); pointerTracking = tracking
+    super.updateTrackingAreas()
+  }
+  override func resetCursorRects() {
+    super.resetCursorRects()
+    guard interactionEnabled && !suspended else { return }
+    for hit in hits { addCursorRect(hit.rect.intersection(bounds), cursor: .pointingHand) }
+  }
+  override func becomeFirstResponder() -> Bool { redraw(); return true }
+  override func resignFirstResponder() -> Bool { pressedID = nil; redraw(); return true }
+  private func hit(at point: CGPoint) -> CanvasHit? {
+    guard interactionEnabled && !suspended else { return nil }
+    return hits.last { $0.rect.contains(point) }
+  }
+  private func updatePointer(_ event: NSEvent) {
+    let point = convert(event.locationInWindow, from: nil)
+    pointerLocation = point
+    let next = hit(at: point)?.id
+    if next != hoverID { hoverID = next; redraw() }
+  }
+  override func mouseMoved(with event: NSEvent) { updatePointer(event) }
+  override func mouseEntered(with event: NSEvent) { updatePointer(event) }
+  override func mouseDragged(with event: NSEvent) { updatePointer(event) }
+  override func mouseExited(with event: NSEvent) {
+    pointerLocation = nil
+    if hoverID != nil { hoverID = nil; redraw() }
+  }
+  private func registerHit(_ rect: CGRect, hitRect: CGRect? = nil, id: String, action: CanvasAction) {
+    hits.append(.init(id: id, rect: hitRect ?? rect, action: action))
+    guard interactionEnabled else { return }
+    if hoverID == id {
+      round(rect, color(pressedID == id ? 0x000000 : 0xffffff, pressedID == id ? 0.18 : 0.065))
+      let border = NSBezierPath(roundedRect: rect.insetBy(dx: 0.75, dy: 0.75), xRadius: 12, yRadius: 12)
+      color(0xffffff, pressedID == id ? 0.5 : 0.28).setStroke(); border.lineWidth = 1.5; border.stroke()
+    }
+    if focusID == id && window?.isKeyWindow == true && window?.firstResponder === self {
+      let border = NSBezierPath(roundedRect: rect.insetBy(dx: -3, dy: -3), xRadius: 14, yRadius: 14)
+      color(0xb5ffd0).setStroke(); border.lineWidth = 2; border.stroke()
+    }
+  }
+  private func activate(_ hit: CanvasHit) {
+    focusID = hit.id
+    if case .game(let id) = hit.action, let index = visibleGames.firstIndex(where: { $0.id == id }) { selected = index }
+    onAction?(hit.action)
+  }
   override func layout() {
     super.layout()
     redraw()
@@ -138,7 +202,8 @@ final class MetalCanvas: NSView {
     canvasLayer = nil
     layer = nil
     art.purge()
-    hits.removeAll()
+    hits.removeAll(); hoverID = nil; pressedID = nil
+    window?.invalidateCursorRects(for: self)
   }
   func resumeGraphics() {
     guard suspended else {
@@ -157,23 +222,9 @@ final class MetalCanvas: NSView {
       let scale = window?.backingScaleFactor ?? 2
       let w = max(Int(bounds.width * scale), 1)
       let h = max(Int(bounds.height * scale), 1)
-      guard w <= 8192, h <= 8192,
-        let bitmap = NSBitmapImageRep(
-          bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8, samplesPerPixel: 4,
-          hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-          bitmapFormat: [.alphaFirst, .thirtyTwoBitLittleEndian], bytesPerRow: w * 4,
-          bitsPerPixel: 32), let bitmapContext = NSGraphicsContext(bitmapImageRep: bitmap)
-      else { return }
-      bitmap.size = bounds.size
-      NSGraphicsContext.saveGraphicsState()
-      NSGraphicsContext.current = NSGraphicsContext(
-        cgContext: bitmapContext.cgContext, flipped: true)
-      // Draw in a stable top-left logical coordinate system.
-      bitmapContext.cgContext.scaleBy(x: scale, y: scale)
-      bitmapContext.cgContext.translateBy(x: 0, y: bounds.height)
-      bitmapContext.cgContext.scaleBy(x: 1, y: -1)
-      drawScene(bitmapContext.cgContext)
-      NSGraphicsContext.restoreGraphicsState()
+      guard let bitmap = CanvasRaster(width: w, height: h) else { return }
+      bitmap.draw(logicalSize: bounds.size, scale: scale) { drawScene($0) }
+      window?.invalidateCursorRects(for: self)
       if texture?.width != w || texture?.height != h {
         let d = MTLTextureDescriptor.texture2DDescriptor(
           pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false)
@@ -181,11 +232,11 @@ final class MetalCanvas: NSView {
         d.storageMode = .shared
         texture = device.makeTexture(descriptor: d)
       }
-      guard let texture, let ptr = bitmap.bitmapData else { return }
+      guard let texture else { return }
       // Rendering is event-driven; wait for the previous canvas upload before overwriting shared storage.
       lastCommand?.waitUntilCompleted()
       texture.replace(
-        region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0, withBytes: ptr, bytesPerRow: w * 4)
+        region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0, withBytes: bitmap.data, bytesPerRow: bitmap.bytesPerRow)
       layer.contentsScale = scale
       layer.drawableSize = CGSize(width: w, height: h)
       guard let drawable = layer.nextDrawable(), let cmd = queue.makeCommandBuffer() else { return }
@@ -231,14 +282,14 @@ final class MetalCanvas: NSView {
     let configuration = NSImage.SymbolConfiguration(paletteColors: [tint])
     let symbol = image.withSymbolConfiguration(configuration) ?? image
     symbol.draw(
-      in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+      in: CanvasGeometry.aspectFit(symbol.size, in: rect), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
   }
   private func button(
-    _ rect: CGRect, _ symbol: String, _ action: CanvasAction, active: Bool = false
+    _ rect: CGRect, _ symbol: String, _ action: CanvasAction, id: String, active: Bool = false
   ) {
     round(rect, color(active ? 0x2a443b : 0x24292b))
     icon(symbol, rect.insetBy(dx: 10, dy: 10), tint: active ? color(0x98f5b9) : .white)
-    hits.append(.init(rect: rect, action: action))
+    registerHit(rect, hitRect: CanvasGeometry.minimumTarget(rect), id: id, action: action)
   }
   private func drawScene(_ cg: CGContext) {
     hits.removeAll()
@@ -258,18 +309,18 @@ final class MetalCanvas: NSView {
     cg.fill(CGRect(x: 0, y: 0, width: 70, height: height))
     icon("gamecontroller.fill", CGRect(x: 23, y: 23, width: 24, height: 24), tint: color(0x95edb4))
     button(
-      CGRect(x: 12, y: 71, width: 46, height: 46), "house.fill", .store(nil), active: filter == nil)
+      CGRect(x: 12, y: 71, width: 46, height: 46), "house.fill", .store(nil), id: "nav.home", active: filter == nil)
     let symbols = ["s.circle", "e.circle", "g.circle", "a.circle"]
     for (i, s) in [Store.steam, .epic, .gog, .amazon].enumerated() {
       let r = CGRect(x: 12, y: 132 + CGFloat(i) * 57, width: 46, height: 46)
-      button(r, symbols[i], .store(s), active: filter == s)
+      button(r, symbols[i], .store(s), id: "nav.store." + s.rawValue, active: filter == s)
     }
-    button(CGRect(x: 12, y: height - 174, width: 46, height: 46), "person.2", .profiles)
-    button(CGRect(x: 12, y: height - 116, width: 46, height: 46), "plus", .importGame)
-    button(CGRect(x: 12, y: height - 58, width: 46, height: 46), "gearshape", .settings)
+    button(CGRect(x: 12, y: height - 174, width: 46, height: 46), "person.2", .profiles, id: "nav.profiles")
+    button(CGRect(x: 12, y: height - 116, width: 46, height: 46), "plus", .importGame, id: "nav.import")
+    button(CGRect(x: 12, y: height - 58, width: 46, height: 46), "gearshape", .settings, id: "nav.settings")
     let left: CGFloat = 112
     let content = width - left - 36
-    button(CGRect(x: left, y: 22, width: 37, height: 37), "arrow.clockwise", .refresh)
+    button(CGRect(x: left, y: 22, width: 37, height: 37), "arrow.clockwise", .refresh, id: "toolbar.refresh")
     text(
       evaluationMode ? "READY · VALUTAZIONE" : "READY",
       CGRect(x: left + 54, y: 32, width: 200, height: 22), size: 12, bold: true,
@@ -303,7 +354,7 @@ final class MetalCanvas: NSView {
         cg.saveGState()
         cg.translateBy(x: r.minX, y: r.maxY)
         cg.scaleBy(x: 1, y: -1)
-        cg.draw(image, in: CGRect(origin: .zero, size: r.size))
+        cg.draw(image, in: CanvasGeometry.aspectFill(CGSize(width: CGFloat(image.width), height: CGFloat(image.height)), in: CGRect(origin: .zero, size: r.size)))
         cg.restoreGState()
       } else {
         icon(
@@ -326,7 +377,7 @@ final class MetalCanvas: NSView {
         outline.lineWidth = 2
         outline.stroke()
       }
-      hits.append(.init(rect: r, action: .game(game.id)))
+      registerHit(r, hitRect: r.insetBy(dx: -4, dy: -4), id: "game." + game.id, action: .game(game.id))
     }
     if games.isEmpty {
       let r = CGRect(x: left, y: 143, width: content, height: cardHeight)
@@ -340,7 +391,7 @@ final class MetalCanvas: NSView {
         "Collega uno store o importa un gioco già installato.",
         CGRect(x: left + 78, y: 204, width: content - 100, height: 24), size: 15,
         color: color(0xb5c2c7))
-      hits.append(.init(rect: r, action: .importGame))
+      registerHit(r, id: "empty.import", action: .importGame)
     }
     let y: CGFloat = 143 + cardHeight + 46
     text(
@@ -367,7 +418,18 @@ final class MetalCanvas: NSView {
             : "Il launcher rilascia le sue risorse grafiche durante la sessione.",
           CGRect(x: r.minX + 22, y: r.maxY - 44, width: r.width - 40, height: 40), size: 13,
           color: color(0xc3d0ce))
-        hits.append(.init(rect: r, action: i == 0 ? .importGame : .settings))
+        registerHit(r, id: i == 0 ? "feature.native" : "feature.resources", action: i == 0 ? .importGame : .settings)
+      }
+    }
+    let nextHover = pointerLocation.flatMap { hit(at: $0)?.id }
+    if nextHover != hoverID {
+      hoverID = nextHover
+      if !hoverRedrawScheduled {
+        hoverRedrawScheduled = true
+        DispatchQueue.main.async { [weak self] in
+          guard let self else { return }
+          self.hoverRedrawScheduled = false; self.redraw()
+        }
       }
     }
     text(
@@ -377,14 +439,23 @@ final class MetalCanvas: NSView {
       color: color(0xaebcba))
   }
   override func keyDown(with event: NSEvent) {
+    guard interactionEnabled && !suspended else { return }
     switch event.keyCode {
+    case 48:
+      guard !hits.isEmpty else { return }
+      let step = event.modifierFlags.contains(.shift) ? -1 : 1
+      let current = focusID.flatMap { id in hits.firstIndex { $0.id == id } } ?? (step > 0 ? -1 : 0)
+      focusID = hits[(current + step + hits.count) % hits.count].id; redraw()
     case 123:
+      focusID = nil
       selected = max(0, selected - 1)
       redraw()
     case 124:
+      focusID = nil
       selected = min(max(visibleGames.count - 1, 0), selected + 1)
       redraw()
     case 36:
+      if let id = focusID, let target = hits.first(where: { $0.id == id }) { activate(target); return }
       if visibleGames.indices.contains(selected) { onAction?(.game(visibleGames[selected].id)) }
     case 49:
       if visibleGames.indices.contains(selected) {
@@ -395,31 +466,30 @@ final class MetalCanvas: NSView {
     }
   }
   override func mouseDown(with event: NSEvent) {
-    let p = convert(event.locationInWindow, from: nil)
-    if let hit = hits.last(where: { $0.rect.contains(p) }) { onAction?(hit.action) }
+    guard interactionEnabled && !suspended else { return }
+    window?.makeFirstResponder(self)
+    updatePointer(event)
+    pressedID = hit(at: convert(event.locationInWindow, from: nil))?.id
+    redraw()
+  }
+  override func mouseUp(with event: NSEvent) {
+    let target = hit(at: convert(event.locationInWindow, from: nil))
+    let shouldActivate = pressedID != nil && pressedID == target?.id
+    pressedID = nil; updatePointer(event); redraw()
+    if shouldActivate, let target { activate(target) }
   }
   override func rightMouseDown(with event: NSEvent) {
-    let p = convert(event.locationInWindow, from: nil)
-    if let hit = hits.last(where: { $0.rect.contains(p) }), case .game(let id) = hit.action {
-      onAction?(.gameOptions(id))
-    }
+    guard let target = hit(at: convert(event.locationInWindow, from: nil)), case .game(let id) = target.action else { return }
+    onAction?(.gameOptions(id))
   }
   func writePreview(_ url: URL) throws {
     // Reuse exactly the scene renderer, without screen capture permissions.
     let w = Int(bounds.width)
     let h = Int(bounds.height)
-    guard
-      let rep = NSBitmapImageRep(
-        bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8, samplesPerPixel: 4,
-        hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: w * 4,
-        bitsPerPixel: 32), let context = NSGraphicsContext(bitmapImageRep: rep)
-    else { return }
-    NSGraphicsContext.saveGraphicsState()
-    NSGraphicsContext.current = NSGraphicsContext(cgContext: context.cgContext, flipped: true)
-    context.cgContext.translateBy(x: 0, y: CGFloat(h))
-    context.cgContext.scaleBy(x: 1, y: -1)
-    drawScene(context.cgContext)
-    NSGraphicsContext.restoreGraphicsState()
+    guard let bitmap = CanvasRaster(width: w, height: h) else { return }
+    bitmap.draw(logicalSize: bounds.size, scale: 1) { drawScene($0) }
+    guard let image = bitmap.context.makeImage() else { return }
+    let rep = NSBitmapImageRep(cgImage: image)
     if let png = rep.representation(using: .png, properties: [:]) { try png.write(to: url) }
   }
 }

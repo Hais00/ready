@@ -176,7 +176,8 @@
       "storeCycleWrapsBothDirections": true
     },
     "physicalDeviceVerified": false,
-    "actualModalInteractionVerified": false
+    "actualModalInteractionVerified": true,
+    "modalInteractionScope": "Current internal in-window keyboard/choice/cancel Cua only; physical controller unverified"
   },
   "appleEvaluation": {
     "dx12GPUVerified": true,
@@ -328,6 +329,7 @@
   "frontendLifecycle": {
     "passed": true,
     "checks": {
+      "activeAndQueuedPanelsDetachedDuringGame": true,
       "errorDoesNotCreateModal": true,
       "errorDoesNotRestoreGPUTexture": true,
       "errorDoesNotShowLauncher": true,
@@ -335,6 +337,7 @@
       "initialCanvasAllocated": true,
       "interfaceCommandsDisabledDuringGame": true,
       "interfaceCommandsRestoredAfterGame": true,
+      "internalPanelPresentBeforeLaunch": true,
       "notificationRemainsAccessible": true,
       "realSessionStarted": true,
       "returnRestoresCanvas": true,
@@ -476,19 +479,33 @@
     "Open DX12 production path; Apple GPU path is verified only for local evaluation under its license",
     "Physical-controller behavior and in-game input suppression",
     "Native macOS game save/account isolation and complete release packaging",
-    "Guided interrupted migration/recovery dialog visual verification beyond the verified idle panel",
     "Real legacy user-data/game migration beyond synthetic copy and rollback crash fixtures",
     "External updaters that do not participate in the installation lease protocol",
     "Portable runtime installer and clean-machine runtime validation beyond the source ARM64 renderer integration gates",
     "Historical static-input/binary source correspondence and exact release notices beyond acquired source archives",
-    "Whole-application packaging and remaining third-party distribution inventory beyond the approved 25-library dependency payload"
+    "Whole-application packaging and remaining third-party distribution inventory beyond the approved 25-library dependency payload",
+    "Real runtime retest after final installer publication move; staged proof does not establish final-location/clean-machine behavior",
+    "Current internal migration/recovery dialog retest beyond earlier native-alert GUI fixtures",
+    "Real store QR/auth/account/entitlement and game testing; synthetic protocol/lifecycle coverage is not a real login"
   ],
   "frontendGUI": {
     "passed": true,
-    "scope": "isolated AppKit GUI on M1; controller preference save/reopen/profile separation, runtime native folder selection/reopen/restore, idle maintenance dialog",
+    "scope": "Current internal-dialog Cua search Return/Esc, profiles/create/error, options, runtime directory invalid/valid/restore, native import/reimport stable ID, canvas hover and visual icon/color smoke; isolated data",
+    "internalSameWindowDialogs": true,
+    "internalDialogGroups": 6,
+    "usesOSAlertOrAuthPanel": false,
     "migrationRecoveryDialogsVerified": false,
+    "historicalNativeDialogMigrationChecks": 13,
+    "historicalNativeDialogRecoveryChecks": 15,
+    "historicalNativeDialogChecksPassed": true,
+    "currentInternalMigrationRecoveryRetestPending": true,
+    "finalPrimaryHoverFullPassPending": false,
     "physicalControllerVerified": false,
-    "storeAccountsUsed": false
+    "storeAccountsUsed": false,
+    "actualStoreQRLoginVerified": false,
+    "primaryHoverActualCUAPixelChangeVerified": true,
+    "redWindowCloseCancelsInternalPanel": true,
+    "reimportOriginalIDAndNoDuplicateVerified": true
   },
   "developmentStorage": {
     "selectedVolume": "Dati APFS",
@@ -498,5 +515,69 @@
     "coreSourcePacketHashVerifiedAfterTransfer": true,
     "runtimeOrUserDataRelocated": false
   },
-  "updatedAt": "2026-10-28T09:57:22.149899+00:00"
+  "updatedAt": "2026-10-28T13:21:14.680336+01:00",
+  "localRuntimeInstaller": {
+    "fixtureChecks": 40,
+    "fixtureChecksPassed": true,
+    "actualSIGKILLFixtureBoundaries": 8,
+    "layoutFixtureChecks": 9,
+    "layoutFixtureChecksPassed": true,
+    "fixtureSuitesRunRealRuntime": false,
+    "actualStagePassed": true,
+    "actualStageChecks": 18,
+    "sourceRootHomebrewObjectAccessDenied": true,
+    "nativeImageAuditPassed": true,
+    "productionControllerPolicyCases": 5,
+    "candidateBytesUnchangedDuringStage": true,
+    "publishedLocally": true,
+    "transaction": "f791932f-1c82-4f03-bbf4-05a197d77b91",
+    "candidateFingerprintSHA256": "ab6715945f4fb823c65961ea6e7a647f8a49bc65536d098e72fb5f8e79cad5c5",
+    "diagnosticOnly": true,
+    "normalUserRuntimePointerChanged": false,
+    "isolatedGUILocationTestedAndRestored": true,
+    "afterFinalMoveRealRerunPassed": false,
+    "afterFinalMoveRealRerunPending": true,
+    "cleanMachineVerified": false,
+    "binaryDistributionApproved": false,
+    "physicalControllerVerified": false
+  },
+  "sourceBuiltMoltenVK": {
+    "sourceBuildPassed": true,
+    "runtimeChecks": 7,
+    "runtimeChecksPassed": true,
+    "integrityAndCorruptionChecks": 6,
+    "integrityChecksPassed": true,
+    "candidateFingerprint": "53f6ea0ad1fb46c5ca0b0456267b4854cef3b41562ae5ea9a38405381dccd8ef",
+    "minimumMacOS": "27.0",
+    "activated": false,
+    "componentScopeOnly": true,
+    "wholeRuntimeDistributionApproved": false
+  },
+  "canvasFeedback": {
+    "actualMetalRoundtrip": true,
+    "BGRA": [
+      21,
+      19,
+      16,
+      255
+    ],
+    "iconAspectCases": 5,
+    "iconAspectPreserved": true,
+    "ownWindowHitTargets": 12,
+    "ownWindowProgrammaticEvents": true,
+    "programmaticGlobalEventsInjected": false,
+    "programmaticProofWasCUA": false,
+    "manualCUAHoverVerified": true,
+    "manualVisualIconColorsAndProportionsVerified": true,
+    "screenCapturePixelComparisonVerified": false,
+    "physicalControllerVerified": false
+  },
+  "frontendBackupSafety": {
+    "nonLaunchableBackupExtension": true,
+    "privateInventory": true,
+    "existingGeneratedBackupsRenamed": 12,
+    "renamedBytesUnchanged": true,
+    "backupsDeleted": false,
+    "scopedCurrentLaunchServicesRegistration": true
+  }
 }

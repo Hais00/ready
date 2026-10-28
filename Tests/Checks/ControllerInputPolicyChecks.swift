@@ -80,6 +80,59 @@ enum ControllerInputPolicyChecks {
     try require(try plan(game, runtime, nil).environment[ControllerInputPolicy.enableVariable] == "0", "Missing overlay cannot enable capture")
     var dxmtGame = game; dxmtGame.engine = .dxmtMetal
     try require(try plan(dxmtGame, runtime).environment["WINEDLLOVERRIDES"] == "d3d11,dxgi,winemetal=b;" + ControllerInputPolicy.builtinOverride, "DXMT renderer policy was overwritten")
+    // Relative capability bytes stay stable when the whole derived installation
+    // moves. Both documents resolve only their explicitly operational locations.
+    do {
+      let portable = root.appendingPathComponent("portable installation")
+      try fm.createDirectory(at: portable, withIntermediateDirectories: true)
+      for role in ["base", "dxmt"] {
+        try fm.copyItem(at: root.appendingPathComponent(role), to: portable.appendingPathComponent(role))
+      }
+      var relativeProviders = try JSONSerialization.jsonObject(with: JSONEncoder().encode(providers)) as! [String: [String: Any]]
+      for role in Array(relativeProviders.keys) { relativeProviders[role]!["wineRoot"] = role + "/wine" }
+      let capDocument: [String: Any] = ["pathFormat": RuntimeConfigurationPaths.relativeFormat,
+        "protocolVersion": 2, "providerID": "owned-policy-fixture",
+        "engineProviders": descriptor.engineProviders!, "providers": relativeProviders,
+        "historicalPath": manifest.path]
+      let capFile = portable.appendingPathComponent("controller-capability.json")
+      let capBytes = try JSONSerialization.data(withJSONObject: capDocument, options: [.sortedKeys])
+      try capBytes.write(to: capFile)
+      var runtimeDocument = try JSONSerialization.jsonObject(with: JSONEncoder().encode(runtime)) as! [String: Any]
+      runtimeDocument["pathFormat"] = RuntimeConfigurationPaths.relativeFormat
+      runtimeDocument["wine"] = "base/wine/bin/ready-wine"
+      runtimeDocument["builtin32Directory"] = "base/wine/lib/wine/i386-windows"
+      runtimeDocument["engineWineBinaries"] = ["dxmtMetal": "dxmt/wine/bin/ready-wine"]
+      runtimeDocument["engineDLLs"] = ["dxmtMetal": "dxmt/wine/lib/wine/x86_64-windows"]
+      runtimeDocument["engineSearchPaths"] = ["dxmtMetal": "dxmt/wine/lib/wine"]
+      runtimeDocument["overlayInputCapture"] = ["protocolVersion": 2, "providerID": "owned-policy-fixture",
+        "manifestPath": "controller-capability.json", "manifestSHA256": try hash(capFile),
+        "engineProviders": descriptor.engineProviders!, "providers": relativeProviders]
+      try JSONSerialization.data(withJSONObject: runtimeDocument).write(to: portable.appendingPathComponent("runtime.json"))
+      let beforeMove = try RuntimeConfiguration.read(portable.appendingPathComponent("runtime.json"))
+      try require(try plan(game, beforeMove).environment[ControllerInputPolicy.enableVariable] == "1", "Relative capability did not opt in before move")
+      let moved = root.appendingPathComponent("moved installation with spaces")
+      try fm.moveItem(at: portable, to: moved)
+      let afterMove = try RuntimeConfiguration.read(moved.appendingPathComponent("runtime.json"))
+      try require(try plan(game, afterMove).environment[ControllerInputPolicy.enableVariable] == "1", "Moved capability remained bound to old roots")
+      let movedCap = moved.appendingPathComponent("controller-capability.json")
+      try require(try Data(contentsOf: movedCap) == capBytes, "Relative capability bytes were rewritten during resolution")
+      let resolvedCap = try RuntimeConfigurationPaths.absoluteControllerManifest(capDocument, root: moved)
+      try require(resolvedCap["historicalPath"] as? String == manifest.path && resolvedCap["pathFormat"] == nil, "Capability codec changed historical data")
+      let legacyCap = try RuntimeConfigurationPaths.absoluteControllerManifest(["providers": ["base": ["wineRoot": base.path]]], root: moved)
+      try require((legacyCap["providers"] as? [String: [String: String]])?["base"]?["wineRoot"] == base.path, "Legacy absolute capability was rebased")
+      for bad in ["/absolute", "../outside", "base//wine", "base\\wine", "", "base/../wine"] {
+        var invalid = capDocument
+        invalid["providers"] = ["base": ["wineRoot": bad]]
+        try rejects { _ = try RuntimeConfigurationPaths.absoluteControllerManifest(invalid, root: moved) }
+      }
+      var invalid = capDocument; invalid["pathFormat"] = "future-format"
+      try rejects { _ = try RuntimeConfigurationPaths.absoluteControllerManifest(invalid, root: moved) }
+      invalid = capDocument; invalid["providers"] = ["base": ["wineRoot": 42]]
+      try rejects { _ = try RuntimeConfigurationPaths.absoluteControllerManifest(invalid, root: moved) }
+      try fm.createSymbolicLink(at: moved.appendingPathComponent("escape"), withDestinationURL: base)
+      invalid = capDocument; invalid["providers"] = ["base": ["wineRoot": "escape"]]
+      try rejects { _ = try RuntimeConfigurationPaths.absoluteControllerManifest(invalid, root: moved) }
+    }
     let reader = base.appendingPathComponent("lib/wine/x86_64-unix/xinput-capture.so")
     let readerBytes = try Data(contentsOf: reader)
     try fm.removeItem(at: reader)

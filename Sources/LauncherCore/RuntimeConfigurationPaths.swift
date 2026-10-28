@@ -10,7 +10,8 @@ public enum RuntimeConfigurationPaths {
   private static let scalarPaths = [
     "wine", "wineServer", "wineBoot", "kosmicICD", "moltenICD", "vulkanLibrary",
     "builtin32Directory", "wineBinary", "kosmicNativeICD", "immutableRuntimeSet",
-    "sourceDependencyPrefix",
+    "sourceDependencyPrefix", "nativeVulkanLibrary", "nativeRendererManifestPath",
+    "nativeRendererValidationPath",
   ]
   private static let mapPaths = [
     "engineDLLs", "engineDLLs32", "engineSearchPaths", "engineWineBinaries",
@@ -66,6 +67,27 @@ public enum RuntimeConfigurationPaths {
     }
     // Resolved documents may be saved elsewhere (e.g. evaluation history).
     // Retaining the relative-format tag would rebase them a second time.
+    result.removeValue(forKey: "pathFormat")
+    return result
+  }
+  /// A controller capability is a distinct document. Its only operational
+  /// nested location is providers.*.wineRoot; origin/proof paths stay historical.
+  public static func absoluteControllerManifest(
+    _ document: [String: Any], root: URL
+  ) throws -> [String: Any] {
+    guard let format = document["pathFormat"] else { return document }
+    guard let format = format as? String, format == relativeFormat,
+      var providers = document["providers"] as? [String: [String: Any]]
+    else { throw LauncherError.invalid("Formato dei percorsi capability controller non valido.") }
+    for (name, var provider) in providers {
+      guard let path = provider["wineRoot"] as? String else {
+        throw LauncherError.invalid("Cartella Wine della capability non valida.")
+      }
+      provider["wineRoot"] = try absolute(path, root: root)
+      providers[name] = provider
+    }
+    var result = document
+    result["providers"] = providers
     result.removeValue(forKey: "pathFormat")
     return result
   }

@@ -90,100 +90,86 @@ extension AppDelegate {
     guard canMaintainData() else { return }
     if LegacyMigration.requiresRecovery(paths: paths) {
       let restoringRollback = LegacyMigration.recoveryKind(paths: paths) == "rollback"
-      let prompt = NSAlert()
-      prompt.messageText = restoringRollback ? "Annullamento interrotto" : "Migrazione interrotta"
-      prompt.informativeText =
-        restoringRollback
-        ? "Le copie migrate saranno ripristinate nei loro ambienti, così i collegamenti della libreria resteranno validi. L’originale e i dati personali rimarranno intatti; eventuali copie in conflitto saranno conservate in archivio. Potrai poi ripetere l’annullamento."
-        : "Il vecchio ambiente è intatto. Le copie parziali saranno archiviate insieme al registro dell’operazione; i dati personali persistenti saranno conservati. Potrai poi ripetere la migrazione."
-      prompt.addButton(
-        withTitle: restoringRollback ? "Ripristina copie migrate" : "Archivia copie parziali")
-      prompt.addButton(withTitle: "Annulla")
-      guard prompt.runModal() == .alertFirstButtonReturn else { return }
-      maintain("Recupero dell’operazione interrotta…", operation: .recover)
+      presentDialog(
+        title: restoringRollback ? "Annullamento interrotto" : "Migrazione interrotta",
+        message: restoringRollback
+          ? "Le copie migrate saranno ripristinate nei loro ambienti, così i collegamenti della libreria resteranno validi. L’originale e i dati personali rimarranno intatti; eventuali copie in conflitto saranno conservate in archivio. Potrai poi ripetere l’annullamento."
+          : "Il vecchio ambiente è intatto. Le copie parziali saranno archiviate insieme al registro dell’operazione; i dati personali persistenti saranno conservati. Potrai poi ripetere la migrazione.",
+        actions: [.init(restoringRollback ? "Ripristina copie migrate" : "Archivia copie parziali", role: .primary), .init("Annulla", role: .cancel)]
+      ) { [weak self] choice in
+        guard let self, choice == 0, self.canMaintainData() else { return }
+        self.maintain("Recupero dell’operazione interrotta…", operation: .recover)
+      }
       return
     }
     if let plan = LegacyMigration.loadPlan(paths: paths),
       plan.status == "copied-awaiting-real-validation-original-retained"
     {
-      let prompt = NSAlert()
-      prompt.messageText = "Migrazione da verificare"
-      let owner =
-        state.profiles.first(where: { $0.id == plan.ownerProfile })?.name ?? "profilo precedente"
-      prompt.informativeText =
-        "Copie isolate preparate per \(owner). Verifica ogni gioco e i suoi salvataggi prima di considerare conclusa la migrazione. L’originale resta conservato. Annullando, le copie saranno archiviate; le installazioni contenute nelle copie richiederanno una reimportazione."
-      prompt.addButton(withTitle: "Completa collegamenti libreria")
-      prompt.addButton(withTitle: "Annulla migrazione…")
-      prompt.addButton(withTitle: "Chiudi")
-      let choice = prompt.runModal()
-      if choice == .alertFirstButtonReturn {
-        maintain("Collegamento delle installazioni migrate…", operation: .bind(plan, state))
-      } else if choice == .alertSecondButtonReturn {
-        let confirm = NSAlert()
-        confirm.messageText = "Archiviare le copie migrate?"
-        confirm.informativeText =
-          "Nessun dato sarà eliminato. Gli ambienti copiati saranno archiviati; Documenti, salvataggi e l’originale rimarranno al loro posto. I giochi installati dentro le copie non saranno più avviabili finché non li reimporterai."
-        confirm.addButton(withTitle: "Archivia e annulla migrazione")
-        confirm.addButton(withTitle: "Mantieni migrazione")
-        guard confirm.runModal() == .alertFirstButtonReturn else { return }
-        maintain("Archiviazione delle copie migrate…", operation: .rollback(plan, state))
+      let owner = state.profiles.first(where: { $0.id == plan.ownerProfile })?.name ?? "profilo precedente"
+      presentDialog(title: "Migrazione da verificare",
+        message: "Copie isolate preparate per \(owner). Verifica ogni gioco e i suoi salvataggi prima di considerare conclusa la migrazione. L’originale resta conservato. Annullando, le copie saranno archiviate; le installazioni contenute nelle copie richiederanno una reimportazione.",
+        actions: [.init("Completa collegamenti libreria", role: .primary), .init("Annulla migrazione…", role: .destructive), .init("Chiudi", role: .cancel)]
+      ) { [weak self] choice in
+        guard let self, self.canMaintainData() else { return }
+        if choice == 0 { self.maintain("Collegamento delle installazioni migrate…", operation: .bind(plan, self.state)) }
+        else if choice == 1 { self.confirmMigrationRollback(plan) }
       }
       return
     }
     guard FileManager.default.fileExists(atPath: paths.legacyPrefix.path) else {
-      let prompt = NSAlert()
-      prompt.messageText = "Dati dei profili"
-      prompt.informativeText =
-        "Non è presente un vecchio ambiente unico da migrare. Documenti e salvataggi dei profili sono già conservati fuori dagli ambienti dei giochi."
-      prompt.addButton(withTitle: "Apri cartella del profilo")
-      prompt.addButton(withTitle: "Chiudi")
-      if prompt.runModal() == .alertFirstButtonReturn {
-        let folder = paths.profile(state.activeProfile)
-        try? FileManager.default.createDirectory(
-          at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+      presentDialog(title: "Dati dei profili",
+        message: "Non è presente un vecchio ambiente unico da migrare. Documenti e salvataggi dei profili sono già conservati fuori dagli ambienti dei giochi.",
+        actions: [.init("Apri cartella del profilo", role: .primary), .init("Chiudi", role: .cancel)]
+      ) { [weak self] choice in
+        guard let self, choice == 0, self.canMaintainData() else { return }
+        let folder = self.paths.profile(self.state.activeProfile)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         NSWorkspace.shared.open(folder)
       }
       return
     }
-    let prompt = NSAlert()
-    prompt.messageText = "Importa il vecchio ambiente"
-    prompt.informativeText =
-      "Scegli il profilo a cui appartengono i vecchi account e salvataggi. Non è possibile separare automaticamente dati di utenti già mescolati. Verranno create copie isolate per i giochi Windows senza un ambiente esistente; l’originale resterà intatto."
+    let profiles = state.profiles
     let owner = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 420, height: 30))
     owner.addItem(withTitle: "Seleziona il proprietario dei dati…")
-    owner.addItems(withTitles: state.profiles.map { $0.name })
-    prompt.accessoryView = owner
-    prompt.addButton(withTitle: "Prepara migrazione")
-    prompt.addButton(withTitle: "Annulla")
-    guard prompt.runModal() == .alertFirstButtonReturn else { return }
-    guard owner.indexOfSelectedItem > 0 else {
-      showError(LauncherError.invalid("Seleziona esplicitamente il proprietario dei vecchi dati."))
-      return
+    owner.addItems(withTitles: profiles.map { $0.name })
+    presentDialog(title: "Importa il vecchio ambiente",
+      message: "Scegli il profilo a cui appartengono i vecchi account e salvataggi. Non è possibile separare automaticamente dati di utenti già mescolati. Verranno create copie isolate per i giochi Windows senza un ambiente esistente; l’originale resterà intatto.",
+      content: owner, actions: [.init("Prepara migrazione", role: .primary), .init("Annulla", role: .cancel)]
+    ) { [weak self] choice in
+      guard let self, choice == 0, self.canMaintainData() else { return }
+      let index = owner.indexOfSelectedItem - 1
+      guard profiles.indices.contains(index), let profile = self.state.profiles.first(where: { $0.id == profiles[index].id }) else {
+        self.showError(LauncherError.invalid("Seleziona esplicitamente il proprietario dei vecchi dati.")); return
+      }
+      self.reviewMigration(for: profile)
     }
-    let profile = state.profiles[owner.indexOfSelectedItem - 1]
+  }
+  private func confirmMigrationRollback(_ plan: LegacyMigrationPlan) {
+    presentDialog(title: "Archiviare le copie migrate?",
+      message: "Nessun dato sarà eliminato. Gli ambienti copiati saranno archiviati; Documenti, salvataggi e l’originale rimarranno al loro posto. I giochi installati dentro le copie non saranno più avviabili finché non li reimporterai.",
+      actions: [.init("Archivia e annulla migrazione", role: .destructive), .init("Mantieni migrazione", role: .cancel)]
+    ) { [weak self] choice in
+      guard let self, choice == 0, self.canMaintainData() else { return }
+      self.maintain("Archiviazione delle copie migrate…", operation: .rollback(plan, self.state))
+    }
+  }
+  private func reviewMigration(for profile: Profile) {
+    guard canMaintainData() else { return }
     let candidates = state.games.filter {
       ($0.profileIDs == nil || $0.profileIDs!.contains(profile.id))
         && $0.variants.contains(where: { $0.platform == .windows })
-        && !FileManager.default.fileExists(
-          atPath: paths.prefix(profile: profile.id, gameID: $0.id).path)
+        && !FileManager.default.fileExists(atPath: paths.prefix(profile: profile.id, gameID: $0.id).path)
     }
     guard !candidates.isEmpty else {
-      showError(
-        LauncherError.unavailable(
-          "Non ci sono giochi Windows da migrare per questo profilo. Importa i giochi precedenti o sincronizza la libreria; gli ambienti già presenti non vengono sovrascritti."
-        ))
-      return
+      showError(LauncherError.unavailable("Non ci sono giochi Windows da migrare per questo profilo. Importa i giochi precedenti o sincronizza la libreria; gli ambienti già presenti non vengono sovrascritti.")); return
     }
-    let review = NSAlert()
-    review.messageText = "Migrazione per \(profile.name)"
-    review.informativeText =
-      "Giochi: \(candidates.count)\n\n"
-      + candidates.prefix(12).map { $0.title }.joined(separator: "\n")
-      + "\n\nGli originali saranno conservati. Spazio insufficiente o interruzioni non eliminano la sorgente. I giochi e i salvataggi dovranno essere verificati dopo la copia."
-    review.addButton(withTitle: "Crea copie isolate")
-    review.addButton(withTitle: "Annulla")
-    guard review.runModal() == .alertFirstButtonReturn else { return }
-    maintain(
-      "Migrazione dei dati per \(profile.name)…", operation: .migrate(profile, candidates, state))
+    presentDialog(title: "Migrazione per \(profile.name)",
+      message: "Giochi: \(candidates.count)\n\n" + candidates.prefix(12).map { $0.title }.joined(separator: "\n")
+        + "\n\nGli originali saranno conservati. Spazio insufficiente o interruzioni non eliminano la sorgente. I giochi e i salvataggi dovranno essere verificati dopo la copia.",
+      actions: [.init("Crea copie isolate", role: .primary), .init("Annulla", role: .cancel)]
+    ) { [weak self] choice in
+      guard let self, choice == 0, self.canMaintainData() else { return }
+      self.maintain("Migrazione dei dati per \(profile.name)…", operation: .migrate(profile, candidates, self.state))
+    }
   }
 }

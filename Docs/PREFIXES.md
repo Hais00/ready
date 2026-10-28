@@ -94,3 +94,19 @@ scope and the remaining verification gates.
 - Launched games now hold a shared installation lease in the native keeper. Store downloads hold an exclusive writer lease; overlapping target/ancestor/descendant paths conflict while distinct games and multiple readers stay independent. Protocol v2 is tested across native C and Python plus real SessionManager/Wine sessions. All participants must be upgraded together; old v1 download processes must finish before switching. External store clients/updaters that do not participate cannot be coordinated automatically.
 - Domain checks cover independent registry/DLL files, profile-specific AppData, Documents links, recreation survival, lock concurrency, safe paths and original-preserving migration. Separate Windows executables running under Wine also verify registry/folder APIs, private account markers, cross-profile separation and saved-data survival after recreation. Native keeper tests verify independent process termination and retained locks after launcher crashes. Actual game save locations, real-game migration and multi-session behavior remain integration gates.
 - Prefix separation is not claimed to reduce VRAM. VRAM goals are handled by UI teardown and in-process rendering measurements.
+
+## Actual graphical migration and recovery
+
+AppKit owner selection, pre-copy review, copy, awaiting-validation and archival
+rollback have been exercised on isolated synthetic data. A separate test killed
+a real copy after partial files appeared, recovered it through the GUI, retried
+all 6,000 files and verified persistent Documents. Another actual SIGKILL followed
+a rollback rename; the graphical recovery restored the copies and library binding
+without changing the original or persistent save bytes. These tests do not launch
+a migrated commercial game or certify arbitrary mixed-account legacy data.
+
+A fixture with a foreign legacy Windows username retained that user's Documents
+in the original, copied and archived prefix; it did not import them into the
+current Windows user's persistent Documents. That case needs explicit mapping and
+real validation before prefix recreation. No automatic completion or original-data
+deletion follows from a successful copy.

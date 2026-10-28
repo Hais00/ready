@@ -28,6 +28,18 @@ extension AppDelegate {
     window.makeKeyAndOrderFront(nil)
     canvas.refresh()
     checks["initialCanvasAllocated"] = canvas.allocatedTextureBytes > 0
+    // Exercise the new defensive teardown with an active internal panel and a
+    // queued panel, not merely NSApp.modalWindow (which is intentionally nil).
+    presentDialog(
+      title: "Synthetic panel", message: "Retained as a notification during play",
+      content: NSView(frame: NSRect(x: 0, y: 0, width: 120, height: 60)),
+      actions: [.init("Chiudi", role: .cancel)]
+    ) { _ in }
+    presentDialog(
+      title: "Synthetic queued panel", message: "Queued notification during play",
+      actions: [.init("Chiudi", role: .cancel)]
+    ) { _ in }
+    checks["internalPanelPresentBeforeLaunch"] = dialogs.isPresenting
     var started = false
     session.onFinish = { [weak self] message in
       guard let self else { return }
@@ -35,7 +47,7 @@ extension AppDelegate {
       checks["realSessionStarted"] = started
       checks["returnRestoresCanvas"] = self.canvas.allocatedTextureBytes > 0
       checks["returnRestoresWindowContent"] = self.window.contentView === self.canvas
-      checks["notificationRemainsAccessible"] = self.backgroundNotices.count == 1
+      checks["notificationRemainsAccessible"] = self.backgroundNotices.count == 3
       checks["interfaceCommandsRestoredAfterGame"] = self.validateMenuItem(
         NSMenuItem(title: "Settings", action: #selector(AppDelegate.settings), keyEquivalent: ""))
       let report: [String: Any] = [
@@ -64,10 +76,11 @@ extension AppDelegate {
       case .success:
         started = true
         self.showError(LauncherError.failed("Synthetic background store failure"))
-        checks["errorDoesNotCreateModal"] = NSApp.modalWindow == nil
+        checks["errorDoesNotCreateModal"] = NSApp.modalWindow == nil && !self.dialogs.isPresenting
+        checks["activeAndQueuedPanelsDetachedDuringGame"] = !self.dialogs.isPresenting
         checks["errorDoesNotShowLauncher"] = !self.window.isVisible
         checks["errorDoesNotRestoreGPUTexture"] = self.canvas.allocatedTextureBytes == 0
-        checks["errorIsDeferred"] = self.backgroundNotices.count == 1
+        checks["errorIsDeferred"] = self.backgroundNotices.count == 3
         checks["interfaceCommandsDisabledDuringGame"] = !self.validateMenuItem(
           NSMenuItem(title: "Settings", action: #selector(AppDelegate.settings), keyEquivalent: ""))
       case .failure:

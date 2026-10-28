@@ -110,7 +110,13 @@ public enum ControllerInputPolicy {
       validHash(expectedManifest), try fileHash(URL(fileURLWithPath: manifestPath)) == expectedManifest
     else { return nil }
     let bytes = try Data(contentsOf: URL(fileURLWithPath: manifestPath))
-    let manifest = try JSONDecoder().decode(ControllerInputDescriptor.self, from: bytes)
+    guard let document = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else {
+      return nil
+    }
+    let resolved = try RuntimeConfigurationPaths.absoluteControllerManifest(
+      document, root: URL(fileURLWithPath: manifestPath).resolvingSymlinksInPath().deletingLastPathComponent())
+    let manifest = try JSONDecoder().decode(
+      ControllerInputDescriptor.self, from: JSONSerialization.data(withJSONObject: resolved))
     guard manifest.protocolVersion == descriptor.protocolVersion, manifest.providerID == descriptor.providerID,
       manifest.engineProviders == descriptor.engineProviders, manifest.providers == descriptor.providers,
       validHash(provider.wineBinarySHA256), validHash(provider.wineLauncherSHA256),

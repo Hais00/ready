@@ -15,6 +15,10 @@ jobs:
         run: python3 Scripts/test_frontend_snapshot.py
       - name: Project runtime proposal and rollback fixtures
         run: python3 Scripts/test_runtime_integrated_transaction.py
+      - name: Runtime install layout fixtures (no Wine or GPU)
+        run: python3 Scripts/test_runtime_install_layout.py
+      - name: Runtime install transaction crash fixtures (no real payload)
+        run: python3 Scripts/test_runtime_install.py
       - name: Store protocol tests
         run: python3 -m unittest discover -s Tests/StoreBridgeTests -v
       - name: Reversible project SDK cache fixtures
