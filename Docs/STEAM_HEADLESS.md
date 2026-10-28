@@ -9,12 +9,30 @@ from connecting to Steam or setting `SteamAppId`.
 
 The architectural source audit below is distinct from the later, independently
 authored local probes. Those probes load genuine Valve code into owned workers
-under a restrictive sandbox; they do not launch, stop or attach to Steam.app,
-authenticate an account or launch a game. The user's existing native Steam
-process remains outside their ownership. Raw disassembly and external binaries
+under a restrictive sandbox. Later, human-approved tests authenticated a real
+account and verified its licence without starting Steam.app. No game has been
+launched by these probes. Existing unrelated Steam processes remain outside
+their ownership. Raw disassembly and external binaries
 stay on the selected private work volume.
 
 ## Implementation checkpoint
+
+The later native run `5a9e0bc0` succeeds with the full Steam client absent:
+SteamKit QR/logon and exact-app ownership preflight complete, then the genuine
+ARM64 Valve host reports logged-on state, the expected account identity and a
+positive public subscription query. It releases user/pipe handles and exits 0.
+The earlier offline and failure reports below remain separate evidence. This
+result establishes native backend authentication and licence checks; game SDK
+initialization, commercial-game launch and production session integration remain
+open. Windows account authentication remains unverified.
+
+Two source fixes were needed: SteamKit's persistent token login requires its
+remember flag, and the pinned SDK's WebSocket cleanup incorrectly tried to run an
+already-started task synchronously. The latter is corrected in an externally
+built, source-pinned LGPL copy; the Vendor baseline is unchanged. The native
+sandbox also needed the single OS `com.apple.trustd.agent` lookup for certificate
+verification. Account-free HTTPS/SecTrust controls reproduce and isolate that
+permission without disabling certificate validation.
 
 Native ARM64 macOS now has a real two-process transport proof: the host creates a
 global user and listens on a private loopback endpoint; a second owned worker
@@ -48,8 +66,8 @@ separate from this launch gate.
 
 See [native evidence](STEAM_NATIVE_HEADLESS_RESEARCH.md),
 [Windows evidence](STEAM_WINDOWS_HEADLESS_RESEARCH.md) and
-[ownership preflight](STEAM_OWNERSHIP_PREFLIGHT.md). No successful account logon,
-commercial-game launch, full native profile isolation, complete GUI exclusion
+[ownership preflight](STEAM_OWNERSHIP_PREFLIGHT.md). Commercial-game launch,
+full native profile isolation, complete GUI exclusion
 during a real game, or general DRM/anti-cheat compatibility is claimed.
 
 ## What the inspected source actually does
@@ -116,6 +134,24 @@ Version/ABI mismatch must return an explicit unavailable state rather than
 falling back to a different Steam process or an unverified helper.
 
 ## Proposed lifecycle
+
+### One Steam account authorization per launcher profile
+
+Native macOS and Windows/Wine are backend targets of the same profile's Steam
+account. They must not create platform-specific account records or ask for a QR
+merely because the target changes. The QR belongs to a single sign-in flow;
+after approval the resulting credential is retained by the existing profile and
+data-root-scoped Keychain service and handed privately to the selected genuine
+backend. Game ownership checks remain specific to the requested AppID.
+
+Concurrent requests join one profile login, and compatible requests for the same
+game can share the genuine preflight result. Cancellation, account replacement
+and sign-out invalidate subscribers and their credential revision. A backend
+connection failure, runtime error or diagnostic process timeout does not itself
+invalidate the stored account or demand another QR. Only a missing credential,
+explicit sign-out or genuine rejected/expired account authorization calls for a
+new sign-in. Earlier short-lived diagnostic QR processes were not this product
+account lifecycle.
 
 One free coordinator is logically scoped to a canonical profile UUID and an
 unpredictable host generation. It can remain alive across account/library

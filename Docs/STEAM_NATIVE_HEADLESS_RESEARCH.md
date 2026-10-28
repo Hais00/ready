@@ -2,16 +2,40 @@
 
 This work establishes a native ARM64 loader, interface and offline control
 prototype and a real offline host/peer connection using the user's genuine
-external Valve client. It does **not** establish successful native-client
-authentication, ownership of a game, working game-to-host IPC or Steamworks
-compatibility. No real account or token was used in the recorded offline
-controls. The existing, unrelated Steam process remained
-unchanged according to all three dynamic reports.
+external Valve client. A later human-approved run also establishes native-client
+authentication and a genuine positive subscription check for the licensed test
+title. Working game-to-host SDK initialization and game compatibility remain
+unverified. No real account or token was used in the earlier offline controls;
+later authenticated runs are explicitly distinguished below.
 
 Ready's independently authored host/adapter source is separate from proprietary
 Valve assets. GameNative's proprietary bootstrap was inspected privately, never
 executed or copied into Ready's GPL source. No Valve SDK headers or closed
 implementation bodies are included in this document or the repository.
+
+## Later authenticated result
+
+Run `5a9e0bc01798438d841eb3f590e4c0af` completes the genuine SteamKit preflight and
+native logon with no full Steam process before or after the test. The native
+public user interface reports logged-on state and the expected account identity;
+the public Apps adapter confirms the selected subscription. User/pipe release
+succeeds and the worker exits 0. Its retained report SHA-256 is
+`cc6ff36384d9d6118ceb2db303d9e1f93e461b8aeac3c3e26117fdff20723fd3`.
+No account identifier or credential is included in this document.
+
+This supersedes the earlier status of native authentication as unverified; it
+does not rewrite any earlier failure. The SDK cleanup correction described below
+and the native sandbox's single `com.apple.trustd.agent` allowance were used.
+Account-free URLSession/SecTrust controls isolate the latter: baseline certificate
+error -1202 becomes HTTP 200 and valid system trust with that single service.
+No certificate check, securityd permission or original account-data boundary is
+removed.
+
+The short-lived host exits after this proof. Production lifetime leases,
+persistent game supervision, successful Steam API initialization in a game and
+actual gameplay still require separate evidence. The encrypted private cache is
+not assumed to be a reusable login merely because it contains an entry; genuine
+cached-credential calls in later controls can still return unavailable.
 
 ## Exact image and interface boundary
 

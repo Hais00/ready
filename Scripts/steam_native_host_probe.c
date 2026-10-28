@@ -22,8 +22,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include "steam_host_credential.h"
+#include "steam_native_discovery.h"
 extern char **environ;
 static FILE *events;
+static ReadySteamAuthenticatedHostRecord *live_discovery_record;
 typedef struct {int32_t user,id;void *payload;int32_t size;} callback_message;
 _Static_assert(sizeof(callback_message)==24 && offsetof(callback_message,payload)==8 && offsetof(callback_message,size)==16,"Measured ARM64 callback layout");
 static void pump_callbacks(void *library,int pipe,unsigned long milliseconds) {
@@ -41,6 +43,7 @@ static void pump_callbacks(void *library,int pipe,unsigned long milliseconds) {
             if(count<128)fprintf(events,"%s{\"id\":%d,\"size\":%d}",count?",":"",message.id,message.size);
             count++;
             malformed=message.size<0||message.size>1024*1024||(message.size>0&&!message.payload);
+            if(message.id==103&&live_discovery_record)atomic_store(&live_discovery_record->authenticated,0);
             /* Opaque payloads never enter diagnostics. Release on this thread
              * before the next get, including malformed-message handling. */
             release(pipe);
@@ -261,13 +264,27 @@ int main(int argc,char **argv) {
                     uint32_t app_id=real_auth?credential.app_id:480;
                     uint32_t result=0;_Bool logon_attempted=0;
                     if(cached_login) {
+                        typedef _Bool (*account_name_fn)(void *,uint64_t,char *,int32_t);
                         typedef _Bool (*has_cached_fn)(void *,const char *);
                         typedef _Bool (*select_cached_fn)(void *,const char *,_Bool);
+                        account_name_fn get_account=(account_name_fn)checked_method(internal,78,0x8a9104,module.dli_fbase);
                         has_cached_fn has_cached=(has_cached_fn)checked_method(internal,49,0x8a623c,module.dli_fbase);
                         select_cached_fn select_cached=(select_cached_fn)checked_method(internal,50,0x8a63b8,module.dli_fbase);
-                        _Bool available=has_cached&&has_cached(internal,credential.account);
-                        _Bool selected=available&&select_cached&&select_cached(internal,credential.account,1);
-                        fprintf(events,",\"cachedLoginMethodsMatchExactImage\":%s,\"genuinePrivateCachedCredentialsAvailable\":%s,\"genuineCachedAccountSelected\":%s",has_cached&&select_cached?"true":"false",available?"true":"false",selected?"true":"false");
+                        char account_name[65]={0};
+                        /* ConnectCache keys are hashes, not account names.
+                         * Ask the genuine interface for the name belonging to
+                         * the SteamID verified by the prior server preflight. */
+                        _Bool name_ok=get_account&&get_account(internal,expected_id,account_name,sizeof account_name);
+                        size_t name_length=strnlen(account_name,sizeof account_name);
+                        if(!name_length||name_length>=sizeof account_name)name_ok=0;
+                        for(size_t i=0;name_ok&&i<name_length;i++) {
+                            unsigned char c=(unsigned char)account_name[i];
+                            if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='_'))name_ok=0;
+                        }
+                        _Bool available=name_ok&&has_cached&&has_cached(internal,account_name);
+                        _Bool selected=available&&select_cached&&select_cached(internal,account_name,1);
+                        fprintf(events,",\"cachedLoginMethodsMatchExactImage\":%s,\"genuineAccountNameResolved\":%s,\"genuinePrivateCachedCredentialsAvailable\":%s,\"genuineCachedAccountSelected\":%s",get_account&&has_cached&&select_cached?"true":"false",name_ok?"true":"false",available?"true":"false",selected?"true":"false");
+                        memset(account_name,0,sizeof account_name);
                         /* The structural sentinel is NEVER a login token. Only
                          * Valve's actual cached-credential path is invoked. */
                         if(selected){result=log_on(internal,expected_id);logon_attempted=1;}
@@ -307,6 +324,24 @@ int main(int argc,char **argv) {
             }
         }
         fputs("}\n",events);fflush(events);
+        ReadySteamDiscovery *discovery=NULL;
+        ReadySteamAuthenticatedHostRecord discovery_record={.abi_version=1,.owned_host_pid=getpid(),.generation=1};
+        atomic_init(&discovery_record.authenticated,authenticated&&ownership?1:0);
+        void (*stop_discovery)(ReadySteamDiscovery *)=NULL;
+        size_t (*discovery_stats)(ReadySteamDiscovery *,char *,size_t)=NULL;
+        const char *discovery_library=getenv("READY_STEAM_DISCOVERY_LIBRARY");
+        const char *discovery_name=getenv("READY_STEAM_DISCOVERY_SERVICE");
+        const char *discovery_sdk=getenv("READY_STEAM_DISCOVERY_SDK");
+        if(authenticated&&ownership&&discovery_library&&discovery_name&&discovery_sdk) {
+            void *adapter=dlopen(discovery_library,RTLD_NOW|RTLD_LOCAL);
+            typedef int (*start_fn)(const char *,const char *,const char *,const ReadySteamAuthenticatedHostRecord *,ReadySteamDiscovery **);
+            start_fn start=adapter?(start_fn)dlsym(adapter,"ready_steam_discovery_start"):NULL;
+            stop_discovery=adapter?(void(*)(ReadySteamDiscovery *))dlsym(adapter,"ready_steam_discovery_stop"):NULL;
+            discovery_stats=adapter?(size_t(*)(ReadySteamDiscovery *,char *,size_t))dlsym(adapter,"ready_steam_discovery_stats_json"):NULL;
+            int status=start&&stop_discovery?start(discovery_name,argv[1],discovery_sdk,&discovery_record,&discovery):-1;
+            if(status==0)live_discovery_record=&discovery_record;
+            fprintf(events,"{\"privateMachDiscoveryRequested\":true,\"privateMachDiscoveryStarted\":%s,\"status\":%d}\n",discovery?"true":"false",status);fflush(events);
+        }
         const char *hold=getenv("READY_STEAM_PROBE_HOLD_MS");
         unsigned long milliseconds=0;
         if(hold) {
@@ -314,6 +349,15 @@ int main(int argc,char **argv) {
             if(end&&!*end&&candidate<=30000)milliseconds=candidate;
         }
         if(pipe>0)pump_callbacks(library,pipe,milliseconds);
+        if(discovery&&discovery_stats) {
+            char safe_stats[4096]={0};size_t length=discovery_stats(discovery,safe_stats,sizeof safe_stats);
+            if(length>0&&length<sizeof safe_stats&&safe_stats[0]=='{') {
+                fprintf(events,"{\"privateMachDiscoveryStats\":%s}\n",safe_stats);fflush(events);
+            }
+        }
+        atomic_store(&discovery_record.authenticated,0);
+        if(discovery&&stop_discovery)stop_discovery(discovery);
+        live_discovery_record=NULL;
         if(user>0 && pipe>0) {
             typedef void (*release_user_fn)(int,int);
             typedef _Bool (*release_pipe_fn)(int);

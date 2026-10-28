@@ -21,12 +21,22 @@ def runtime_root():
 
 
 def tools_root():
+    value = os.environ.get('READY_STORE_TOOLS_ROOT')
+    if value:
+        path = pathlib.Path(value)
+        if not path.is_absolute() or path.resolve() != path:
+            raise ValueError('READY_STORE_TOOLS_ROOT must be absolute and canonical')
+        return path
     return runtime_root() / 'Tools/StoreBridge'
 
 
 def tool_payload(relative, development_relative):
     """Canonical installed tool path, with the historical source-build fallback."""
     target = tools_root() / relative
-    if target.exists() or BUNDLED or runtime_root() != CODE_ROOT / 'Runtime':
+    if target.exists():
+        # Freeze an immutable version before dotnet resolves sibling assemblies;
+        # a later atomic selector change must not mix two helper generations.
+        return target.resolve(strict=True)
+    if os.environ.get('READY_STORE_TOOLS_ROOT') or BUNDLED or runtime_root() != CODE_ROOT / 'Runtime':
         return target
     return CODE_ROOT / development_relative

@@ -42,7 +42,7 @@ def steam_request(request):
             try:event=json.loads(line)
             except json.JSONDecodeError:continue
             if event.get('type')=='result':result={k:v for k,v in event.items() if k!='type'}
-            elif event.get('type')=='error':raise BridgeError(event.get('code','steam_error'),event.get('message','Steam failed'))
+            elif event.get('type')=='error':raise BridgeError(event.get('code','steam_error'),event.get('message','Steam failed'),details={'steamResult':event.get('steamResult')})
             else:emit(event.pop('type','progress'),**event)
         p.wait(timeout=15)
         if p.returncode or result is None:raise BridgeError('steam_error','Steam helper did not finish successfully')

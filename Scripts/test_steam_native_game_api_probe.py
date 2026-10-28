@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Loader preparation, static genuine-code inspection and own fake-SDK tests.
+
+NEVER dlopen/execute the installed game SDK. Static metadata is read from code
+paths only. Tests load only a newly compiled GPL synthetic dylib on Dati APFS.
+"""
+import hashlib,json,os
+from pathlib import Path
+import subprocess,tempfile,uuid
+ROOT=Path(__file__).resolve().parents[1]
+WORK=Path('/Volumes/Dati APFS/Codex-ready-01a17e79')
+GAME=Path('/Volumes/Dati APFS/SteamLibrary/steamapps/common/Cyberpunk 2077/Cyberpunk2077.app')
+SDK=GAME/'Contents/Frameworks/libsteam_api.dylib'
+EXPECTED='2cbe2533e09d1561051f417d7b8c784481a2efdc4fc9d1274704ee8a7ef50cb1'
+FAKE=r'''
+// SPDX-License-Identifier: GPL-3.0-only
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <string.h>
+static bool initialized;
+__attribute__((constructor)) static void loaded(void){(void)write(STDERR_FILENO,"synthetic-private-library-console",33);const char *p=getenv("READY_FAKE_SDK_MARKER");if(p){int f=open(p,O_CREAT|O_EXCL|O_WRONLY,0600);if(f>=0)close(f);}}
+int32_t SteamAPI_InitFlat(char *error){strcpy(error,"synthetic-private-diagnostic-never-log");initialized=true;return 0;}
+bool SteamAPI_IsSteamRunning(void){return initialized;}
+bool SteamAPI_RestartAppIfNecessary(uint32_t id){(void)id;_exit(77);}
+void SteamAPI_RunCallbacks(void){}
+void SteamAPI_Shutdown(void){initialized=false;}
+static int user_object,apps_object;
+void *SteamAPI_SteamUser_v023(void){return initialized?&user_object:NULL;}
+bool SteamAPI_ISteamUser_BLoggedOn(void *p){return initialized&&p==&user_object&&!getenv("READY_FAKE_LOGGED_OFF");}
+uint64_t SteamAPI_ISteamUser_GetSteamID(void *p){return p==&user_object?76561198000000001ULL:0;}
+void *SteamAPI_SteamApps_v008(void){return initialized?&apps_object:NULL;}
+bool SteamAPI_ISteamApps_BIsSubscribedApp(void *p,uint32_t id){return initialized&&p==&apps_object&&id==1091500&&!getenv("READY_FAKE_NOT_SUBSCRIBED");}
+
+'''
+def sha(p):
+ with p.open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
+def main():
+ assert(WORK/'.ready-external-workspace').read_text().strip()=='ready project work for thread01a17e79'
+ work=Path(tempfile.mkdtemp(prefix='steam-game-api-preparation-',dir=WORK/'tests'));work.chmod(0o700)
+ (work/'.ready-steam-game-api-fixture').write_text('own loader/fake SDK; never execute genuine SDK\n')
+ source=ROOT/'Scripts/steam_native_game_api_probe.c';copy=work/source.name;copy.write_bytes(source.read_bytes())
+ fake=work/'fake-sdk.c';fake.write_text(FAKE)
+ cache=WORK/'cache/steam-game-api-clang';cache.mkdir(mode=0o700,exist_ok=True)
+ env={k:v for k,v in os.environ.items() if not k.startswith(('DYLD_','READY_','STEAM','Steam','SB_'))};env['TMPDIR']=str(WORK/'tmp')+'/'
+ flags=['xcrun','clang','-mmacosx-version-min=14.0','-O2','-Wall','-Wextra','-Werror','-arch','arm64','-arch','x86_64','-fmodules-cache-path='+str(cache)]
+ exe=work/'ready-game-api-probe';library=work/'libOwnSyntheticSteamAPI.dylib'
+ commands=[[*flags,str(copy),'-o',str(exe)],[*flags,'-dynamiclib',str(fake),'-o',str(library)]]
+ for command in commands:subprocess.run(command,env=env,check=True,capture_output=True)
+ checks={};records=[];base=[str(exe),'--library',str(library),'--code-root',str(work),'--expected-sha256',sha(library),'--fixture-only']
+ for arch in ['arm64','x86_64']:
+  marker=work/('own-load-marker-'+arch)
+  context={**env,'READY_STEAM_GAME_API_PROBE':'1','READY_STEAM_IPC_NAMESPACE':uuid.uuid4().hex,'SteamAppId':'1091500','SteamGameId':'1091500','STEAMID':'76561198000000001','READY_FAKE_SDK_MARKER':str(marker)}
+  p=subprocess.run(['/usr/bin/arch','-'+arch,*base],env=context,text=True,capture_output=True,timeout=20);assert p.returncode==65 and not marker.exists();checks[arch+'-missing-explicit-permission-does-not-load']=True
+  for mode in ['exports','init-flat']:
+   p=subprocess.run(['/usr/bin/arch','-'+arch,*base,'--allow-sdk-execution','--mode',mode,'--callback-ms','30'],env=context,text=True,capture_output=True,timeout=20)
+   assert p.returncode==0 and not p.stderr and 'synthetic-private-diagnostic-never-log' not in p.stdout
+   outputs=[json.loads(line) for line in p.stdout.splitlines()];assert len(outputs)==2
+   r=outputs[0]|outputs[1];assert r['fixtureOnly'] and not r['restartCalled'] and not r['gameLaunchRequested'] and r['sdkUnchanged']
+   assert r['exports']['SteamAPI_InitFlat'] and not r['exports']['SteamAPI_Init']
+   if mode=='init-flat':assert r['apiInitialized'] and r['callbackCalls']>0 and r['shutdownCalled'] and r['gameAPIContextAuthenticated'] and r['identityMatches']
+   else:assert not r['initializationAttempted'] and r['callbackCalls']==0
+   checks[arch+'-own-fake-'+mode+'-restart-never-called']=True;records.append({'architecture':arch,'mode':mode,**r})
+  for name,changes in [('wrong-expected-identity',{'STEAMID':'76561198000000002'}),('expected-env-alone-is-not-login',{'READY_FAKE_LOGGED_OFF':'1'}),('missing-subscription',{'READY_FAKE_NOT_SUBSCRIBED':'1'})]:
+   p=subprocess.run(['/usr/bin/arch','-'+arch,*base,'--allow-sdk-execution','--mode','init-flat','--callback-ms','0'],env={**context,**changes},text=True,capture_output=True,timeout=20)
+   assert p.returncode==4 and not p.stderr
+   status=json.loads(p.stdout.splitlines()[-1]);assert not status['gameAPIContextAuthenticated']
+   checks[arch+'-'+name+'-does-not-authenticate']=True
+  assert marker.exists()
+  invalid={**context,'SteamAppId':'0'}
+  p=subprocess.run(['/usr/bin/arch','-'+arch,*base,'--allow-sdk-execution'],env=invalid,text=True,capture_output=True,timeout=20);assert p.returncode==65;checks[arch+'-wrong-app-context-refused']=True
+  bad=base.copy();bad[bad.index('--expected-sha256')+1]='0'*64
+  p=subprocess.run(['/usr/bin/arch','-'+arch,*bad,'--allow-sdk-execution'],env=context,text=True,capture_output=True,timeout=20);assert p.returncode==65;checks[arch+'-changed-sdk-refused']=True
+  bad=base.copy();bad[bad.index('--code-root')+1]=str(work/'not-parent');(work/'not-parent').mkdir(exist_ok=True)
+  p=subprocess.run(['/usr/bin/arch','-'+arch,*bad,'--allow-sdk-execution'],env=context,text=True,capture_output=True,timeout=20);assert p.returncode==65;checks[arch+'-code-root-escape-refused']=True
+ # Genuine SDK: static reads/metadata tools only. No loader command is run on it.
+ assert SDK.is_file() and not SDK.is_symlink() and sha(SDK)==EXPECTED
+ subprocess.run(['/usr/bin/codesign','--verify','--strict',str(SDK)],env=env,check=True,capture_output=True)
+ architectures=subprocess.check_output(['/usr/bin/lipo','-archs',str(SDK)],env=env,text=True).strip().split();assert set(architectures)=={'arm64','x86_64'}
+ symbols=subprocess.check_output(['/usr/bin/nm','-arch','arm64','-gU',str(SDK)],env=env,text=True)
+ names=['SteamAPI_Init','SteamAPI_InitFlat','SteamAPI_IsSteamRunning','SteamAPI_RestartAppIfNecessary','SteamAPI_RunCallbacks','SteamAPI_Shutdown','SteamAPI_SteamUser_v023','SteamAPI_ISteamUser_BLoggedOn','SteamAPI_ISteamUser_GetSteamID','SteamAPI_SteamApps_v008','SteamAPI_ISteamApps_BIsSubscribedApp']
+ exports={name:any(line.split()[-1:] == ['_'+name] for line in symbols.splitlines()) for name in names}
+ assert exports==dict.fromkeys(names,True)|{'SteamAPI_Init':False}
+ exports_by_arch={}
+ for cpu in architectures:
+  listing=subprocess.check_output(['/usr/bin/nm','-arch',cpu,'-gU',str(SDK)],env=env,text=True)
+  exports_by_arch[cpu]={name:any(line.split()[-1:]==['_'+name] for line in listing.splitlines()) for name in names}
+  assert exports_by_arch[cpu]==exports
+ checks['genuine-sdk-static-signature-hash-and-exports-only']=True
+ assert copy.read_bytes()==source.read_bytes()
+ planned={'command':[str(exe),'--allow-sdk-execution','--library',str(SDK),'--code-root',str(GAME),'--expected-sha256',EXPECTED,'--mode','init-flat','--callback-ms','250'],
+          'requiredEnvironment':{'SteamAppId':'1091500','SteamGameId':'1091500','READY_STEAM_GAME_API_PROBE':'1','READY_STEAM_IPC_NAMESPACE':'<same live host namespace>','STEAMID':'<explicit genuine host identity; comparison input only>'},
+          'requiredIndependentPolicy':['Root authenticated host kept online','own child with same scoped IPC namespace/state adaptation','read-only installed game code root','deny Steam/full-client/game execution and unapproved state/IPC','independent parent timeout and loaded-image/process audit'],
+          'genuineSDKExecuted':False,'RootReviewAndGORequiredBeforeExecution':True}
+ (work/'future-owned-child-plan.json').write_text(json.dumps(planned,indent=2)+'\n')
+ report={'schema':1,'fixtureOnly':True,'passed':all(checks.values()),'checks':checks,'checkCount':len(checks),'records':records,'probePath':str(exe),'probeSHA256':sha(exe),'sourceSHA256':sha(source),'testSHA256':sha(Path(__file__)),
+         'genuineSDK':{'path':str(SDK),'sha256':EXPECTED,'bytes':SDK.stat().st_size,'architectures':architectures,'codesignStrictVerified':True,'exports':exports,'exportsByArchitecture':exports_by_arch,'executed':False,'genuineClientAssetsAreOpenSource':False},
+         'commands':commands,'futurePlan':str(work/'future-owned-child-plan.json'),'fixtureRoot':str(work),'gameLaunched':False,'SteamAppLaunched':False,'originalSteamConfigRead':False,'realCredentialsRead':False,'genuineGameAPIWorkingVerified':False}
+ (ROOT/'Evidence/steam-native-game-api-preparation.json').write_text(json.dumps(report,indent=2)+'\n')
+ print(json.dumps({k:report[k] for k in ['passed','checkCount','probePath','probeSHA256','sourceSHA256','futurePlan','genuineGameAPIWorkingVerified']},indent=2))
+if __name__=='__main__':main()

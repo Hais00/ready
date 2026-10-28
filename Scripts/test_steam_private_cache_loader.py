@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 import steam_private_cache_loader as loader
 
@@ -103,6 +104,35 @@ class CacheChecks(unittest.TestCase):
         with self.assertRaises(TypeError):loader.load_private_cached_login(run=self.run)
         stop=threading.Event();stop.set()
         with self.assertRaisesRegex(loader.PrivateCacheError,'cancelled'):loader.load_private_cached_login(cancel=stop)
+
+    def test_explicit_success_reference_and_original_default_are_separate_pins(self):
+        context=object()
+        with mock.patch.object(loader,'_load',return_value=context) as load:
+            self.assertIs(loader.load_private_cached_login(),context)
+            self.assertEqual(load.call_args.args[:3],(loader.RUN,loader.WORK,loader.REPORT_SHA))
+            self.assertFalse(load.call_args.kwargs['require_native_success'])
+            self.assertIs(loader.load_private_cached_login(reference_report=loader.SUCCESS_RUN/'report.json'),context)
+            self.assertEqual(load.call_args.args[:3],(loader.SUCCESS_RUN,loader.WORK,loader.SUCCESS_REPORT_SHA))
+            self.assertTrue(load.call_args.kwargs['require_native_success'])
+
+    def test_unapproved_reference_rejected_before_any_cache_read(self):
+        with mock.patch.object(loader,'_load') as load:
+            with self.assertRaisesRegex(loader.PrivateCacheError,'unapproved_reference'):
+                loader.load_private_cached_login(reference_report=self.run/'report.json')
+            load.assert_not_called()
+
+    def test_success_reference_requires_native_identity_and_subscription_proof(self):
+        with self.assertRaisesRegex(loader.PrivateCacheError,'unverified_native_reference'):
+            loader._load(self.run,self.work,self.report_sha,'b'*64,require_native_success=True)
+        self.report.update(accountAuthenticated=True,existingSteamProcessesUnchanged=True,
+            observations=[{'authenticatedIdentityMatches':True,'genuineSubscriptionObserved':True},
+                          {'authenticated':True,'genuineSubscriptionObserved':True}])
+        self.save_report()
+        context=loader._load(self.run,self.work,self.report_sha,'b'*64,require_native_success=True)
+        try:
+            self.assertTrue(context.safe['referenceNativeAuthenticationVerified'])
+            self.assertFalse(context.safe['cachedNativeAuthenticationVerified'])
+        finally:context.close()
 
 
 if __name__=='__main__':

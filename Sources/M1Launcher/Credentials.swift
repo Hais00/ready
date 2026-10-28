@@ -5,6 +5,24 @@ import LauncherCore
 import Security
 
 enum CredentialVault {
+  enum SteamStatus { case missing, expired, available }
+  /// One Steam account per profile/data root. Backend/platform is never a key.
+  static func steamStatus(_ data: Data?, now: TimeInterval = Date().timeIntervalSince1970) -> SteamStatus {
+    guard let data,
+      let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+      let account = value["username"] as? String, (1...64).contains(account.utf8.count),
+      account.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0)
+        || (97...122).contains($0) || $0 == 95 }),
+      let token = value["refresh_token"] as? String, (1...8192).contains(token.utf8.count),
+      token.utf8.allSatisfy({ (33...126).contains($0) })
+    else { return .missing }
+    // Only an explicitly described REFRESH-token expiry matters. A short-lived
+    // access-token expiry must not discard a still valid account or cause a QR.
+    if let expiry = value["refresh_token_expires_at_epoch"] as? Double, expiry <= now {
+      return .expired
+    }
+    return .available
+  }
   static func query(profile: UUID, store: Store, stateRoot: URL? = nil) -> [String: Any] {
     var service = "app.ready.launcher.\(store.rawValue)"
     if let stateRoot {

@@ -76,12 +76,29 @@ def dotnet():
     if not all((target/name).is_dir() and not (target/name).is_symlink() for name in NAMES):
         SDKCache(target).restore()
     return target/'dotnet'
-def build_steam():
-    exe=dotnet();patch_depot()
-    run(exe,'build',ROOT/'StoreBridge/SteamBridge/SteamBridge.csproj','-c','Release','--nologo')
-    run(exe,'build',ROOT/'StoreBridge/Dependencies/depotdownloader/DepotDownloader/DepotDownloader.csproj','-c','Release','--nologo')
+def build_steam(*,work_root=None,sdk_root=None,tools_store=None,steam_only=False,select_project=True):
+    # The normal source recipe applies the pinned LGPL fix in a private copy,
+    # builds offline and retains a complete version rather than overwriting a
+    # live DLL or quietly continuing to use the old development fallback.
+    from store_steam_tools import build,select_project as select_helper
+    sdk=pathlib.Path(sdk_root) if sdk_root else dotnet().parent
+    workspace=pathlib.Path(work_root or os.environ.get('READY_STORE_BUILD_ROOT',ROOT/'Runtime/Tools/StoreBridge/build'))
+    workspace.mkdir(parents=True,exist_ok=True,mode=0o700)
+    destination=pathlib.Path(tools_store or ROOT/'Runtime/Tools/StoreBridge/Versions')
+    result=build(workspace=workspace.resolve(),sdk_root=sdk.resolve(),tools_store=destination.resolve())
+    if select_project:result['selection']=select_helper(pathlib.Path(result['versionRoot']))
+    if not steam_only:
+        patch_depot()
+        run(sdk/'dotnet','build',ROOT/'StoreBridge/Dependencies/depotdownloader/DepotDownloader/DepotDownloader.csproj','-c','Release','--nologo')
+    return result
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--sources-only',action='store_true');a=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--sources-only',action='store_true');parser.add_argument('--steam-only',action='store_true')
+    parser.add_argument('--work-root',type=pathlib.Path);parser.add_argument('--sdk-root',type=pathlib.Path);parser.add_argument('--tools-store',type=pathlib.Path)
+    parser.add_argument('--no-project-helper-selection',action='store_true');a=parser.parse_args()
+    if a.steam_only:
+        if a.sources_only or not all([a.work_root,a.sdk_root,a.tools_store]):parser.error('--steam-only requires explicit --work-root, --sdk-root and --tools-store; no fetching is performed')
+        print(json.dumps(build_steam(work_root=a.work_root,sdk_root=a.sdk_root,tools_store=a.tools_store,steam_only=True,select_project=not a.no_project_helper_selection),indent=2));return
     sources()
-    if not a.sources_only:install_python();build_steam()
+    if not a.sources_only:
+        install_python();print(json.dumps(build_steam(work_root=a.work_root,sdk_root=a.sdk_root,tools_store=a.tools_store,select_project=not a.no_project_helper_selection),indent=2))
 if __name__=='__main__':main()

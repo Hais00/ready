@@ -183,7 +183,7 @@ def main():
     for name in ['tmp','state']:(run/name).mkdir(mode=0o700)
     executable=run/'ready-steam-native-probe';source=ROOT/'Scripts/steam_native_host_probe.c'
     sources=run/'sources';sources.mkdir(mode=0o700)
-    for item in [source,ROOT/'Scripts/steam_host_credential.h',ROOT/'Scripts/steam_host_credential.py',ROOT/'Scripts/steam_headless_auth_broker.py',ROOT/'Scripts/steam_auth_qr.swift',Path(__file__).resolve()]:
+    for item in [source,ROOT/'Scripts/steam_host_credential.h',ROOT/'Scripts/steam_native_discovery.h',ROOT/'Scripts/steam_host_credential.py',ROOT/'Scripts/steam_headless_auth_broker.py',ROOT/'Scripts/steam_auth_qr.swift',Path(__file__).resolve()]:
         copy=sources/item.name;copy.write_bytes(item.read_bytes());copy.chmod(0o600)
     source_snapshot=sources/source.name
     build=['/usr/bin/clang','-arch',a.architecture,'-O1','-g','-Wall','-Wextra',str(source_snapshot),'-o',str(executable)]

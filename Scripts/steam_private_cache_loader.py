@@ -25,6 +25,12 @@ else:
 WORK = Path('/Volumes/Dati APFS/Codex-ready-01a17e79')
 RUN = WORK / 'retained/research-steam-native/offline-arm64-f51402a25c384c81b4fd25a76b225f14'
 REPORT_SHA = '7485520f23274e48335ca546d9225c3870c3b9a2a741484580cabe13969e11eb'
+SUCCESS_RUN = WORK / 'retained/research-steam-native/offline-arm64-5a9e0bc01798438d841eb3f590e4c0af'
+SUCCESS_REPORT_SHA = 'cc6ff36384d9d6118ceb2db303d9e1f93e461b8aeac3c3e26117fdff20723fd3'
+APPROVED_REFERENCES = {
+    RUN / 'report.json': (REPORT_SHA, False),
+    SUCCESS_RUN / 'report.json': (SUCCESS_REPORT_SHA, True),
+}
 IMAGE_SHA = 'b9d62be2ac64b77dc77e1d19eefcf3880df99495c7db85b30623095310b6a6bd'
 SENTINEL = 'READY_USE_GENUINE_CACHED_LOGIN'
 CACHE_FILES = {'config.vdf', 'local.vdf', 'localconfig.vdf', 'loginusers.vdf', 'roamingconfig.vdf'}
@@ -133,7 +139,7 @@ class CachedLoginInput:
         self.handoff.clear()
 
 
-def _load(run, work, report_sha, image_sha, *, cancel=None):
+def _load(run, work, report_sha, image_sha, *, cancel=None, require_native_success=False):
     """Internal fixture seam. Public entry point fixes every production binding."""
     run = Path(run); work = Path(work)
     if (not run.is_absolute() or run.is_symlink() or run.resolve() != run
@@ -158,6 +164,16 @@ def _load(run, work, report_sha, image_sha, *, cancel=None):
             or report.get('librarySHA256') != image_sha or report.get('libraryUnchanged') is not True
             or not isinstance(namespace, str) or re.fullmatch('[0-9a-f]{32}', namespace) is None):
         raise PrivateCacheError('unbound_authorization')
+    observations = report.get('observations', [])
+    reference_native_success = (report.get('accountAuthenticated') is True
+        and report.get('existingSteamProcessesUnchanged') is True
+        and isinstance(observations, list)
+        and any(isinstance(v, dict) and v.get('authenticatedIdentityMatches') is True
+                and v.get('genuineSubscriptionObserved') is True for v in observations)
+        and any(isinstance(v, dict) and v.get('authenticated') is True
+                and v.get('genuineSubscriptionObserved') is True for v in observations))
+    if require_native_success and not reference_native_success:
+        raise PrivateCacheError('unverified_native_reference')
     client = run / 'state/client'
     fd = _directory(run / 'state'); os.close(fd)
     fd = _directory(client); os.close(fd)
@@ -194,15 +210,21 @@ def _load(run, work, report_sha, image_sha, *, cancel=None):
         'configSourceSHA256': config_sha, 'valveImageSHA256': image_sha,
         'namespaceSHA256': _sha(namespace.encode()), 'singleCacheEntry': True,
         'retainedSteamKitPreflightAuthorized': True, 'freshSteamKitPreflightPerformed': False,
+        'referenceNativeAuthenticationVerified': reference_native_success,
         'cachedNativeAuthenticationVerified': False, 'requiresCachedLoginMode': True,
         'sentinelIsCredential': False}, frame)
 
 
-def load_private_cached_login(*, cancel=None):
+def load_private_cached_login(*, cancel=None, reference_report=None):
     try:
         if cancel is not None and cancel.is_set():
             raise PrivateCacheError('cancelled')
-        context = _load(RUN, WORK, REPORT_SHA, IMAGE_SHA, cancel=cancel)
+        reference = RUN / 'report.json' if reference_report is None else Path(reference_report)
+        if reference not in APPROVED_REFERENCES:
+            raise PrivateCacheError('unapproved_reference')
+        report_sha, require_native_success = APPROVED_REFERENCES[reference]
+        context = _load(reference.parent, WORK, report_sha, IMAGE_SHA, cancel=cancel,
+                        require_native_success=require_native_success)
         if cancel is not None and cancel.is_set():
             context.close()
             raise PrivateCacheError('cancelled')

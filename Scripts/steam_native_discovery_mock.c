@@ -1,0 +1,22 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Own metadata-only mock. Never loads or executes a Valve SDK/client or account. */
+#include "steam_native_discovery.h"
+#include <servers/bootstrap.h>
+#include <mach/mach.h>
+#include <dlfcn.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <time.h>
+static double now(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec+t.tv_nsec/1e9;}
+static int client(const char *name,unsigned operation,unsigned malformed){mach_port_t server=0,receive=0;kern_return_t found=bootstrap_look_up(bootstrap_port,name,&server);if(found){printf("{\"lookupStatus\":%d,\"accountUsed\":false}\n",found);return 2;}mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&receive);union{uint64_t alignment;unsigned char bytes[1024];} buffer;memset(&buffer,0,sizeof buffer);mach_msg_header_t *header=(mach_msg_header_t*)buffer.bytes;header->msgh_bits=MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND,MACH_MSG_TYPE_MAKE_SEND);header->msgh_size=malformed?28:32;header->msgh_remote_port=server;header->msgh_local_port=receive;header->msgh_id=104;memcpy(buffer.bytes+24,&operation,4);uint32_t argument=104;memcpy(buffer.bytes+28,&argument,4);kern_return_t sent=mach_msg(header,MACH_SEND_MSG|MACH_RCV_MSG|MACH_RCV_TIMEOUT,header->msgh_size,sizeof buffer,receive,400,MACH_PORT_NULL);int32_t status=-1,value=0;int terminated=0;unsigned size=0;if(!sent){size=header->msgh_size;if(size>=32){memcpy(&status,buffer.bytes+24,4);memcpy(&value,buffer.bytes+28,4);}if(size==552)terminated=memchr(buffer.bytes+32,0,512)!=NULL;mach_msg_destroy(header);}printf("{\"lookupStatus\":%d,\"machStatus\":%d,\"replyBytes\":%u,\"status\":%d,\"value\":%d,\"PIDAlive\":%s,\"pathTerminated\":%s,\"accountUsed\":false}\n",found,sent,size,status,value,value>0&&!kill(value,0)?"true":"false",terminated?"true":"false");size_t(*diagnostic)(char*,size_t)=dlsym(RTLD_DEFAULT,"ready_steam_discovery_redirect_stats_json");if(diagnostic){char json[2048];size_t n=diagnostic(json,sizeof json);if(n){fwrite(json,1,n,stdout);fputc('\n',stdout);}}mach_port_deallocate(mach_task_self(),server);mach_port_destroy(mach_task_self(),receive);return sent?3:0;}
+int main(int argc,char **argv){
+ if(argc>=3&&!strcmp(argv[1],"--client"))return client(argv[2],argc>3?(unsigned)strtoul(argv[3],NULL,10):14,argc>4?1:0);
+ if(argc!=8||strcmp(argv[1],"--host"))return 64;void *lib=dlopen(argv[2],RTLD_NOW|RTLD_LOCAL);if(!lib)return 65;
+ int(*start)(const char*,const char*,const char*,const ReadySteamAuthenticatedHostRecord*,ReadySteamDiscovery**)=dlsym(lib,"ready_steam_discovery_start");void(*stop)(ReadySteamDiscovery*)=dlsym(lib,"ready_steam_discovery_stop");if(!start||!stop)return 65;
+ ReadySteamAuthenticatedHostRecord record={.abi_version=1,.owned_host_pid=getpid(),.generation=1};atomic_init(&record.authenticated,0);ReadySteamDiscovery *service=NULL;int denied=start(argv[3],argv[4],argv[5],&record,&service);atomic_store(&record.authenticated,1);record.owned_host_pid=getpid()+1;int owner=start(argv[3],argv[4],argv[5],&record,&service);record.owned_host_pid=getpid();int global=start("com.valvesoftware.steam.ipctool",argv[4],argv[5],&record,&service);int result=start(argv[3],argv[4],argv[5],&record,&service);if(result)return 66;ReadySteamDiscovery *duplicate=NULL;int collision=start(argv[3],argv[4],argv[5],&record,&duplicate);FILE *ready=fopen(argv[6],"w");if(!ready){stop(service);return 67;}fprintf(ready,"{\"pid\":%d,\"authFalseRejected\":%s,\"wrongOwnerRejected\":%s,\"globalNameRejected\":%s,\"collisionRejected\":%s,\"testingBuild\":true,\"accountAuthenticated\":false}\n",getpid(),denied==1?"true":"false",owner==2?"true":"false",global==3?"true":"false",collision==5?"true":"false");fclose(ready);
+ double end=now()+20;while(now()<end){FILE *f=fopen(argv[7],"r");if(f){char command[16]={0};fread(command,1,15,f);fclose(f);if(!strncmp(command,"quit",4))break;atomic_store(&record.authenticated,!strncmp(command,"restore",7)?1:0);}usleep(10000);}size_t(*stats)(ReadySteamDiscovery*,char*,size_t)=dlsym(lib,"ready_steam_discovery_stats_json");if(stats){char json[4096],path[4096];size_t n=stats(service,json,sizeof json);if(n&&snprintf(path,sizeof path,"%s.stats.json",argv[6])<(int)sizeof path){FILE*f=fopen(path,"w");if(f){fwrite(json,1,n,f);fclose(f);}}}stop(service);dlclose(lib);return 0;
+}

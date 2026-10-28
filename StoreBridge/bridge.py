@@ -22,7 +22,16 @@ AMAZON_DEVICE = "A2UMVHOX7UP4V7"
 AMAZON_UA = "com.amazon.agslauncher.win/3.0.9202.1"
 
 class BridgeError(Exception):
-    def __init__(self, code, message): self.code, self.message = code, message
+    def __init__(self, code, message, details=None):
+        self.code, self.message = code, message
+        # Exact rejection codes distinguish invalid credentials from transient
+        # connection failures. Never forward arbitrary helper diagnostics here.
+        value = details.get('steamResult') if isinstance(details, dict) else None
+        allowed = {'Expired','Revoked','InvalidPassword','AccessDenied','AccountDisabled',
+                   'AccountLogonDenied','AccountLoginDeniedNeedTwoFactor','AccountLockedDown',
+                   'NoConnection','Timeout','ConnectFailed','ServiceUnavailable','RateLimitExceeded',
+                   'TryAnotherCM','RemoteDisconnect','OK','Fail','Unknown'}
+        self.details = {'steamResult': value} if isinstance(value,str) and value in allowed else {}
 
 def emit(kind, **data):
     print(json.dumps({"type": kind, **data}, ensure_ascii=False, separators=(",", ":")), flush=True)
@@ -251,7 +260,7 @@ def dispatch(r,http=None):
     operation={'auth_start':'auth_begin','install':'download'}.get(operation,operation)
     if operation!=r.get('operation'):r={**r,'operation':operation}
     if 'authState' not in o and 'state' in o:o={**o,'authState':o['state']}
-    if operation=='capabilities':return {'protocolVersion':1,'stores':['steam','epic','gog','amazon'],'operations':['auth_begin','auth_complete','refresh','library','download','launch_info','native_inspect'],'nativeArchitecturePolicy':'unknown until local Mach-O inspection','credentialsTransport':'stdin/stdout only; caller must store in Keychain'}
+    if operation=='capabilities':return {'protocolVersion':1,'stores':['steam','epic','gog','amazon'],'operations':['auth_begin','auth_complete','refresh','library','download','launch_info','authorize_game','native_inspect'],'operationStores':{'authorize_game':['steam']},'nativeArchitecturePolicy':'unknown until local Mach-O inspection','credentialsTransport':'stdin/stdout only; caller must store in Keychain'}
     if operation=='native_inspect':return inspect_native(require(o.get('path')))
     if store=='steam':
         from backend import steam_request
@@ -285,7 +294,7 @@ def main():
         result=dispatch(request)
         if op=='auth_begin' and request.get('store')!='steam':emit('auth_url',**result)
         else:emit('result',**result)
-    except BridgeError as e:emit('error',code=e.code,message=e.message);return 1
+    except BridgeError as e:emit('error',code=e.code,message=e.message,**e.details);return 1
     except KeyboardInterrupt:emit('error',code='cancelled',message='Store operation cancelled');return 130
     except (json.JSONDecodeError,UnicodeDecodeError):emit('error',code='invalid_request',message='Input must be one UTF-8 JSON object');return 1
     except Exception:

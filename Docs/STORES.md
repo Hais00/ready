@@ -137,3 +137,53 @@ Authentication temp directories are created beneath a guardian-owned private 070
 `StoreClient(project:stateRoot:)` optionally passes `READY_DATA_ROOT`. It changes account/cache/install-lock state paths, not the project/source/runtime root. The shared Python resolver requires an absolute owned private directory with no symlink components; the default remains `~/Library/Application Support/M1Launcher`. Custom roots also get a distinct Keychain service namespace, while an explicit default root preserves the existing production service. Profiles remain separate within each namespace.
 
 Validation: `Scripts/test_store_client.py` compiles the actual production Swift client and exercises Foundation `Process` with a local Python fixture and an injected memory vault. Its 16 checks cover cancellation before launch and after terminal queuing, ordered active-state callbacks, crashes/terminal failures, fragmented JSON, auth URL completion, pipe and vault failures, cancellation of stubborn children/grandchildren, isolation of a concurrent job, and pure Keychain query namespace comparisons. No Keychain read/write or real store account is used. `Evidence/store-client-tests.json` records the result. Python tests additionally exercise the real backend installation-lease descriptors during forced cancellation, verify the lease remains busy until all download workers stop, and verify guardian-owned credential temp files disappear before completion.
+
+## Corrected central Steam helper
+
+The normal SteamBridge recipe now applies the pinned LGPL SteamKit WebSocket
+cleanup fix to an owned source copy before compiling. The normal upstream
+checkout stays unchanged. The resulting version retains Ready and patched
+SteamKit sources, the original modified file, patch/lock, licenses, exact NuGet
+archive hashes, build command and file/mode inventory. The executable runtime
+contains only the pinned .NET host/shared runtime, not SDK build tools.
+
+For an offline Steam-only build using the already verified SDK and package cache:
+
+```sh
+python3 Scripts/store_bootstrap.py --steam-only \
+  --work-root /absolute/owned/work/build \
+  --sdk-root /absolute/verified/dotnet-sdk-copy \
+  --tools-store /absolute/owned/work/retained/store-tools
+```
+
+This mode performs no source/SDK/Python download. It publishes a new immutable
+version rather than overwriting a helper DLL. Add
+`--no-project-helper-selection` to build a reviewable candidate only. The normal
+project's existing `Runtime/Tools/StoreBridge/SteamBridge` convention selects the
+version through an atomic directory link; a private selection history retains
+the prior target and the old development build remains intact. The locator
+resolves that link before starting .NET so sibling assemblies cannot switch
+versions during startup. The version and manifest can be checked with
+`python3 Scripts/store_steam_tools.py verify /absolute/version`.
+
+`READY_STORE_TOOLS_ROOT=/absolute/version` explicitly selects a complete central
+tools view independently of `READY_RUNTIME_ROOT`. Its default remains
+`<runtimeRoot>/Tools/StoreBridge`. An explicit missing tools root does not fall
+back to an older development helper. Ready uses the same native helper and
+profile-scoped credential boundary for Windows and macOS requests; these tools
+are not copied into Wine prefixes. Changing this tools selection does not edit
+an engine configuration, a saved runtime location or any account.
+
+To reverse an owned project selection, use
+`python3 Scripts/store_steam_tools.py rollback-project /absolute/selection-history.json`.
+It verifies that the current selector still matches that record, restores the
+previous version or the original development fallback, and retains code and the
+old selector. An explicit environment override continues to select its exact
+version until the caller changes that override.
+
+The current local view may reference the existing Python/download-engine code
+through explicit read-only-use aliases; their original locations and bytes are
+not moved or deleted. That view is local-only. Python/Homebrew portability,
+complete .NET/NuGet corresponding-source/notices and whole-tools binary
+distribution approval remain separate work. The manifest does not label those
+closures approved or include any proprietary Valve/Apple assets.

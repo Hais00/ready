@@ -20,12 +20,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   var session: SessionManager!
   var controllerObserver: NSObjectProtocol?
   var storeClient: StoreClient!
+  var steamAccounts: SteamAccountCoordinator!
   lazy var dialogs = ReadyDialogPresenter(window: { [weak self] in self?.window })
   var qrDialog: UUID?
   var qrImage: NSImageView?
   var steamAuthDiagnostics: SteamAuthDiagnostics?
   var authenticationSession: UUID?
   var authenticationRequest: UUID?
+  var steamAuthenticationRequest: UUID?
   var pendingLaunch: UUID?
   var maintenanceInProgress = false
   var backgroundNotices = [String]()
@@ -148,6 +150,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   }
   func cancelAuthentication(closePanel: Bool = true) {
     authenticationSession = nil
+    if let request = steamAuthenticationRequest {
+      MainActor.assumeIsolated { steamAccounts?.cancel(request) }
+    }
+    steamAuthenticationRequest = nil
     if let request = authenticationRequest { storeClient?.cancel(request) }
     authenticationRequest = nil
     if closePanel {
@@ -210,7 +216,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       self?.restoreLauncher(message)
       self?.dialogs.attach()
     }
+    MainActor.assumeIsolated {
+      if let steamAccounts { for profile in state.profiles { steamAccounts.cancel(profile: profile.id) } }
+    }
+    storeClient?.cancelAll()
     storeClient = StoreClient(project: project, stateRoot: paths.root, runtimeRoot: runtimeRoot)
+    MainActor.assumeIsolated { steamAccounts = SteamAccountCoordinator(client: storeClient) }
   }
   func setupMenu() {
     let menu = NSMenu()
@@ -391,6 +402,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard profiles.indices.contains(pick.indexOfSelectedItem),
           self.state.profiles.contains(where: { $0.id == profiles[pick.indexOfSelectedItem].id })
         else { return }
+        MainActor.assumeIsolated { self.steamAccounts.cancel(profile: self.state.activeProfile) }
         self.state.activeProfile = profiles[pick.indexOfSelectedItem].id
         do { try self.persist() } catch { self.showError(error) }
       } else {
@@ -413,6 +425,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return
           }
           let profile = Profile(name: name)
+          MainActor.assumeIsolated { self.steamAccounts.cancel(profile: self.state.activeProfile) }
           self.state.profiles.append(profile)
           self.state.activeProfile = profile.id
           do { try self.persist() } catch { self.showError(error) }
@@ -647,14 +660,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       content: pick,
       actions: [
         .init("Accedi", role: .primary), .init("Sincronizza libreria"),
-        .init("Annulla", role: .cancel),
+        .init("Annulla", role: .cancel), .init("Disconnetti Steam", role: .destructive),
       ]
     ) { [weak self] choice in
-      guard let self, choice == 0 || choice == 1 else { return }
+      guard let self, choice == 0 || choice == 1 || choice == 3 else { return }
       guard !self.maintenanceInProgress, !self.session.running, self.pendingLaunch == nil,
         self.state.activeProfile == profile
       else {
         self.showError(LauncherError.busy)
+        return
+      }
+      if choice == 3 {
+        self.cancelAuthentication()
+        MainActor.assumeIsolated { self.steamAccounts.signOut(profile: profile) }
+        self.canvas.message = "Steam scollegato da questo profilo."
+        self.canvas.refresh()
         return
       }
       self.beginStoreConnection(
@@ -670,15 +690,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     canvas.refresh()
     let authentication = UUID()
     authenticationSession = authentication
-    authenticationRequest = storeClient.request(
-      operation: "auth_begin", store: store, profile: profile
-    ) {
+    let handleEvent: ([String: Any]) -> Void = {
       [weak self] event in
       guard let self, self.authenticationSession == authentication else { return }
       switch event["type"] as? String {
       case "error":
         self.authenticationSession = nil
         self.authenticationRequest = nil
+        self.steamAuthenticationRequest = nil
         if let id = self.qrDialog { self.dismissDialog(id) }
         self.qrDialog = nil
         self.qrImage = nil
@@ -741,12 +760,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       case "result":
         self.authenticationSession = nil
         self.authenticationRequest = nil
+        self.steamAuthenticationRequest = nil
         if let id = self.qrDialog { self.dismissDialog(id) }
         self.qrDialog = nil
         self.qrImage = nil
         self.syncStore(store, profile: profile)
       default: break
       }
+    }
+    if store == .steam {
+      steamAuthenticationRequest = MainActor.assumeIsolated {
+        steamAccounts.authenticate(profile: profile, event: handleEvent)
+      }
+    } else {
+      authenticationRequest = storeClient.request(
+        operation: "auth_begin", store: store, profile: profile, event: handleEvent)
     }
   }
   func showQR(_ value: String) {

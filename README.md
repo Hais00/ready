@@ -15,6 +15,7 @@ Repository: https://github.com/Hais00/ready (currently private). Our code is **G
 - Persistent profile Documents/Saved Games; isolated game/profile AppData and registry. Prefix recreation preserves personal data and retains a rollback copy. Legacy single-prefix migration never deletes its source automatically.
 - Automatic renderer selection uses runtime availability and verification evidence, exact game/runtime rules when available, and advanced overrides. No arbitrary simultaneous loading of DXVK and D3DMetal.
 - Store tokens are stored in the macOS Keychain, scoped to the launcher profile. No telemetry.
+- A single Steam account sign-in serves native macOS and Windows/Wine targets in the same profile. The account coordinator reuses that profile's Keychain entry, joins concurrent login requests and shares exact-game preflight requests; ordinary network/backend failures do not demand a new QR. Thirteen coordinator process checks, sixteen StoreClient checks and sixty-seven bridge checks cover this account flow. Authenticated game-worker handoff and gameplay remain separate integration gates.
 
 See [interface behavior and verification](Docs/INTERFACE.md), [local runtime installation](Docs/LOCAL_RUNTIME_INSTALLER.md), [build/test storage](Docs/BUILD_STORAGE.md), [portable frontend packaging](Docs/FRONTEND_PACKAGING.md), [requirements and evidence gates](Docs/REQUIREMENTS.md), [prefix architecture](Docs/PREFIXES.md), [store integration](Docs/STORES.md), [overlay](Docs/OVERLAY.md), and [current work state](Docs/STATUS.md).
 

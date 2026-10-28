@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import Darwin
+import CryptoKit
 import Foundation
 import LauncherCore
 
@@ -8,21 +9,30 @@ final class StoreClient {
   struct CredentialAccess {
     var load: (UUID, Store) -> Data?
     var save: (Data, UUID, Store) throws -> Void
+    var remove: (UUID, Store) -> Void = { _, _ in }
     static func keychain(stateRoot: URL? = nil) -> Self {
       Self(
         load: { CredentialVault.load(profile: $0, store: $1, stateRoot: stateRoot) },
-        save: { try CredentialVault.save($0, profile: $1, store: $2, stateRoot: stateRoot) })
+        save: { try CredentialVault.save($0, profile: $1, store: $2, stateRoot: stateRoot) },
+        remove: { CredentialVault.remove(profile: $0, store: $1, stateRoot: stateRoot) })
     }
   }
   private final class RequestState {
     let id: UUID
     let callback: ([String: Any]) -> Void
+    let store: Store
+    let profile: UUID
+    let accountEpoch: UUID
+    var credentialFingerprint: Data?
     var cancelled = false
     var terminationRequested = false
     var process: Process?
-    init(id: UUID, callback: @escaping ([String: Any]) -> Void) {
+    init(id: UUID, store: Store, profile: UUID, accountEpoch: UUID, callback: @escaping ([String: Any]) -> Void) {
       self.id = id
       self.callback = callback
+      self.store = store
+      self.profile = profile
+      self.accountEpoch = accountEpoch
     }
   }
   private enum Failure: Error {
@@ -46,10 +56,42 @@ final class StoreClient {
   private let workerQueue: DispatchQueue
   private var requests = [UUID: RequestState]()
   private var pendingRequests = Set<UUID>()
+  private var steamEpochs = [UUID: UUID]()
+  private var steamFingerprints = [UUID: Data]()
+  private var steamRevisions = [UUID: UUID]()
+  private var steamRejectedFingerprints = [UUID: Data]()
   // A callback may synchronously call cancel/hasActiveRequests. Keeping this
   // recursive lock through delivery makes cancel a barrier against late events.
   private let lock = NSRecursiveLock()
   var hasActiveRequests: Bool { withLock { !pendingRequests.isEmpty } }
+
+  func steamCredentialStatus(profile: UUID) -> CredentialVault.SteamStatus {
+    withLock { steamStatus(credentials.load(profile, .steam), profile: profile) }
+  }
+  private func steamStatus(_ data: Data?, profile: UUID) -> CredentialVault.SteamStatus {
+    if let data, steamRejectedFingerprints[profile] == Data(SHA256.hash(data: data)) { return .expired }
+    return CredentialVault.steamStatus(data)
+  }
+  static func isSteamAuthenticationRejection(_ value: [String: Any]) -> Bool {
+    let code = value["code"] as? String ?? ""
+    return ["authentication_required", "auth_required"].contains(code)
+      || (code == "steam_login_failed" && ["Expired", "Revoked", "InvalidPassword", "AccessDenied",
+        "AccountDisabled", "AccountLogonDenied", "AccountLockedDown", "AccountLoginDeniedNeedTwoFactor"]
+        .contains(value["steamResult"] as? String ?? ""))
+  }
+  /// Opaque local revision only; the credential digest never leaves this client.
+  func steamCredentialRevision(profile: UUID) -> UUID? {
+    withLock {
+      guard let data = credentials.load(profile, .steam),
+        steamStatus(data, profile: profile) == .available else { return nil }
+      let fingerprint = Data(SHA256.hash(data: data))
+      if steamFingerprints[profile] != fingerprint {
+        steamFingerprints[profile] = fingerprint
+        steamRevisions[profile] = UUID()
+      }
+      return steamRevisions[profile]
+    }
+  }
 
   init(
     project: URL, stateRoot: URL? = nil, runtimeRoot: URL? = nil, credentialAccess: CredentialAccess? = nil,
@@ -72,7 +114,11 @@ final class StoreClient {
     event: @escaping ([String: Any]) -> Void
   ) -> UUID {
     let id = UUID()
-    let state = RequestState(id: id, callback: event)
+    let epoch = withLock { () -> UUID in
+      if steamEpochs[profile] == nil { steamEpochs[profile] = UUID() }
+      return steamEpochs[profile]!
+    }
+    let state = RequestState(id: id, store: store, profile: profile, accountEpoch: epoch, callback: event)
     withLock {
       requests[id] = state
       pendingRequests.insert(id)
@@ -89,6 +135,7 @@ final class StoreClient {
     DispatchQueue.main.async { [self] in
       withLock {
         guard !state.cancelled else { return }
+        guard state.store != .steam || steamEpochs[state.profile] == state.accountEpoch else { return }
         state.callback(safe)
       }
     }
@@ -106,15 +153,26 @@ final class StoreClient {
           pendingRequests.remove(state.id)
         }
         guard !state.cancelled else { return }
+        guard store != .steam || steamEpochs[profile] == state.accountEpoch else { return }
         var value = terminal ?? ["type": "error", "message": (failure ?? .incomplete).message]
+        if store == .steam, let fingerprint = state.credentialFingerprint {
+          let current = credentials.load(profile, .steam).map { Data(SHA256.hash(data: $0)) }
+          if current != fingerprint {
+            value = ["type": "error", "code": "credentials_changed", "message": "L’account Steam è cambiato durante la richiesta."]
+          }
+        }
         if value["type"] as? String == "result",
           let refreshed = value["credentials"] as? [String: Any], !refreshed.isEmpty
         {
           do {
             try credentials.save(JSONSerialization.data(withJSONObject: refreshed), profile, store)
+            if store == .steam { steamRejectedFingerprints.removeValue(forKey: profile) }
           } catch {
             value = ["type": "error", "message": "Impossibile salvare l’account nel Portachiavi."]
           }
+        }
+        if store == .steam, let fingerprint = state.credentialFingerprint, value["type"] as? String == "error" {
+          if Self.isSteamAuthenticationRejection(value) { steamRejectedFingerprints[profile] = fingerprint }
         }
         value.removeValue(forKey: "credentials")
         state.callback(value)
@@ -154,7 +212,11 @@ final class StoreClient {
     }
     guard !withLock({ state.cancelled }) else { return }
     do {
-      let account = credentials.load(profile, store).flatMap {
+      let credentialData = credentials.load(profile, store)
+      if store == .steam && operation != "auth_begin" && operation != "auth_start" {
+        withLock { state.credentialFingerprint = credentialData.map { Data(SHA256.hash(data: $0)) } }
+      }
+      let account = credentialData.flatMap {
         try? JSONSerialization.jsonObject(with: $0)
       } as? [String: Any] ?? [:]
       let request: [String: Any] = [
@@ -240,6 +302,23 @@ final class StoreClient {
       for state in requests.values {
         state.cancelled = true
         terminate(state)
+      }
+    }
+  }
+  /// Account switches/logout invalidate queued callbacks and credential saves,
+  /// including auth results which have already left the worker process.
+  func invalidateSteamAccount(profile: UUID, removeStored: Bool = false) {
+    withLock {
+      steamEpochs[profile] = UUID()
+      steamFingerprints.removeValue(forKey: profile)
+      steamRevisions.removeValue(forKey: profile)
+      for state in requests.values where state.store == .steam && state.profile == profile {
+        state.cancelled = true
+        terminate(state)
+      }
+      if removeStored {
+        credentials.remove(profile, .steam)
+        steamRejectedFingerprints.removeValue(forKey: profile)
       }
     }
   }
