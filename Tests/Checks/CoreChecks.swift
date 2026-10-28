@@ -274,7 +274,10 @@ public final class CoreChecks {
     var variant = GameVariant(
       id: "w", platform: .windows, executable: alias.appendingPathComponent("bin/game.exe").path,
       installationRoot: alias.path, installed: true)
-    try XCTAssertEqual(try variant.installationDirectory(), game)
+    // URL directory metadata/trailing slash differs between Foundation SDKs.
+    // The contract is the resolved filesystem location, not URL representation.
+    try XCTAssertEqual(
+      try variant.installationDirectory().path, game.resolvingSymlinksInPath().path)
     variant.installationRoot = "/"
     XCTAssertThrowsError(try variant.installationDirectory())
     variant.installationRoot = temporary.appendingPathComponent("missing").path
