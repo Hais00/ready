@@ -13,6 +13,7 @@ public enum LocalDiscovery {
     let platform: GamePlatform = exe.pathExtension.lowercased() == "exe" ? .windows : .macOS
     let variant = GameVariant(
       id: platform.rawValue, platform: platform, architecture: arch, executable: exe.path,
+      installationRoot: isApp ? url.path : exe.deletingLastPathComponent().path,
       installed: true, verification: "Header del binario locale verificato")
     var game = Game(
       id: "local:" + UUID().uuidString, store: .local, storeID: exe.path,
@@ -61,7 +62,7 @@ public enum LocalDiscovery {
               variants.append(
                 .init(
                   id: "mac:" + file.lastPathComponent, platform: .macOS, architecture: a,
-                  executable: exe.path, installed: true,
+                  executable: exe.path, installationRoot: gameDir.path, installed: true,
                   verification: "Binario installato verificato"))
             }
           }
@@ -72,7 +73,7 @@ public enum LocalDiscovery {
               .init(
                 id: "win:" + file.lastPathComponent, platform: .windows,
                 architecture: (try? ArchitectureProbe.inspect(file)) ?? .unknown,
-                executable: file.path, installed: true,
+                executable: file.path, installationRoot: gameDir.path, installed: true,
                 verification: "Eseguibile trovato; conferma il programma di avvio"))
           }
         }

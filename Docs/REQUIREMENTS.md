@@ -5,7 +5,7 @@ The goal remains the complete native macOS launcher requested by the user. No ga
 | Requirement | Required evidence | Current state |
 | --- | --- | --- |
 | Latest Wine development/beta sources and usable runtime | pinned source hash; wine --version; Windows synthetic executables | Wine 11.20 built from source; real PE64 and PE32 Win32/DXMT probes pass; commercial games remain unverified |
-| Latest Apple GPTK beta | authenticated download, version, working DX11/DX12 probes | 4.0 beta 3 downloaded; DLL/framework loading investigated; genuine DX12 device/rendering not verified |
+| Latest Apple GPTK beta | authenticated download, version, working DX11/DX12 probes | 4.0 beta 3 local evaluation passes DX12 device, buffer/clear/shader GPU readback and 600-frame presentation with WineCX11.19; consumer/default use and redistribution disabled |
 | Latest Vulkan-to-Metal renderer | Mesa/KosmicKrisp source; Vulkan runtime/device probe; presentation test | Mesa/KosmicKrisp 26.3.0-rc2 and MoltenVK 1.4.2 installed/versioned; ARM64/x64 buffer and Wine presentation probes pass |
 | Reference UX | native app screenshot compared with attachment; controller focus navigation | native Metal UI rendered and visually checked; physical-controller validation open |
 | Minimal graphics memory during play | frontend texture/drawable teardown; measured before/during/after | canvas texture 15,078,400 → 0 bytes; process Metal allocation about 47 MB → 0.74 MB in local probe |

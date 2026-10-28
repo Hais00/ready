@@ -5,7 +5,23 @@ from bridge import BridgeError, ROOT, emit, require, PUBLIC_CLIENT_IDS, inspect_
 
 TOOLS=ROOT/'Runtime/Tools/StoreBridge'
 LEGENDARY_CACHE=('installed.json','metadata','manifests')
-PROFILE_ROOT=pathlib.Path.home()/'Library/Application Support/M1Launcher/Profiles'
+from state_paths import state_root
+PROFILE_ROOT=state_root()/'Profiles'
+def supervised():
+    return os.getenv('READY_STORE_SUPERVISED')=='1' and os.getenv('READY_STORE_PROCESS_GROUP')==str(os.getpgrp())
+
+def stop_child(process):
+    if process.poll() is not None:return
+    with contextlib.suppress(ProcessLookupError):
+        if supervised():process.terminate()
+        else:os.killpg(process.pid,signal.SIGTERM)
+    with contextlib.suppress(subprocess.TimeoutExpired):process.wait(timeout=5)
+    if process.poll() is None:
+        with contextlib.suppress(ProcessLookupError):
+            if supervised():process.kill()
+            else:os.killpg(process.pid,signal.SIGKILL)
+        with contextlib.suppress(subprocess.TimeoutExpired):process.wait(timeout=5)
+
 def transfer_legendary_cache(source,dest):
     dest.mkdir(parents=True,exist_ok=True,mode=0o700)
     for name in LEGENDARY_CACHE:
@@ -18,7 +34,7 @@ def steam_request(request):
     dotnet=TOOLS/'dotnet/dotnet';helper=ROOT/'StoreBridge/SteamBridge/bin/Release/net10.0/ReadySteamBridge.dll'
     if not dotnet.exists() or not helper.exists():raise BridgeError('backend_missing','Build the open Steam bridge with Scripts/store_bootstrap.py first')
     env={**os.environ,'DOTNET_CLI_TELEMETRY_OPTOUT':'1','DOTNET_GENERATE_ASPNET_CERTIFICATE':'false'}
-    p=subprocess.Popen([str(dotnet),str(helper)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,env=env,start_new_session=True)
+    p=subprocess.Popen([str(dotnet),str(helper)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,env=env,start_new_session=not supervised())
     p.stdin.write(json.dumps(request)+'\n');p.stdin.close();result=None
     try:
         for line in p.stdout:
@@ -31,11 +47,7 @@ def steam_request(request):
         if p.returncode or result is None:raise BridgeError('steam_error','Steam helper did not finish successfully')
         return result
     finally:
-        if p.poll() is None:
-            with contextlib.suppress(ProcessLookupError):os.killpg(p.pid,signal.SIGTERM)
-            with contextlib.suppress(subprocess.TimeoutExpired):p.wait(timeout=5)
-            if p.poll() is None:
-                with contextlib.suppress(ProcessLookupError):os.killpg(p.pid,signal.SIGKILL)
+        stop_child(p)
         if p.stdout:p.stdout.close()
 
 def profile_config(request):
@@ -159,7 +171,7 @@ def download(request):
 
 def _download_locked(request,config,creds,path,target_identity,inherited_locks):
     from install_lock import verify_installation
-    with tempfile.TemporaryDirectory(prefix='ready-auth-') as temp:
+    with tempfile.TemporaryDirectory(prefix='ready-auth-',dir=os.getenv('READY_STORE_SECRET_PARENT') if supervised() else None) as temp:
         secret_dir=pathlib.Path(temp);secret_dir.chmod(0o700)
         args,env,stdin,path=prepare_download(request,config,secret_dir)
         refreshed=None
@@ -167,7 +179,7 @@ def _download_locked(request,config,creds,path,target_identity,inherited_locks):
         p=None
         try:
             verify_installation(path,target_identity)
-            p=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,env=env,start_new_session=True,bufsize=1,pass_fds=inherited_locks)
+            p=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,env=env,start_new_session=not supervised(),bufsize=1,pass_fds=inherited_locks)
             if stdin:p.stdin.write(stdin)
             p.stdin.close()
             last=-1.0
@@ -189,11 +201,7 @@ def _download_locked(request,config,creds,path,target_identity,inherited_locks):
             emit('progress',phase='download',fraction=1.0)
             return {'installDir':str(path),'variants':resolved['launchCandidates'],'credentials':refreshed or creds,'downloadComplete':True,'executionVerified':False,**resolved}
         finally:
-            if p is not None and p.poll() is None:
-                with contextlib.suppress(ProcessLookupError):os.killpg(p.pid,signal.SIGTERM)
-                with contextlib.suppress(subprocess.TimeoutExpired):p.wait(timeout=5)
-                if p.poll() is None:
-                    with contextlib.suppress(ProcessLookupError):os.killpg(p.pid,signal.SIGKILL)
+            if p is not None:stop_child(p)
             if p is not None and p.stdout:p.stdout.close()
             if request['store']=='epic':transfer_legendary_cache(secret_dir/'legendary-config',config/request.get('options',{}).get('platform','windows'))
             # Legendary may atomically replace the credential file after token refresh.

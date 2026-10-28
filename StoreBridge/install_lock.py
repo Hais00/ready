@@ -9,7 +9,8 @@ import pathlib
 import stat
 from bridge import BridgeError
 
-LOCK_ROOT = pathlib.Path.home()/'Library/Application Support/M1Launcher/InstallLocks'
+from state_paths import state_root
+LOCK_ROOT = state_root()/'InstallLocks'
 
 
 def private_directory(path):
@@ -60,10 +61,11 @@ def _keys(path):
 class InstallationLease:
     identity: tuple
     fds: tuple
+    mode: str
 
 
 @contextlib.contextmanager
-def file_lock(filename, mode, busy_code='installation_busy', busy_message='Another download or update is using this installation directory'):
+def file_lock(filename, mode, busy_code='installation_busy', busy_message='An active game or download is using this installation directory', nonblocking=True):
     fd = None
     try:
         try:
@@ -72,7 +74,7 @@ def file_lock(filename, mode, busy_code='installation_busy', busy_message='Anoth
             if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
                 raise ValueError()
             os.fchmod(fd, 0o600)
-            fcntl.flock(fd, mode|fcntl.LOCK_NB)
+            fcntl.flock(fd, mode|(fcntl.LOCK_NB if nonblocking else 0))
         except BlockingIOError:
             raise BridgeError(busy_code, busy_message) from None
         except (OSError, ValueError):
@@ -83,30 +85,49 @@ def file_lock(filename, mode, busy_code='installation_busy', busy_message='Anoth
             os.close(fd)
 
 
-@contextlib.contextmanager
-def installation_lease(path):
-    """Reject overlapping installs; distinct sibling games can run concurrently.
+def _lock_path(root, key):
+    return root/(hashlib.sha256(os.fsencode(key)).hexdigest()+'.lock')
 
-    A target has exclusive locks; ancestors have shared locks. This also protects
-    nested installation targets. Persistent zero-byte files are not busy markers:
-    flock ownership disappears when all holders die. Never unlink lock files.
-    The downloader inherits fds, keeping its lease if the bridge itself crashes.
+
+@contextlib.contextmanager
+def installation_lease(path, mode='write'):
+    """Protocol v2: symmetric overlapping reader/writer leases.
+
+    L is the original hierarchy, I records writer intent, R records reader roots.
+    A short admission gate protects probes and lifetime-lock acquisition. Only
+    lifetime fds are inherited; neither the gate nor probes survive admission.
+    Persistent zero-byte files are never removed to resolve a stale lock.
+    All active participants must use v2; stop v1 downloads during an upgrade.
     """
+    if mode not in ('read', 'write'):
+        raise ValueError('Installation lease mode must be read or write')
     root = private_directory(LOCK_ROOT)
     initial = identity(path)
-    modes = {}
-    for parent in path.parents:
-        for key in _keys(parent):
-            modes[key] = fcntl.LOCK_SH
-    for key in _keys(path):
-        modes[key] = fcntl.LOCK_EX
-    with contextlib.ExitStack() as stack:
+    target = set(_keys(path))
+    ancestors = {key for parent in path.parents for key in _keys(parent)}
+    all_keys = target|ancestors
+    legacy = {key: fcntl.LOCK_SH for key in all_keys}
+    if mode == 'write':
+        legacy.update({key: fcntl.LOCK_EX for key in target})
+    with contextlib.ExitStack() as lifetime:
         descriptors = []
-        for key in sorted(modes):
-            filename = root/(hashlib.sha256(os.fsencode(key)).hexdigest()+'.lock')
-            descriptors.append(stack.enter_context(file_lock(filename, modes[key])))
-        verify_installation(path, initial)
-        yield InstallationLease(initial, tuple(descriptors))
+        # Blocking only on this brief admission mutex; game/download leases use NB.
+        with file_lock(root/'admission.lock', fcntl.LOCK_EX, nonblocking=False):
+            if mode == 'write':
+                with contextlib.ExitStack() as probes:
+                    for key in sorted(all_keys):
+                        probes.enter_context(file_lock(_lock_path(root, 'reader:'+key), fcntl.LOCK_EX))
+            for key in sorted(legacy):
+                descriptors.append(lifetime.enter_context(file_lock(_lock_path(root,key),legacy[key])))
+            if mode == 'read':
+                with contextlib.ExitStack() as probes:
+                    for key in sorted(target):
+                        probes.enter_context(file_lock(_lock_path(root,'intent:'+key),fcntl.LOCK_EX))
+            prefix, keys = ('intent:', all_keys) if mode == 'write' else ('reader:', target)
+            for key in sorted(keys):
+                descriptors.append(lifetime.enter_context(file_lock(_lock_path(root,prefix+key),fcntl.LOCK_SH)))
+            verify_installation(path, initial)
+        yield InstallationLease(initial, tuple(descriptors), mode)
 
 
 def verify_installation(path, expected):

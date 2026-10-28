@@ -8,7 +8,9 @@ sh Scripts/build_session_host.sh
 python3 Scripts/test_session_host.py
 ```
 
-The output is `Build/ReadySessionHost`.
+The output is `Build/ReadySessionHost`. The builder compiles and signs a new temporary
+inode, then publishes it with a same-filesystem rename. It never truncates or re-signs
+a helper that may already be holding a live session's locks.
 
 ## Launcher handoff
 
@@ -81,6 +83,9 @@ No system security setting is modified.
 - An already-finished bootstrap does not release the lock while a fake exact-prefix
   `wineserver -w` is still waiting. A signal during that wait does not release it early.
 - Quick success, child failure, missing executable, and invalid stdin all end cleanly.
+- Rebuilding the actual helper while its old inode runs leaves the old descriptor's
+  bytes unchanged, preserves the live child and lock, and publishes a different inode.
+  Closing that session still forwards SIGTERM and releases its lease normally.
 - When the overlay probe is built, helper → injected native Metal host succeeds with
   the helper's own environment free of `DYLD_INSERT_LIBRARIES`.
 
@@ -125,20 +130,30 @@ stage. It does not impose those overrides on the game. Store launch arguments re
 literal argv values and are not logged; store environment cannot override `WINEPREFIX`,
 renderer/loader Wine variables, or `READY_*`, `M1L_*`, and `DYLD_*` isolation controls.
 
-Markers and renderer-failure records use `runtimeIdentity`, not merely Wine's marketing
-version, so a new patched runtime cannot silently reuse another build's validation.
+Prefix/DLL initialization markers use `initializationIdentity(engine:)`: the global
+runtime identity, selected Wine binary, and selected pure-32-bit bootstrap directory.
+Switching from one Wine provider to another therefore reruns initialization even if
+the shared runtime ID has not changed. Renderer-failure records continue to use
+`runtimeIdentity`; neither mechanism relies only on Wine's marketing version.
 The graphics failure classifier reads at most the final 1 MiB of **game-only** output
 on the worker, excluding initialization diagnostics. It writes only a classified failure
 record before `onFinish`, never the raw diagnostics or command line. User cancellation
 and DRM/authentication failures do not invalidate a renderer.
 
 Run `python3 Scripts/test_session_manager.py` for the real Foundation `Process` and
-native keeper integration checks. It tests native peer sessions and quick-exit ordering;
-the Wine initialization portion uses explicitly labelled protocol fixtures. Its 18
+native keeper integration checks. Standalone Swift probes call
+`Scripts/swift_probe_support.py` to explicitly rebuild the static LauncherCore product
+and link that exact archive with its matching module. They reject an older leftover
+archive instead of mixing Swift value-type layouts. The suite tests native peer sessions and quick-exit ordering;
+the Wine initialization portion uses explicitly labelled protocol fixtures. Its 20
 checks include a child-observed marker proving the main-queue hook completed before
 spawn, cancellation inside that hook preventing any child launch, and deliberate
 ambient prefix/renderer/injection variables not leaking into initialization or game.
-Evidence:
+A same-prefix fixture switches only the selected Wine provider under one unchanged
+runtime ID, verifies Wineboot and registry import run through the second provider,
+and checks its new builtin DLL is retained instead of an obsolete managed DLL or
+backup. This is a manager regression fixture, not proof of arbitrary real Wine-version
+upgrades. Evidence:
 `Evidence/session-host-manager.json`. It does not claim real-game compatibility.
 
 ## Real Wine session isolation
@@ -155,11 +170,65 @@ account, game, external prefix template, or existing personal directory is used.
 
 On the verified run, both freshly initialized Windows helpers reached heartbeat 3.
 Closing A stopped its heartbeat at 3 and released A's lock while B continued to 8,
-remained running, and kept its own lock. Closing B stopped its heartbeat at 12 and
+remained running, and kept its own lock. Closing B stopped its heartbeat and
 released the second lock after its exact-prefix Wine server wait. Both prefix markers
-matched the runtime identity, and lifecycle callbacks stayed on the main thread.
-`Evidence/session-host-wine-real.json` records all eight checks, runtime identity,
+matched the selected provider initialization identity, and lifecycle callbacks stayed on the main thread.
+`Evidence/session-host-wine-real.json` records all twelve checks, runtime identity,
 helper hash, and host PIDs. The script performs exact-prefix cleanup, checks that no
 keeper holds a scratch lock, and removes its own UUID directory; it preserves scratch
 if a keeper still owns a lock. This proves process/prefix isolation, not graphics or
 game compatibility.
+
+The real test also calls the actual `StoreBridge.install_lock.installation_lease`
+writer from its separate Python coordinator process. While the two Wine sessions
+run, writer admission on their shared installation returns `installation_busy`.
+Next, an admitted writer remains held while a third `SessionManager` initializes a
+new prefix: Wineboot, registry import, and its runtime marker complete, but the
+keeper exits 73 before the Windows helper can create any heartbeat. After releasing
+the writer, the **same manager, prefix, executable, and launch arguments** start
+successfully and are then closed cleanly. This checks both directions of the real
+launcher/store integration, including that installation leases apply only to game
+execution. The test routes the writer to the same selected data root's `InstallLocks` directory
+as SessionManager, beneath its scratch UUID. It removes that inactive scratch only
+after checking that every keeper and lock has finished.
+
+## Shared installation files during a session
+
+The keeper accepts `--installation /absolute/existing/game-root` before `--`. It
+canonicalizes the directory, takes a shared installation lease **before spawning the
+game**, verifies its path/inode identity again, and holds every lease descriptor until
+the game and exact-prefix server wait have completed. Initialization stages omit this
+option. Different profile prefixes can therefore run the same installation together,
+while an overlapping store download/update is rejected. Busy admission exits 73 before
+the game runs; invalid roots exit 64 and unsafe lock storage exits 71.
+
+The helper's default lock directory is the same as `StoreBridge/install_lock.py`:
+`~/Library/Application Support/M1Launcher/InstallLocks`. The launcher explicitly passes
+`--installation-lock-root <selected-data-root>/InstallLocks`, matching the store bridge's
+selected data root. The option also allows isolated integration tests. SHA-256 is provided by CommonCrypto through
+libSystem; the helper still links only `/usr/lib/libSystem.B.dylib`.
+
+Protocol v2 uses the SHA-256 filename of each path/inode key, with a brief exclusive
+`admission.lock` gate around admission. The gate is released before launch. The three
+channels provide symmetric ancestor/descendant conflict detection without serializing
+independent sibling downloads:
+
+| Channel | Session reader | Store writer |
+| --- | --- | --- |
+| Original `path:` / `inode:` keys | Shared target and ancestors for lifetime | Exclusive target, shared ancestors for lifetime |
+| `intent:` plus each original key | Exclusive target probe, released under gate | Shared target and ancestors for lifetime |
+| `reader:` plus each original key | Shared target for lifetime | Exclusive target and ancestor probes, released under gate |
+
+The admission gate makes the probes and lifetime locks one atomic admission step.
+Path keys survive a directory replacement; inode keys catch case/Unicode/symlink
+aliases. Readers can coexist with readers, and sibling writers can coexist. Every
+reader/writer must use v2; stop older v1 download processes before upgrading. Never
+remove persistent lock files to clear a busy installation.
+
+The game receives no installation lock descriptors. The native keeper remains the
+owner after a launcher crash, just as it does for the prefix lock. Its exact-prefix
+wait also retains the installation lease if the initial Wine wrapper exits before
+the actual game. `python3 Scripts/test_session_host.py` verifies native/Python
+interoperability using the real StoreBridge lease implementation, nested and parent
+updates, concurrent readers, sibling writers, failure before child spawn, parent
+crash survival, server-wait lifetime, and invalid/symlinked lock roots.

@@ -272,7 +272,9 @@ def dispatch(r,http=None):
 
 def main():
     os.umask(0o077)
-    def cancelled(signum,frame):raise KeyboardInterrupt
+    def cancelled(signum,frame):
+        signal.signal(signal.SIGTERM,signal.SIG_IGN)
+        raise KeyboardInterrupt
     signal.signal(signal.SIGTERM,cancelled)
     try:
         line=sys.stdin.buffer.readline(MAX_JSON+1)

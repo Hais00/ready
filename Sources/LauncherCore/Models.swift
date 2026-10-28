@@ -12,6 +12,7 @@ public enum Store: String, Codable, CaseIterable {
     case .local: return "Locali"
     }
   }
+
 }
 public enum GamePlatform: String, Codable { case macOS, windows }
 public enum BinaryArchitecture: String, Codable { case arm64, x86_64, universal, x86, unknown }
@@ -22,7 +23,7 @@ public enum GraphicsEngine: String, Codable, CaseIterable {
     switch self {
     case .automatic: return "Automatico"
     case .dxmtMetal: return "DXMT · DX11 → Metal"
-    case .d3dMetal: return "D3DMetal · DX11 / DX12 (Apple, opzionale)"
+    case .d3dMetal: return "D3DMetal · DX11 / DX12 (Apple, valutazione)"
     case .dxvkKosmic: return "DXVK · DX11 → KosmicKrisp"
     case .dxvkMolten: return "DXVK · DX11 → MoltenVK"
     case .vkd3dKosmic: return "VKD3D · DX12 → KosmicKrisp"
@@ -38,12 +39,14 @@ public struct GameVariant: Codable, Equatable, Identifiable {
   public var architecture: BinaryArchitecture
   public var executable: String?
   public var workingDirectory: String?
+  public var installationRoot: String?
   public var arguments: [String]
   public var installed: Bool
   public var verification: String
   public init(
     id: String, platform: GamePlatform, architecture: BinaryArchitecture = .unknown,
-    executable: String? = nil, workingDirectory: String? = nil, arguments: [String] = [],
+    executable: String? = nil, workingDirectory: String? = nil, installationRoot: String? = nil,
+    arguments: [String] = [],
     installed: Bool = false,
     verification: String = "Architettura da verificare dopo l’installazione"
   ) {
@@ -52,6 +55,7 @@ public struct GameVariant: Codable, Equatable, Identifiable {
     self.architecture = architecture
     self.executable = executable
     self.workingDirectory = workingDirectory
+    self.installationRoot = installationRoot
     self.arguments = arguments
     self.installed = installed
     self.verification = verification
@@ -62,6 +66,28 @@ public struct GameVariant: Codable, Equatable, Identifiable {
       : (architecture == .arm64 || architecture == .universal
         ? "Apple Silicon nativo"
         : architecture == .x86_64 ? "Mac Intel · Rosetta" : "macOS · architettura da verificare")
+  }
+}
+extension GameVariant {
+  public func installationDirectory() throws -> URL {
+    guard let executable, executable.hasPrefix("/") else {
+      throw LauncherError.invalid("Eseguibile del gioco non valido.")
+    }
+    let target = URL(fileURLWithPath: executable).resolvingSymlinksInPath()
+    let raw = installationRoot ?? target.deletingLastPathComponent().path
+    guard raw.hasPrefix("/") else {
+      throw LauncherError.invalid("Installazione del gioco non valida.")
+    }
+    let root = URL(fileURLWithPath: raw).standardizedFileURL.resolvingSymlinksInPath()
+    var directory: ObjCBool = false
+    guard root.path != "/",
+      FileManager.default.fileExists(atPath: root.path, isDirectory: &directory),
+      directory.boolValue, target.path.hasPrefix(root.path + "/")
+    else {
+      throw LauncherError.invalid(
+        "L’eseguibile non appartiene alla cartella d’installazione selezionata.")
+    }
+    return root
   }
 }
 public struct SaveRule: Codable, Equatable {
@@ -183,13 +209,39 @@ public struct LibraryState: Codable {
     let p = Profile(name: "Giocatore 1")
     return .init(profiles: [p], activeProfile: p.id)
   }
+  public func configured(_ game: Game, profile: UUID? = nil) -> Game {
+    var value = game
+    if let preferences = gamePreferences?[
+      GamePreferences.key(profile: profile ?? activeProfile, gameID: game.id)]
+    {
+      value.engine = preferences.engine
+      value.selectedVariant = preferences.selectedVariant
+      if let scoped = preferences.variants {
+        value.variants =
+          game.variants.map { original in scoped.first { $0.id == original.id } ?? original }
+          + scoped.filter { item in !game.variants.contains { $0.id == item.id } }
+      }
+    }
+    return value
+  }
+  public mutating func clearVariantOverride(profile: UUID, gameID: String, variantID: String) {
+    let key = GamePreferences.key(profile: profile, gameID: gameID)
+    guard var preferences = gamePreferences?[key], let scoped = preferences.variants else { return }
+    preferences.variants = scoped.filter { $0.id != variantID }
+    gamePreferences?[key] = preferences
+  }
 }
 public struct GamePreferences: Codable {
   public var engine: GraphicsEngine
   public var selectedVariant: String?
-  public init(engine: GraphicsEngine = .automatic, selectedVariant: String? = nil) {
+  public var variants: [GameVariant]?
+  public init(
+    engine: GraphicsEngine = .automatic, selectedVariant: String? = nil,
+    variants: [GameVariant]? = nil
+  ) {
     self.engine = engine
     self.selectedVariant = selectedVariant
+    self.variants = variants
   }
   public static func key(profile: UUID, gameID: String) -> String {
     profile.uuidString + ":" + gameID

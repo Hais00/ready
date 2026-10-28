@@ -70,7 +70,13 @@ def main():
             assert shown["after"]["trackedTextureBytes"]>0
             assert hidden["after"]["trackedTextureBytes"]==0
             assert hidden["after"]["gpuOverlaySubmissions"]==shown["after"]["gpuOverlaySubmissions"]
-            results.append({"architecture":architecture,"metal":version,"scheduledHandler":scheduled,"passed":True,"changedPixels":data["changedPixelsShown"],"hiddenTextureBytes":0})
+            expected_path='metal4OverlaySubmissions' if version==4 else 'metal3OverlaySubmissions'
+            other_path='metal3OverlaySubmissions' if version==4 else 'metal4OverlaySubmissions'
+            assert shown["after"][expected_path]>0 and hidden["after"][other_path]==0
+            assert shown["after"]["completedGPUOverlaySubmissions"]>0
+            assert hidden["after"]["completedGPUOverlaySubmissions"]==hidden["after"]["gpuOverlaySubmissions"]
+            assert all(phase["after"]["failedGPUOverlaySubmissions"]==0 for phase in data["phases"])
+            results.append({"architecture":architecture,"metal":version,"scheduledHandler":scheduled,"passed":True,"changedPixels":data["changedPixelsShown"],"hiddenTextureBytes":0,"completedGPUOverlaySubmissions":hidden["after"]["completedGPUOverlaySubmissions"],"failedGPUOverlaySubmissions":0,"actualOverlayPath":expected_path})
     results.append(isolation())
     (ROOT/"Evidence/overlay-summary.json").write_text(json.dumps(results,indent=2)+"\n")
     print(json.dumps(results,indent=2))

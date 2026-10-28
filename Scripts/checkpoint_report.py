@@ -15,10 +15,19 @@ prefix=read('runtime-prefix-isolation.json')
 canonical=read('runtime-prefix-canonical-paths.json')
 wine_sessions=read('session-host-wine-real.json')
 wow64=read('runtime-wow64-proof.json')
+store_client=read('store-client-tests.json')
+migration_crash=read('migration-crash.json')
+apple_gpu=read('runtime-winecx-probes.json')
+apple_overlay=read('overlay-apple-d3d12.json')
+provider_switch=read('provider-switch.json')
+controller=read('controller-navigation.json')
 store_log=(ROOT/'Evidence/stores-parent-tests.log').read_text()
 match=re.search(r'Ran (\d+) tests',store_log)
 assert core['pass'] and host['passed'] and manager['passed']
 assert wine_sessions['passed'] and wow64['verified']
+assert store_client['passed'] and migration_crash['passed']
+assert apple_gpu['dx12Verified'] and apple_overlay['passed'] and provider_switch['passed'] and controller['passed']
+assert apple_gpu['evaluationOnly'] and not apple_gpu['enabledForConsumerPlay']
 assert prefix['verified'] and canonical['verified'] and wine_overlay['passed'] and frontend['pass']
 gpu_paths=[path for path in overlay if 'architecture' in path]
 assert len(gpu_paths)==6 and all(path['passed'] for path in gpu_paths)
@@ -28,6 +37,17 @@ report={
  'goalComplete':False,
  'core':{'checks':len(core['checks']),'passed':core['pass'],'names':[c['name'] for c in core['checks']]},
  'storeProtocols':{'checks':int(match.group(1)),'passed':True,'realAccountsVerified':False},
+ 'storeClient':{'passed':store_client['passed'],'checks':store_client['checks'],'realKeychainUsed':False},
+ 'migrationCrash':{'passed':migration_crash['passed'],'checks':migration_crash['checks'],'scope':migration_crash['scope']},
+ 'controllerPolicy':{'passed':True,'checks':controller['checks'],'physicalDeviceVerified':False,'actualModalInteractionVerified':False},
+ 'appleEvaluation':{'dx12GPUVerified':True,'wineVersion':apple_gpu['reportedVersion'],
+  'consumerPlayEnabled':False,'binaryRedistributionEnabled':False,'actualOverlayPaths':apple_overlay['actualOverlayPaths'],
+  'overlayGPUCompleted':apple_overlay['hiddenStable']['completedGPUOverlaySubmissions'],
+  'overlayGPUFailures':apple_overlay['hiddenStable']['failedGPUOverlaySubmissions'],
+  'hiddenTextureBytes':apple_overlay['hiddenStable']['trackedTextureBytes'],
+  'appleEndToEndPixelReadbackVerified':False,'directToDisplayVerified':False},
+ 'providerRoundTrip':{'passed':True,'checks':provider_switch['checks'],'scope':provider_switch['scope']},
+ 'runtimeBinaryRedistributionReady':False,
  'sessionHost':{'passed':host['passed'],'checks':host['checks'],'scope':'real processes, file locks, crash handoff and exact-prefix waiter'},
  'sessionManager':{'passed':manager['passed'],'checks':manager['checks'],'scope':manager['testType']},
  'realWineSessions':{'passed':wine_sessions['passed'],'checks':wine_sessions['checks'],
@@ -42,11 +62,13 @@ report={
   'directToDisplayVerified':False,'observedHUDMode':'Composited in both native baseline and overlay samples'},
  'openGates':['Real account login, entitlement downloads and commercial game launch',
   'Actual direct-to-display mode; current tested fullscreen baseline is Composited',
-  'D3D12 / latest proprietary Apple runtime ABI integration',
+  'Open DX12 production path; Apple GPU path is verified only for local evaluation under its license',
   'Physical-controller behavior and in-game input suppression',
   'Native macOS game save/account isolation and complete release packaging',
-  'Real legacy user-data migration beyond synthetic copies; guided UI and interrupted-copy recovery',
-  'Shared game update coordination with already-running consumers']
+  'Guided migration UI visual verification (Mac locked during current attempt)',
+  'Real legacy user-data/game migration and rollback interrupted mid-move',
+  'External updaters that do not participate in the installation lease protocol',
+  'Corresponding source, build provenance and license notices for bootstrapped runtime dependency binaries']
 }
 out=ROOT/'Validation';out.mkdir(exist_ok=True)
 (out/'checkpoint.json').write_text(json.dumps(report,indent=2)+'\n')

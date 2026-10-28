@@ -32,11 +32,16 @@ public enum RendererSelector {
     architecture: BinaryArchitecture = .unknown
   ) -> Bool {
     let fm = FileManager.default
+    if engine == .d3dMetal || runtime.evaluationOnlyEngines?.contains(engine.rawValue) == true,
+      runtime.evaluationModeEnabled != true
+    {
+      return false
+    }
     guard let wine = runtime.engineWineBinaries?[engine.rawValue] ?? runtime.wine,
       fm.isExecutableFile(atPath: wine)
     else { return false }
     if architecture == .x86 {
-      guard let builtin = runtime.builtin32Directory,
+      guard let builtin = runtime.bootstrap32Directory(engine: engine),
         fm.isReadableFile(
           atPath: URL(fileURLWithPath: builtin).appendingPathComponent("kernel32.dll").path)
       else { return false }
@@ -66,6 +71,14 @@ public enum RendererSelector {
     failed: Set<GraphicsEngine> = [], architecture: BinaryArchitecture = .unknown
   ) throws -> GraphicsEngine {
     if game.engine != .automatic {
+      if game.engine == .d3dMetal
+        || runtime.evaluationOnlyEngines?.contains(game.engine.rawValue) == true,
+        runtime.evaluationModeEnabled != true
+      {
+        throw LauncherError.unavailable(
+          "Questo runtime è riservato alla valutazione esplicita dei giochi e richiede i componenti e la licenza del fornitore. Non è abilitato per il gioco ordinario."
+        )
+      }
       guard available(game.engine, runtime: runtime, architecture: architecture) else {
         throw LauncherError.unavailable("Il motore scelto non è installato per questo runtime.")
       }
@@ -112,6 +125,11 @@ public enum RendererSelector {
         && available($0, runtime: runtime, architecture: architecture)
     }) {
       return engine
+    }
+    if requiredAPI == "d3d12", runtime.evaluationModeEnabled != true {
+      throw LauncherError.unavailable(
+        "Nessun percorso DX12 verificato è disponibile per questo gioco e runtime. Il percorso Apple resta separato e riservato alla valutazione."
+      )
     }
     throw LauncherError.unavailable(
       "Nessun percorso grafico disponibile e verificato per questa API/versione. Il launcher non combina automaticamente DLL incompatibili."

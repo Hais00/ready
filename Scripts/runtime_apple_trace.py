@@ -23,8 +23,12 @@ def main():
     parser.add_argument('--apple-root', type=Path, default=ROOT / 'Runtime/apple-evaluation-4.0b3')
     parser.add_argument('--timeout', type=float, default=40)
     parser.add_argument('--teb-adapter', action='store_true', help='Test the explicitly experimental public WineCX TLS hook')
+    parser.add_argument('--observer-ntdll', type=Path, help='Diagnostic-only Wine ntdll; never modifies Apple files')
+    parser.add_argument('--api', choices=['dx11', 'dx12'], help='Trace only this API instead of both')
     parser.add_argument('--keep', action='store_true')
     args = parser.parse_args()
+    if args.teb_adapter and args.observer_ntdll:
+        raise ValueError('Choose one isolated Wine diagnostic module')
     apple = args.apple_root.resolve()
     if not (apple / 'lib/external/D3DMetal.framework').is_dir() or not list(apple.glob('*License*')) + list(apple.glob('*LICENSE*')):
         raise RuntimeError('Complete optional Apple redist and its license files required')
@@ -55,11 +59,15 @@ def main():
                 raise RuntimeError('Experimental adapter hash mismatch')
             shutil.copy2(adapted, engine / 'lib/wine/x86_64-unix/ntdll.so')
             result['adapter'] = record
+        if args.observer_ntdll:
+            observer = args.observer_ntdll.resolve()
+            shutil.copy2(observer, engine / 'lib/wine/x86_64-unix/ntdll.so')
+            result['diagnosticObserverSHA256'] = hashlib.sha256(observer.read_bytes()).hexdigest()
         env = dict(os.environ, WINEPREFIX=str(prefix), WINEDEBUG='+loaddll,+module,+seh',
                    WINEDLLOVERRIDES='d3d11,d3d12,d3d12core,dxgi=b;mscoree,mshtml=d',
                    DYLD_LIBRARY_PATH=str(engine / 'lib/external') + ':' + str(central / 'vulkan') + ':' + str(central / 'dependencies'),
                    DYLD_FRAMEWORK_PATH=str(engine / 'lib/external'), DYLD_PRINT_LIBRARIES='1')
-        for api in ('dx11', 'dx12'):
+        for api in ([args.api] if args.api else ['dx11', 'dx12']):
             log_path = ROOT / 'Evidence' / ('runtime-apple-trace-' + api + '.log')
             start = time.monotonic(); code = 124; output = b''
             try:

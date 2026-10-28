@@ -1,0 +1,50 @@
+WineCX source and compatibility bridge notice
+
+Source: https://github.com/dappermint/winecx
+Commit: 9f3f6447844add700bc0dde650e4f398fd5f69ab
+Declared Wine version: 11.19
+Source archive SHA256: a248a69e794b0dcfc86fea82dc5b67070611ca285e5033c9cba1fd4f56fd6a6b
+
+Scope: the following bridge/ABI files were individually inspected for their explicit LGPL-2.1-or-later grants. Their original copyright and license notices are retained.
+
+dlls/winemac.drv/d3dmetal.c
+  License: LGPL-2.1-or-later
+  SHA256: 97b7b638080d56d9511730e7cd062b636a349bf2d7a026bbc349e8fc963e279b
+  Copyright 2023 Brendan Shanks for CodeWeavers, Inc.
+dlls/winemac.drv/d3dmetal_objc.h
+  License: LGPL-2.1-or-later
+  SHA256: 6eeb595910f4dd495786b3d206d54e6859edbcf234b267b4245849479639eb56
+  Copyright 2025 Brendan Shanks for CodeWeavers, Inc.
+dlls/winemac.drv/d3dmetal_objc.m
+  License: LGPL-2.1-or-later
+  SHA256: 6a2f914b8d1ece300170e388716bd6c26cf52d222aa9f32aac8a203e3b9f3976
+  Copyright 2025 Brendan Shanks for CodeWeavers, Inc.
+dlls/winemac.drv/macdrv.h
+  License: LGPL-2.1-or-later
+  SHA256: 45975def370c542f3f5c06719decd12efdda4a1dc9544a83e62ff3e329d0787a
+  Copyright 1996 Alexandre Julliard
+  Copyright 1999 Patrik Stridvall
+  Copyright 2011, 2012, 2013 Ken Thomases for CodeWeavers Inc.
+dlls/ntdll/loader.c
+  License: LGPL-2.1-or-later
+  SHA256: 17f24750a8a809869fc8c84163d7144a44af9490fd982a8e38d93256945f0e1e
+  Copyright 1995, 2003 Alexandre Julliard
+  Copyright 2002 Dmitry Timoshkov for CodeWeavers
+dlls/ntdll/unix/loader.c
+  License: LGPL-2.1-or-later
+  SHA256: 990a122df6b93243d5eaadb9baa0e5cd70981703c75179bf9e210ced1415d2d4
+  Copyright (C) 2020 Alexandre Julliard
+dlls/ntdll/unix/unix_private.h
+  License: LGPL-2.1-or-later
+  SHA256: f80d9f473dc0f42011b7fd3662960ab0371ba2712ad5381a9d852854bf66d65d
+  Copyright (C) 2020 Alexandre Julliard
+dlls/ntdll/unix/signal_x86_64.c
+  License: LGPL-2.1-or-later
+  SHA256: 3fa1d950579438c5767ce92a177d528f37d5987f209b9222670cc3d06a380b1c
+  Copyright 1999, 2005 Alexandre Julliard
+
+The pure frozen WineCX provider preserves LICENSE and COPYING.LIB. Other vendored source dependencies retain their supplied per-directory licenses. This component-scoped notice accompanies the source pins; binary distribution also requires the relevant complete dependency/source inventory.
+
+Apple AppKit, QuartzCore, Metal, and Objective-C system SDK headers used by the macOS build come from the installed developer tools. These headers are not copied into this repository or the WineCX source archive. The inspected source archive contains no D3DMetal.framework, libd3dshared.dylib, native dylib/metallib payload, or copied Metal.h/AppKit.h SDK header.
+
+Apple Game Porting Toolkit / D3DMetal is separately licensed proprietary software. It is excluded from the public source release and application bundle. Local synthetic development/evaluation can use the user-supplied redist with its complete original License, Acknowledgements and Read Me retained. A successful technical GPU test does not relicense Apple components or enable consumer play. The local evaluation provider stays separate from default Wine 11.20 and DXMT.

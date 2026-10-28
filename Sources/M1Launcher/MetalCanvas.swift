@@ -110,7 +110,7 @@ final class MetalCanvas: NSView {
     canvasLayer = l
   }
   var visibleGames: [Game] {
-    state.games.filter {
+    state.games.map { state.configured($0) }.filter {
       ($0.profileIDs == nil || $0.profileIDs!.contains(state.activeProfile))
         && (filter == nil || $0.store == filter)
         && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query))

@@ -3,6 +3,40 @@ import Foundation
 import LauncherChecks
 import LauncherCore
 
+for operation in ["--execute-migration-fixture", "--recover-migration-fixture"] {
+  if let index = CommandLine.arguments.firstIndex(of: operation),
+    CommandLine.arguments.indices.contains(index + 1)
+  {
+    let paths = LauncherPaths(root: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+    guard
+      FileManager.default.fileExists(
+        atPath: paths.root.appendingPathComponent(".ready-synthetic-migration").path)
+    else {
+      throw LauncherError.invalid("This probe accepts only marked synthetic migration fixtures.")
+    }
+    if operation == "--recover-migration-fixture" {
+      let archive = try LegacyMigration.recoverInterrupted(paths: paths)
+      print(
+        String(
+          decoding: try JSONSerialization.data(withJSONObject: [
+            "archive": archive.path,
+            "recoveryRequired": LegacyMigration.requiresRecovery(paths: paths),
+          ]), as: UTF8.self))
+    } else {
+      let library = try LibraryRepository(paths: paths).load()
+      guard
+        let plan = try LegacyMigration.prepare(
+          paths: paths, profile: library.activeProfile, games: library.games)
+      else { throw LauncherError.invalid("Missing fixture source") }
+      let copied = try LegacyMigration.execute(plan, paths: paths)
+      try LibraryRepository(paths: paths).save(
+        LegacyMigration.bindLibrary(library, plan: copied, paths: paths))
+      print(String(decoding: try JSONEncoder().encode(copied), as: UTF8.self))
+    }
+    exit(0)
+  }
+}
+
 if let i = CommandLine.arguments.firstIndex(of: "--recreate-wine-fixture"),
   CommandLine.arguments.indices.contains(i + 1)
 {

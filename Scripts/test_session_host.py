@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 """Real process/descriptor tests. Uses only private temporary lock files and owned child PIDs."""
-import fcntl, json, os, pathlib, signal, stat, subprocess, sys, tempfile, time
+import fcntl, hashlib, json, os, pathlib, signal, stat, subprocess, sys, tempfile, time
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 HOST=ROOT/'Build/ReadySessionHost'
 def wait_for(predicate,timeout=8):
@@ -18,11 +18,13 @@ def locked(path):
         try:fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:return True
         fcntl.flock(handle,fcntl.LOCK_UN);return False
-def spawn(lock,program,args=(),server=None,prefix=None,environment=None):
+def spawn(lock,program,args=(),server=None,prefix=None,environment=None,installation=None,installation_root=None):
     handle=lock.open('a+b');os.fchmod(handle.fileno(),0o600);fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
     command=[str(HOST)]
     if server:command+=['--wine-server',str(server)]
     if prefix:command+=['--prefix',str(prefix)]
+    if installation:command+=['--installation',str(installation)]
+    if installation_root:command+=['--installation-lock-root',str(installation_root)]
     command+=['--',str(program),*map(str,args)]
     process=subprocess.Popen(command,stdin=handle,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,env=environment)
     # CLOSE, not LOCK_UN. The child's fd0 shares this exact open-file-description.
@@ -110,6 +112,94 @@ while not (p/'finished').exists():time.sleep(.02)
                 assert probe['passed'] and status['frameCount']>0 and status['pid']!=native.pid and not locked(native_lock)
                 results['nativeMetalOverlayHandoff']=True
             finally:stop(native)
+        # Publish a genuinely rebuilt helper while its previous inode holds a live
+        # child and prefix lease. Existing mappings/descriptors must remain intact.
+        rebuild_lock=d/'rebuild.lock';rebuild_info=d/'rebuild-worker.json'
+        rebuild=spawn(rebuild_lock,sys.executable,[worker,rebuild_info])
+        try:
+            info=wait_for(lambda:json.loads(rebuild_info.read_text()))
+            with HOST.open('rb') as original:
+                old_inode=os.fstat(original.fileno()).st_ino
+                old_hash=hashlib.file_digest(original,'sha256').hexdigest()
+                subprocess.run(['sh',str(ROOT/'Scripts/build_session_host.sh')],check=True)
+                assert HOST.stat().st_ino!=old_inode
+                original.seek(0);assert hashlib.file_digest(original,'sha256').hexdigest()==old_hash
+            os.kill(info['pid'],0)
+            assert rebuild.poll() is None and locked(rebuild_lock)
+            rebuild.terminate();assert rebuild.wait(timeout=8)==143
+            wait_for(lambda:not locked(rebuild_lock))
+            results['atomicKeeperRebuildPreservesLiveSession']=True
+        finally:stop(rebuild)
+        # Native readers interoperate with the ACTUAL StoreBridge writer implementation.
+        sys.path.insert(0,str(ROOT/'StoreBridge'))
+        import install_lock
+        from bridge import BridgeError
+        install_lock.LOCK_ROOT=d/'installation-locks'
+        game=install_lock.canonical_installation(str(d/'Games/one'))
+        nested=install_lock.canonical_installation(str(game/'DLC'))
+        sibling=install_lock.canonical_installation(str(d/'Games/two'))
+        def writer_busy(path):
+            try:
+                with install_lock.installation_lease(path):pass
+            except BridgeError as error:
+                assert error.code=='installation_busy';return True
+            return False
+        read_info=d/'installation-reader.json';read_lock=d/'installation-prefix.lock'
+        reader=spawn(read_lock,sys.executable,[worker,read_info],installation=game,installation_root=install_lock.LOCK_ROOT)
+        try:
+            read=wait_for(lambda:json.loads(read_info.read_text()));assert not read['extraDescriptors']
+            assert writer_busy(game) and writer_busy(nested) and writer_busy(game.parent)
+            with install_lock.installation_lease(game,mode='read'):pass
+            with install_lock.installation_lease(sibling):pass
+            results['nativeReaderBlocksSameNestedAndParentPythonWriters']=True
+            results['nativeReaderAllowsPythonReaderAndSiblingWriter']=True
+            # A second real keeper may read the same game under a different prefix.
+            other_info=d/'installation-other.json'
+            other=spawn(d/'installation-other-prefix.lock',sys.executable,[worker,other_info],installation=game,installation_root=install_lock.LOCK_ROOT)
+            try:wait_for(lambda:other_info.exists());assert other.poll() is None
+            finally:stop(other)
+            results['twoNativeReadersShareInstallation']=True
+        finally:stop(reader)
+        with install_lock.installation_lease(game):
+            child_marker=d/'unexpected-installation-child'
+            denied=spawn(d/'installation-denied.lock','/usr/bin/touch',[child_marker],installation=game,installation_root=install_lock.LOCK_ROOT)
+            assert denied.wait(timeout=8)==73 and not child_marker.exists()
+            assert not locked(d/'installation-denied.lock')
+        results['pythonWriterPreventsNativeChildSpawn']=True
+        # Installation read locks must survive the launcher just like the prefix lock.
+        crash_install_info=d/'crash-install.json';crash_install_host=d/'crash-install-host.json';crash_install_lock=d/'crash-install.lock'
+        install_shim=d/'install-parent.py'
+        install_shim.write_text("import fcntl,json,os,pathlib,subprocess,sys\n"
+            "lock,host,installation,lockroot,worker,info,pidfile=sys.argv[1:]\n"
+            "fd=open(lock,'a+b');os.fchmod(fd.fileno(),0o600);fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)\n"
+            "p=subprocess.Popen([host,'--installation',installation,'--installation-lock-root',lockroot,'--',sys.executable,worker,info],stdin=fd,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
+            "pathlib.Path(pidfile).write_text(json.dumps({'hostPID':p.pid}));os._exit(19)\n")
+        crashed=subprocess.run([sys.executable,str(install_shim),str(crash_install_lock),str(HOST),str(game),str(install_lock.LOCK_ROOT),str(worker),str(crash_install_info),str(crash_install_host)],capture_output=True,text=True,timeout=8)
+        assert crashed.returncode==19
+        keeper_pid=wait_for(lambda:json.loads(crash_install_host.read_text()))['hostPID']
+        try:
+            wait_for(lambda:crash_install_info.exists());assert writer_busy(game) and writer_busy(nested)
+            os.kill(keeper_pid,signal.SIGTERM);wait_for(lambda:not locked(crash_install_lock))
+            with install_lock.installation_lease(game):pass
+            results['installationReadSurvivesLauncherCrash']=True
+        finally:
+            try:os.kill(keeper_pid,signal.SIGTERM)
+            except ProcessLookupError:pass
+        # The reader must also cover an actual Wine wait stage after its main child ends.
+        (prefix/'finished').unlink();(prefix/'waiter.json').unlink()
+        installation_wait=spawn(d/'installation-wait.lock','/usr/bin/true',server=server,prefix=prefix,installation=game,installation_root=install_lock.LOCK_ROOT)
+        try:
+            wait_for(lambda:(prefix/'waiter.json').exists());assert writer_busy(game)
+            (prefix/'finished').touch();assert installation_wait.wait(timeout=8)==0
+            with install_lock.installation_lease(game):pass
+            results['installationReadCoversExactServerWait']=True
+        finally:(prefix/'finished').touch();stop(installation_wait)
+        bad_install=spawn(d/'invalid-installation.lock','/usr/bin/true',installation=d/'no-such-game',installation_root=install_lock.LOCK_ROOT)
+        assert bad_install.wait(timeout=8)==64
+        unsafe_root=d/'unsafe-install-lock-root';unsafe_root.symlink_to(install_lock.LOCK_ROOT,target_is_directory=True)
+        unsafe=spawn(d/'unsafe-installation.lock','/usr/bin/true',installation=game,installation_root=unsafe_root)
+        assert unsafe.wait(timeout=8)==71
+        results['invalidInstallationAndUnsafeLockRootRejected']=True
         report={'passed':all(results.values()),'checks':results,'platform':sys.platform,'hostArchitecture':'arm64','testType':'real-process-flock-handoff-and-signals','noGlobalProcessTermination':True}
         (ROOT/'Evidence/session-host-tests.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
 if __name__=='__main__':main()

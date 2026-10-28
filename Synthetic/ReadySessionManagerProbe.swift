@@ -131,9 +131,11 @@ import LauncherCore
       import json,os,pathlib,signal,sys,time
       prefix=pathlib.Path(os.environ['WINEPREFIX']);kind=sys.argv[1]
       mode=(pathlib.Path(__file__).parent/'mode').read_text()
-      data={'pid':os.getpid(),'keeperPID':os.getppid(),'kind':kind,'overlay':any(k.startswith('M1L_') or k=='READY_OVERLAY_LIBRARY' or k=='DYLD_INSERT_LIBRARIES' for k in os.environ),'overrides':os.environ.get('WINEDLLOVERRIDES'),'extraArgs':sys.argv[2:],'extraEnv':os.environ.get('EPIC_LAUNCH_FIXTURE'),'ambientReserved':[k for k,v in os.environ.items() if v=='ready-ambient-test-value'],'launchHookAlreadyRan':(prefix/'.ready'/'launch-hook-complete').exists()}
+      data={'pid':os.getpid(),'keeperPID':os.getppid(),'kind':kind,'overlay':any(k.startswith('M1L_') or k=='READY_OVERLAY_LIBRARY' or k=='DYLD_INSERT_LIBRARIES' for k in os.environ),'overrides':os.environ.get('WINEDLLOVERRIDES'),'extraArgs':sys.argv[2:],'extraEnv':os.environ.get('EPIC_LAUNCH_FIXTURE'),'ambientReserved':[k for k,v in os.environ.items() if v=='ready-ambient-test-value'],'launchHookAlreadyRan':(prefix/'.ready'/'launch-hook-complete').exists(),'providerPath':__file__}
       (prefix/'.ready'/('fixture-'+kind.replace('/','_')+'.json')).write_text(json.dumps(data))
       if kind=='wineboot':
+       system=prefix/'drive_c'/'windows'/'system32';system.mkdir(parents=True,exist_ok=True)
+       (system/'d3d11.dll').write_text('builtin:'+__file__)
        if mode=='drm-fail':print('Failed to create a DXGI factory',file=sys.stderr,flush=True)
        if mode=='hang':
         signal.signal(signal.SIGTERM,signal.SIG_IGN)
@@ -218,8 +220,8 @@ import LauncherCore
     try require(
       try String(
         contentsOf: normalPrefix.appendingPathComponent(".ready/runtime-initialized"),
-        encoding: .utf8) == cfg.runtimeIdentity,
-      "Prefix marker used the marketing version instead of runtime identity")
+        encoding: .utf8) == cfg.initializationIdentity(engine: .wineD3D),
+      "Prefix marker did not use the selected provider initialization identity")
     let bootData =
       try JSONSerialization.jsonObject(
         with: Data(contentsOf: normalPrefix.appendingPathComponent(".ready/fixture-wineboot.json")))
@@ -250,6 +252,59 @@ import LauncherCore
     checks["ambientReservedEnvironmentScrubbed"] = true
     checks["initializationWithoutOverlayOrMonoPrompt"] = true
     checks["transientLaunchDataSeparated"] = true
+    // The marketing/global runtime ID is unchanged, but a different Wine provider
+    // requires real reinitialization of this SAME prefix and fresh builtin DLLs.
+    let originalInitializationIdentity = cfg.initializationIdentity(engine: .wineD3D)
+    let secondWine = project.appendingPathComponent("fixture-wine-provider-2")
+    try Data(wineSource.utf8).write(to: secondWine)
+    try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: secondWine.path)
+    let system32 = normalPrefix.appendingPathComponent("drive_c/windows/system32")
+    let oldBackups = normalPrefix.appendingPathComponent(".ready/OriginalDLLs")
+    try fm.createDirectory(at: oldBackups, withIntermediateDirectories: true)
+    try Data("obsolete-provider-builtin".utf8).write(
+      to: oldBackups.appendingPathComponent("d3d11.dll"))
+    try Data("old-managed-renderer".utf8).write(to: system32.appendingPathComponent("d3d11.dll"))
+    try JSONEncoder().encode(["d3d11.dll"]).write(
+      to: normalPrefix.appendingPathComponent(".ready/managed-dlls.json"))
+    cfg.engineWineBinaries = [GraphicsEngine.wineD3D.rawValue: secondWine.path]
+    try JSONEncoder().encode(cfg).write(to: runtimeDir.appendingPathComponent("runtime.json"))
+    normal.onWillLaunch = nil
+    normalStarted = false
+    normalFinished = false
+    var providerStartError: String?
+    normal.start(game: normalGame, variant: normalVariant, profile: profile) { result in
+      if case .success = result { normalStarted = true }
+      if case .failure(let error) = result { providerStartError = error.localizedDescription }
+    }
+    try spin { providerStartError != nil || (normalStarted && normalFinished) }
+    try require(
+      providerStartError == nil, "Changed provider failed to start: " + (providerStartError ?? ""))
+    let changedInitializationIdentity = cfg.initializationIdentity(engine: .wineD3D)
+    let changedMarker = try String(
+      contentsOf: normalPrefix.appendingPathComponent(".ready/runtime-initialized"), encoding: .utf8
+    )
+    let changedBoot =
+      try JSONSerialization.jsonObject(
+        with: Data(contentsOf: normalPrefix.appendingPathComponent(".ready/fixture-wineboot.json")))
+      as! [String: Any]
+    let changedRegistry =
+      try JSONSerialization.jsonObject(
+        with: Data(contentsOf: normalPrefix.appendingPathComponent(".ready/fixture-regedit.json")))
+      as! [String: Any]
+    try require(
+      originalInitializationIdentity != changedInitializationIdentity
+        && changedMarker == changedInitializationIdentity
+        && changedBoot["providerPath"] as? String == secondWine.path
+        && changedRegistry["providerPath"] as? String == secondWine.path,
+      "Changing Wine providers under one global runtime ID reused old initialization")
+    let newBuiltin = try String(
+      contentsOf: system32.appendingPathComponent("d3d11.dll"), encoding: .utf8)
+    try require(
+      newBuiltin == "builtin:" + secondWine.path
+        && !fm.fileExists(atPath: oldBackups.appendingPathComponent("d3d11.dll").path),
+      "Provider change restored an obsolete builtin or retained a stale original-DLL backup")
+    checks["providerChangeReinitializesSamePrefix"] = true
+    checks["providerChangeDoesNotRestoreObsoleteDLLs"] = true
     // A cancellation from the main-queue launch hook must prevent spawn and release its idle lease.
     let hookCancel = SessionManager(paths: paths, project: project)
     managers.append(hookCancel)

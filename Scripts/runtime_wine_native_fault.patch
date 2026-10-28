@@ -1,0 +1,50 @@
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -28,6 +28,10 @@
+ 
+ #include <assert.h>
+ #include <pthread.h>
++#ifdef __APPLE__
++#include <execinfo.h>
++#include <dlfcn.h>
++#endif
+ #include <signal.h>
+ #include <stdlib.h>
+ #include <stdarg.h>
+@@ -2278,9 +2282,36 @@
+ static void segv_handler( int signal, siginfo_t *siginfo, void *_sigcontext )
+ {
+     ucontext_t *sigcontext = _sigcontext;
++#ifdef __APPLE__
++    void *ready_fault_gs0, *ready_fault_gs30;
++    __asm__ volatile("movq %%gs:0,%0" : "=r"(ready_fault_gs0));
++    __asm__ volatile("movq %%gs:0x30,%0" : "=r"(ready_fault_gs30));
++#endif
+     struct thread_data *data = init_handler( sigcontext );
+     struct xcontext context;
+     EXCEPTION_RECORD rec = { .ExceptionAddress = (void *)RIP_sig(sigcontext) };
++#ifdef __APPLE__
++    if ((uintptr_t)rec.ExceptionAddress > 0x700000000000ULL)
++    {
++        static unsigned ready_fault_count;
++        if (__sync_fetch_and_add(&ready_fault_count, 1) < 4)
++        {
++            void *frames[48];
++            int count;
++            Dl_info native_symbol = {0};
++            dprintf(2, "READY_NATIVE_FAULT rip=%p fault=%p gs0_before=%p gs30_before=%p teb=%p pthread_teb=%p native_pthread=%p\n",
++                    rec.ExceptionAddress, siginfo->si_addr, ready_fault_gs0, ready_fault_gs30,
++                    data->teb, amd64_thread_data(data)->pthread_teb, pthread_self());
++            if (dladdr(rec.ExceptionAddress, &native_symbol))
++                dprintf(2, "READY_NATIVE_SYMBOL rip=%p image=%s base=%p symbol=%s symbolAddress=%p\n",
++                        rec.ExceptionAddress, native_symbol.dli_fname, native_symbol.dli_fbase,
++                        native_symbol.dli_sname ? native_symbol.dli_sname : "?", native_symbol.dli_saddr);
++            count = backtrace(frames, 48);
++            backtrace_symbols_fd(frames, count, 2);
++            dprintf(2, "READY_NATIVE_FAULT_END\n");
++        }
++    }
++#endif
+ 
+     save_context( data, &context, sigcontext );
+ 

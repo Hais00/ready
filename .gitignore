@@ -9,3 +9,15 @@ DXMTIntegration/Source/
 Evidence/*
 !Evidence/README.md
 __pycache__/
+# Application data stays private even when --data-root points at the checkout.
+/library.json
+/Profiles/
+/Games/
+/Prefixes/
+/Runtimes/
+/Logs/
+/Locks/
+/Sessions/
+/InstallLocks/
+/Backups/
+/Migration/

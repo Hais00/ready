@@ -12,6 +12,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include "InstallationLease.h"
 
 static volatile sig_atomic_t child_group=0;
 static volatile sig_atomic_t pending_signal=0;
@@ -27,7 +28,7 @@ static void forward_signal(int signal_number) {
 }
 static int usage(const char *message) {
     if(message)fprintf(stderr,"ReadySessionHost: %s\n",message);
-    fprintf(stderr,"usage: ReadySessionHost [--wine-server /path/wineserver --prefix /path/prefix] -- /path/program [args...]\n");
+    fprintf(stderr,"usage: ReadySessionHost [--wine-server /path/wineserver --prefix /path/prefix] [--installation /absolute/root] -- /path/program [args...]\n");
     return 64;
 }
 static int normal_status(int status) {
@@ -74,16 +75,19 @@ finish:
     return pid;
 }
 int main(int argc,char **argv) {
-    const char *server=NULL,*prefix=NULL;int command=0;
+    const char *server=NULL,*prefix=NULL,*installation=NULL,*installation_root=NULL;int command=0;
     for(int i=1;i<argc;i++){
         if(!strcmp(argv[i],"--")){command=i+1;break;}
         if(!strcmp(argv[i],"--wine-server") && i+1<argc)server=argv[++i];
         else if(!strcmp(argv[i],"--prefix") && i+1<argc)prefix=argv[++i];
+        else if(!strcmp(argv[i],"--installation") && i+1<argc)installation=argv[++i];
+        else if(!strcmp(argv[i],"--installation-lock-root") && i+1<argc)installation_root=argv[++i];
         else return usage("unknown or incomplete option");
     }
     if(command==0 || command>=argc || argv[command][0]!='/')return usage("program must be an absolute executable path after --");
     if(server && (server[0]!='/' || !prefix || prefix[0]!='/'))return usage("wine-server requires an absolute server path and explicit absolute prefix");
     if(prefix && prefix[0]!='/')return usage("prefix must be absolute");
+    if(installation_root && !installation)return usage("installation-lock-root requires installation");
     struct stat lease;
     if(fstat(STDIN_FILENO,&lease)!=0 || !S_ISREG(lease.st_mode) || lease.st_uid!=geteuid())return usage("stdin must be a regular lock file owned by this user");
     if(flock(STDIN_FILENO,LOCK_EX|LOCK_NB)!=0){perror("ReadySessionHost: prefix lease");return 73;}
@@ -94,6 +98,11 @@ int main(int argc,char **argv) {
     if(sigaction(SIGTERM,&action,NULL)!=0 || sigaction(SIGINT,&action,NULL)!=0){perror("ReadySessionHost: signal handlers");return 71;}
     struct sigaction ignore;memset(&ignore,0,sizeof(ignore));ignore.sa_handler=SIG_IGN;sigemptyset(&ignore.sa_mask);sigaction(SIGHUP,&ignore,NULL);
     sigset_t blocked,oldmask;sigemptyset(&blocked);sigaddset(&blocked,SIGTERM);sigaddset(&blocked,SIGINT);sigprocmask(SIG_BLOCK,&blocked,&oldmask);
+    int *installation_fds=NULL;size_t installation_fd_count=0;
+    if(installation){
+        int lease_result=ready_installation_read_lease(installation,installation_root,&installation_fds,&installation_fd_count);
+        if(lease_result){fprintf(stderr,"ReadySessionHost: installation lease %s\n",lease_result==73?"busy (download/update active)":"invalid or unsafe");return lease_result;}
+    }
     pid_t child=spawn_program(&argv[command],1,&oldmask);
     if(child<0){sigprocmask(SIG_SETMASK,&oldmask,NULL);return spawn_error==ENOENT?127:spawn_error==EACCES?126:71;}
     child_group=(sig_atomic_t)child;
@@ -112,6 +121,8 @@ int main(int argc,char **argv) {
         if(result==0 && server_result!=0)result=server_result;
     }
     // No LOCK_UN: closing the last inherited reference releases the flock.
+    for(size_t i=0;i<installation_fd_count;i++)close(installation_fds[i]);
+    free(installation_fds);
     close(STDIN_FILENO);
     return result;
 }

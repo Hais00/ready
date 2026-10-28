@@ -4,8 +4,18 @@ set -eu
 cd "$(dirname "$0")/.."
 sh Scripts/build_overlay.sh
 sh Scripts/build_session_host.sh
-swift build -c release
-app="$PWD/Build/ready.app"
+swift build -c release --product M1Launcher --jobs 2
+stage=$(mktemp -d "$PWD/Build/.ready-app.XXXXXX")
+app="$stage/ready.app"
+final="$PWD/Build/ready.app"
+previous=""
+cleanup() {
+  if [ ! -e "$final" ] && [ -n "$previous" ] && [ -e "$previous" ]; then
+    mv "$previous" "$final"
+  fi
+  rm -rf "$stage"
+}
+trap cleanup EXIT HUP INT TERM
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp .build/release/M1Launcher "$app/Contents/MacOS/ready"
 printf '%s\n' "$PWD" > "$app/Contents/Resources/development-root.txt"
@@ -24,4 +34,11 @@ cat > "$app/Contents/Info.plist" <<'EOF'
 </dict></plist>
 EOF
 /usr/bin/codesign --force --sign - "$app"
-printf '%s\n' "$app"
+/usr/bin/codesign --verify --strict "$app"
+if [ -e "$final" ]; then
+  mkdir -p "$PWD/Build/AppBackups"
+  previous="$PWD/Build/AppBackups/ready-$(date +%Y%m%d%H%M%S)-$$.app"
+  mv "$final" "$previous"
+fi
+mv "$app" "$final"
+printf '%s\n' "$final"

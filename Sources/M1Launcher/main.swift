@@ -10,7 +10,7 @@ final class ReadyWindow: NSWindow {
   override var canBecomeMain: Bool { true }
 }
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-  let paths = LauncherPaths()
+  let paths: LauncherPaths
   let project: URL
   var repository: LibraryRepository!
   var state = LibraryState.initial()
@@ -20,12 +20,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   var controllerObserver: NSObjectProtocol?
   var storeClient: StoreClient!
   var qrPanel: NSPanel?
+  var authenticationSession: UUID?
+  var authenticationRequest: UUID?
   var pendingLaunch: UUID?
-  init(project: URL) { self.project = project }
+  var maintenanceInProgress = false
+  init(project: URL, paths: LauncherPaths = LauncherPaths()) {
+    self.project = project
+    self.paths = paths
+  }
   func applicationDidFinishLaunching(_ notification: Notification) {
     do {
       repository = LibraryRepository(paths: paths)
       state = try repository.load()
+      if let plan = LegacyMigration.loadPlan(paths: paths),
+        plan.status == "copied-awaiting-real-validation-original-retained"
+      {
+        state = try LegacyMigration.bindLibrary(state, plan: plan, paths: paths)
+        try repository.save(state)
+      }
     } catch { showError(error) }
     guard let device = MTLCreateSystemDefaultDevice() else {
       showError(LauncherError.unavailable("Questo Mac non dispone di Metal."))
@@ -39,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       self.window.orderOut(nil)
       self.window.contentView = nil
     }
-    storeClient = StoreClient(project: project)
+    storeClient = StoreClient(project: project, stateRoot: paths.root)
     window = ReadyWindow(
       contentRect: NSRect(x: 0, y: 0, width: 1240, height: 760),
       styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -113,8 +125,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     !CommandLine.arguments.contains("--graphics-self-test") && !session.running
+      && !maintenanceInProgress
+  }
+  func windowShouldClose(_ sender: NSWindow) -> Bool { !maintenanceInProgress }
+  func windowWillClose(_ notification: Notification) {
+    if let panel = qrPanel, (notification.object as? NSWindow) === panel {
+      cancelAuthentication(closePanel: false)
+      qrPanel = nil
+    }
+  }
+  func cancelAuthentication(closePanel: Bool = true) {
+    authenticationSession = nil
+    if let request = authenticationRequest { storeClient?.cancel(request) }
+    authenticationRequest = nil
+    if closePanel {
+      qrPanel?.close()
+      qrPanel = nil
+    }
   }
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    if maintenanceInProgress {
+      showError(
+        LauncherError.failed("Attendi il termine dell’operazione sui dati prima di chiudere ready.")
+      )
+      return .terminateCancel
+    }
     if session?.running == true {
       let a = NSAlert()
       a.messageText = "Chiudere il gioco e ready?"
@@ -123,6 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       if a.runModal() != .alertFirstButtonReturn { return .terminateCancel }
       session.quit()
     }
+    storeClient?.cancelAll()
     return .terminateNow
   }
   func windowDidResize(_ notification: Notification) { canvas?.refresh() }
@@ -140,6 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     for (name, key, selector) in [
       ("Importa gioco…", "o", #selector(importGame)), ("Cerca…", "f", #selector(search)),
       ("Profili…", "u", #selector(profiles)), ("Account e runtime…", ",", #selector(settings)),
+      ("Dati e ripristino…", "", #selector(dataMaintenance)),
     ] {
       let item = library.submenu!.addItem(withTitle: name, action: selector, keyEquivalent: key)
       item.target = self
@@ -154,6 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     NSApp.mainMenu = menu
   }
   func action(_ action: CanvasAction) {
+    guard !maintenanceInProgress else { return }
     switch action {
     case .game(let id): activateGame(id)
     case .gameOptions(let id): gameOptions(id)
@@ -171,6 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
   @objc func toggleFullscreen() { window.toggleFullScreen(nil) }
   func refreshLocal() {
+    guard !maintenanceInProgress else { return }
     do {
       for var item in try LocalDiscovery.steamLibraries() {
         if let index = state.games.firstIndex(where: { $0.id == item.id }) {
@@ -201,6 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     canvas.refresh()
   }
   @objc func importGame() {
+    guard !maintenanceInProgress else { return }
     let panel = NSOpenPanel()
     panel.title = "Importa un’app macOS o un eseguibile Windows"
     panel.canChooseDirectories = false
@@ -230,7 +270,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
   }
   @objc func profiles() {
-    guard !session.running, pendingLaunch == nil else {
+    guard authenticationSession == nil else {
+      showError(
+        LauncherError.unavailable(
+          "Completa o annulla l’accesso allo store prima di cambiare profilo."))
+      return
+    }
+    guard !session.running, pendingLaunch == nil, !maintenanceInProgress,
+      authenticationSession == nil
+    else {
       showError(LauncherError.busy)
       return
     }
@@ -268,13 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
   func activateGame(_ id: String) {
     guard let index = state.games.firstIndex(where: { $0.id == id }) else { return }
-    var game = state.games[index]
-    if let preferences = state.gamePreferences?[
-      GamePreferences.key(profile: state.activeProfile, gameID: id)]
-    {
-      game.engine = preferences.engine
-      game.selectedVariant = preferences.selectedVariant
-    }
+    let game = state.configured(state.games[index])
     guard let variant = game.currentVariant else {
       gameOptions(id, advanced: false)
       return
@@ -288,13 +330,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
   }
   func gameOptions(_ id: String, advanced: Bool = true) {
+    guard !maintenanceInProgress else { return }
     guard let index = state.games.firstIndex(where: { $0.id == id }) else { return }
-    var game = state.games[index]
+    var game = state.configured(state.games[index])
     let preferenceKey = GamePreferences.key(profile: state.activeProfile, gameID: game.id)
-    if let preferences = state.gamePreferences?[preferenceKey] {
-      game.engine = preferences.engine
-      game.selectedVariant = preferences.selectedVariant
-    }
     let a = NSAlert()
     a.messageText = game.title
     a.informativeText =
@@ -322,7 +361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     a.addButton(withTitle: advanced ? "Salva opzioni" : "Opzioni avanzate…")
     a.addButton(withTitle: "Annulla")
     let result = a.runModal()
-    guard result != .alertThirdButtonReturn else { return }
+    guard result == .alertFirstButtonReturn || result == .alertSecondButtonReturn else { return }
     if !advanced, result == .alertSecondButtonReturn {
       gameOptions(id, advanced: true)
       return
@@ -336,8 +375,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     game.selectedVariant = game.variants[version.indexOfSelectedItem].id
     if state.gamePreferences == nil { state.gamePreferences = [:] }
+    let scopedVariants = state.gamePreferences?[preferenceKey]?.variants
     state.gamePreferences?[preferenceKey] = GamePreferences(
-      engine: game.engine, selectedVariant: game.selectedVariant)
+      engine: game.engine, selectedVariant: game.selectedVariant,
+      variants: scopedVariants)
     try? persist()
     if result == .alertFirstButtonReturn {
       if !game.variants[version.indexOfSelectedItem].installed {
@@ -349,11 +390,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
   }
   func launchGame(_ game: Game, variant: GameVariant) {
-    guard !session.running, pendingLaunch == nil else {
+    guard authenticationSession == nil else {
+      showError(
+        LauncherError.unavailable(
+          "Completa o annulla l’accesso allo store prima di avviare un gioco."))
+      return
+    }
+    guard !session.running, pendingLaunch == nil, !maintenanceInProgress else {
       showError(LauncherError.busy)
       return
     }
     var game = game
+    if variant.platform == .windows,
+      variant.executable?.hasPrefix(paths.legacyPrefix.path + "/") == true
+    {
+      showError(
+        LauncherError.unavailable(
+          "Migra prima i vecchi dati da Dati e ripristino: la sorgente originale resta conservata.")
+      )
+      return
+    }
     PEImports.annotate(&game, variant: variant)
     let profile = state.activeProfile
     let launchID = UUID()
@@ -412,12 +468,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let a = NSAlert()
     a.messageText = "Account e runtime"
     a.informativeText =
-      "Wine: \(cfg.wine ?? "in preparazione")\nKosmicKrisp: \(cfg.kosmicICD == nil ? "in preparazione":"rilevato")\nGPTK 4 beta 3: componente proprietario opzionale\n\nAmbienti isolati per gioco e profilo. Motori condivisi.\n\nDurante il gioco il frontend rilascia texture e drawable. Il direct-to-display deve essere verificato con Metal HUD."
+      "Wine: \(cfg.wineVersion ?? "in preparazione")\nKosmicKrisp: \(cfg.kosmicICD == nil ? "in preparazione":"rilevato")\nGPTK 4 beta 3: componente proprietario opzionale per valutazione\n\nAmbienti isolati per gioco e profilo. Motori condivisi.\n\nDurante il gioco il frontend rilascia texture e drawable. Il direct-to-display deve essere verificato con Metal HUD."
     a.addButton(withTitle: "Chiudi")
     a.addButton(withTitle: "Collega uno store…")
-    if a.runModal() == .alertSecondButtonReturn { connectStore() }
+    a.addButton(withTitle: "Dati e ripristino…")
+    let choice = a.runModal()
+    if choice == .alertSecondButtonReturn { connectStore() }
+    if choice == .alertThirdButtonReturn { dataMaintenance() }
   }
   func connectStore() {
+    guard !maintenanceInProgress else { return }
+    cancelAuthentication()
     let profile = state.activeProfile
     let a = NSAlert()
     a.messageText = "Account degli store"
@@ -431,7 +492,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     a.addButton(withTitle: "Sincronizza libreria")
     a.addButton(withTitle: "Annulla")
     let choice = a.runModal()
-    guard choice != .alertThirdButtonReturn else { return }
+    guard choice == .alertFirstButtonReturn || choice == .alertSecondButtonReturn else { return }
     let store = stores[pick.indexOfSelectedItem]
     if choice == .alertSecondButtonReturn {
       syncStore(store, profile: profile)
@@ -439,11 +500,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     canvas.message = "Accesso a \(store.title)…"
     canvas.refresh()
-    storeClient.request(operation: "auth_begin", store: store, profile: profile) {
+    let authentication = UUID()
+    authenticationSession = authentication
+    authenticationRequest = storeClient.request(
+      operation: "auth_begin", store: store, profile: profile
+    ) {
       [weak self] event in
-      guard let self else { return }
+      guard let self, self.authenticationSession == authentication else { return }
       switch event["type"] as? String {
       case "error":
+        self.authenticationSession = nil
+        self.authenticationRequest = nil
         self.qrPanel?.close()
         self.showError(LauncherError.failed(event["message"] as? String ?? "Accesso non riuscito"))
       case "qr":
@@ -464,22 +531,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         prompt.addButton(withTitle: "Collega")
         prompt.addButton(withTitle: "Annulla")
         guard prompt.runModal() == .alertFirstButtonReturn, !input.stringValue.isEmpty else {
+          self.authenticationSession = nil
+          self.authenticationRequest = nil
           return
         }
         let value = input.stringValue
         let options: [String: Any] = [
           "authState": authState, value.hasPrefix("https://") ? "redirectURL" : "code": value,
         ]
-        self.storeClient.request(
+        self.authenticationRequest = self.storeClient.request(
           operation: "auth_complete", store: store, profile: profile, options: options
         ) { [weak self] e in
+          guard let self, self.authenticationSession == authentication else { return }
           if e["type"] as? String == "result" {
-            self?.syncStore(store, profile: profile)
+            self.authenticationSession = nil
+            self.authenticationRequest = nil
+            self.syncStore(store, profile: profile)
           } else if e["type"] as? String == "error" {
-            self?.showError(LauncherError.failed(e["message"] as? String ?? "Accesso non riuscito"))
+            self.authenticationSession = nil
+            self.authenticationRequest = nil
+            self.showError(LauncherError.failed(e["message"] as? String ?? "Accesso non riuscito"))
           }
         }
       case "result":
+        self.authenticationSession = nil
+        self.authenticationRequest = nil
         self.qrPanel?.close()
         self.qrPanel = nil
         self.syncStore(store, profile: profile)
@@ -493,10 +569,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     guard let image = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 9, y: 9)),
       let cg = CIContext().createCGImage(image, from: image.extent)
     else { return }
+    if let panel = qrPanel,
+      let view = panel.contentView?.subviews.compactMap({ $0 as? NSImageView }).first
+    {
+      view.image = NSImage(cgImage: cg, size: NSSize(width: 300, height: 300))
+      panel.makeKeyAndOrderFront(nil)
+      return
+    }
     let panel = NSPanel(
       contentRect: NSRect(x: 0, y: 0, width: 360, height: 390), styleMask: [.titled, .closable],
       backing: .buffered, defer: false)
     panel.title = "Accedi con Steam Guard"
+    panel.delegate = self
     let view = NSImageView(frame: NSRect(x: 30, y: 70, width: 300, height: 300))
     view.image = NSImage(cgImage: cg, size: NSSize(width: 300, height: 300))
     view.imageScaling = .scaleProportionallyUpOrDown
@@ -547,6 +631,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
   }
   func installGame(index: Int, variant: GameVariant) {
+    guard !maintenanceInProgress else { return }
+    let profile = state.activeProfile
     let game = state.games[index]
     let base = paths.root.appendingPathComponent(
       "Games/\(game.store.rawValue)/\(SafePath.component(game.storeID))/\(variant.platform.rawValue)"
@@ -564,7 +650,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       "metadata": game.metadata?.mapValues { $0.foundation } ?? [:],
     ]
     storeClient.request(
-      operation: "download", store: game.store, profile: state.activeProfile, options: options
+      operation: "download", store: game.store, profile: profile, options: options
     ) { [weak self] event in
       guard let self else { return }
       switch event["type"] as? String {
@@ -581,6 +667,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           let i = self.state.games.firstIndex(where: { $0.id == game.id })
         {
           installed.id = variant.id
+          installed.installationRoot = event["installDir"] as? String ?? base.path
+          self.state.clearVariantOverride(profile: profile, gameID: game.id, variantID: variant.id)
           PEImports.annotate(&self.state.games[i], variant: installed)
           if let j = self.state.games[i].variants.firstIndex(where: { $0.id == variant.id }) {
             self.state.games[i].variants[j] = installed
@@ -606,6 +694,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           {
             var v = checked
             v.id = variant.id
+            v.installationRoot = base.path
+            self.state.clearVariantOverride(
+              profile: profile, gameID: game.id, variantID: variant.id)
             if let j = self.state.games[i].variants.firstIndex(where: { $0.id == variant.id }) {
               self.state.games[i].variants[j] = v
             }
@@ -618,36 +709,91 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
   func setupControllers() {
     GCController.shouldMonitorBackgroundEvents = true
-    func install(_ c: GCController) {
-      c.extendedGamepad?.buttonMenu.pressedChangedHandler = { [weak self] _, _, pressed in
-        guard pressed else { return }
-        DispatchQueue.main.async {
-          guard let self else { return }
-          if !self.session.running { self.profiles() }
+    let install: (GCController) -> Void = { [weak self] controller in
+      guard let self, let gamepad = controller.extendedGamepad else { return }
+      let parentSession = self.session!
+      var dpad = ControllerNavigation.AxisGate()
+      var stick = ControllerNavigation.AxisGate()
+      let route: (ControllerNavigation.Action) -> Void = { [weak self] action in
+        guard let self else { return }
+        let modal = NSApp.modalWindow ?? self.window.attachedSheet
+        switch ControllerNavigation.destination(
+          running: self.session.running, maintenance: self.maintenanceInProgress,
+          active: NSApp.isActive, hasModal: modal != nil,
+          authentication: self.authenticationSession != nil)
+        {
+        case .ignore: return
+        case .modal:
+          if let modal { ControllerNavigation.handleModal(action, window: modal) }
+          return
+        case .authentication:
+          if action == .cancel { self.cancelAuthentication() }
+          return
+        case .library: break
         }
-      }
-      c.extendedGamepad?.dpad.valueChangedHandler = { [weak self] _, x, y in
-        DispatchQueue.main.async {
-          guard let self else { return }
-          if self.session.running {
-            return
-          } else if abs(x) > 0.5 {
-            self.canvas.selected = max(
-              0, min(self.canvas.visibleGames.count - 1, self.canvas.selected + (x > 0 ? 1 : -1)))
-            self.canvas.refresh()
-          }
-        }
-      }
-      c.extendedGamepad?.buttonA.pressedChangedHandler = { [weak self] _, _, pressed in
-        guard pressed else { return }
-        DispatchQueue.main.async {
-          guard let self else { return }
-          if self.session.running {
-            return
-          } else if self.canvas.visibleGames.indices.contains(self.canvas.selected) {
+        switch action {
+        case .move(let direction):
+          let delta = direction == .left || direction == .up ? -1 : 1
+          self.canvas.selected = ControllerNavigation.movedSelection(
+            self.canvas.selected, count: self.canvas.visibleGames.count, delta: delta)
+          self.canvas.refresh()
+        case .activate:
+          if self.canvas.visibleGames.indices.contains(self.canvas.selected) {
             self.activateGame(self.canvas.visibleGames[self.canvas.selected].id)
           }
+        case .cancel:
+          self.canvas.filter = nil
+          self.canvas.query = ""
+          self.canvas.selected = 0
+          self.canvas.refresh()
+        case .profiles: self.profiles()
+        case .previousStore, .nextStore:
+          let stores: [Store?] = [nil] + Store.allCases.map { Optional($0) }
+          let current = stores.firstIndex { $0 == self.canvas.filter } ?? 0
+          let delta = action == .previousStore ? -1 : 1
+          self.canvas.filter =
+            stores[
+              ControllerNavigation.wrappedIndex(
+                current, count: stores.count, delta: delta)]
+          self.canvas.selected = 0
+          self.canvas.refresh()
         }
+      }
+      gamepad.dpad.valueChangedHandler = { _, x, y in
+        guard !parentSession.running else { return }
+        ControllerNavigation.enqueue {
+          if let direction = dpad.update(x: x, y: y, now: ProcessInfo.processInfo.systemUptime) {
+            route(.move(direction))
+          }
+        }
+      }
+      gamepad.leftThumbstick.valueChangedHandler = { _, x, y in
+        guard !parentSession.running else { return }
+        ControllerNavigation.enqueue {
+          if let direction = stick.update(x: x, y: y, now: ProcessInfo.processInfo.systemUptime) {
+            route(.move(direction))
+          }
+        }
+      }
+      gamepad.buttonA.pressedChangedHandler = { _, _, pressed in
+        guard !parentSession.running else { return }
+        if pressed { ControllerNavigation.enqueue { route(.activate) } }
+      }
+      gamepad.buttonB.pressedChangedHandler = { _, _, pressed in
+        guard !parentSession.running else { return }
+        if pressed { ControllerNavigation.enqueue { route(.cancel) } }
+      }
+      gamepad.buttonMenu.pressedChangedHandler = { _, _, pressed in
+        guard !parentSession.running else { return }
+        if pressed { ControllerNavigation.enqueue { route(.profiles) } }
+      }
+      gamepad.leftShoulder.pressedChangedHandler = { _, _, pressed in
+        guard !parentSession.running else { return }
+        if pressed { ControllerNavigation.enqueue { route(.previousStore) } }
+      }
+      gamepad.rightShoulder.pressedChangedHandler = { _, _, pressed in
+        guard !parentSession.running else { return }
+        if pressed { ControllerNavigation.enqueue { route(.nextStore) } }
       }
     }
     GCController.controllers().forEach(install)
@@ -688,7 +834,17 @@ if args.contains("--diagnostics") {
 } else {
   let app = NSApplication.shared
   app.setActivationPolicy(.regular)
-  let delegate = AppDelegate(project: project)
+  var dataPaths = LauncherPaths()
+  if let index = args.firstIndex(of: "--data-root") {
+    guard args.indices.contains(index + 1), args[index + 1].hasPrefix("/"), args[index + 1] != "/"
+    else {
+      FileHandle.standardError.write(
+        Data("--data-root requires an absolute application-data directory.\n".utf8))
+      exit(64)
+    }
+    dataPaths = LauncherPaths(root: URL(fileURLWithPath: args[index + 1]).standardizedFileURL)
+  }
+  let delegate = AppDelegate(project: project, paths: dataPaths)
   app.delegate = delegate
   withExtendedLifetime(delegate) { app.run() }
 }

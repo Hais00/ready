@@ -1,8 +1,8 @@
 {
-  "createdAt": "2026-10-28T00:38:37.649837+01:00",
+  "createdAt": "2026-10-28T01:51:39.664189+01:00",
   "goalComplete": false,
   "core": {
-    "checks": 19,
+    "checks": 22,
     "passed": true,
     "names": [
       "Valve manifests and malformed input",
@@ -15,6 +15,9 @@
       "Dependencies and registry remain isolated between games",
       "Non-destructive legacy migration and rollback source",
       "Migration preflight does not leave partial prefixes",
+      "Migrated executable bindings belong only to the assigned profile",
+      "Interrupted copies are archived and block only affected sessions",
+      "Installation roots contain the executable after resolving aliases",
       "Runtime upgrade never restores old Wine DLLs",
       "Legacy symlink cannot redirect migration into original data",
       "Store manifest identifiers preserve 64-bit integer precision",
@@ -27,10 +30,111 @@
     ]
   },
   "storeProtocols": {
-    "checks": 55,
+    "checks": 64,
     "passed": true,
     "realAccountsVerified": false
   },
+  "storeClient": {
+    "passed": true,
+    "checks": {
+      "auth_url": true,
+      "brokenInputPipeCleanup": true,
+      "cancelBeforeSpawnAndCancelAll": true,
+      "cancelExactChildrenAndGrandchildren": true,
+      "cancelQueuedTerminal": true,
+      "crash": true,
+      "dataRootKeychainNamespacesWithoutAccess": true,
+      "duplicate": true,
+      "error": true,
+      "fragmented": true,
+      "invalidRequestCleanup": true,
+      "launchFailureCleanup": true,
+      "quiet": true,
+      "result_crash": true,
+      "success": true,
+      "vaultFailure": true
+    },
+    "realKeychainUsed": false
+  },
+  "migrationCrash": {
+    "passed": true,
+    "checks": {
+      "copyKilledWithActualPartialFiles": true,
+      "uncommittedCopyNotMarkedComplete": true,
+      "partialDataArchivedWithoutDeletion": true,
+      "originalUnchangedAfterCrashAndRecovery": true,
+      "retryCopiesBothGames": true,
+      "libraryBoundToPrivateCopiesAfterCommit": true,
+      "originalUnchangedAfterRetry": true
+    },
+    "scope": "actual LauncherCore FileManager copy, SIGKILL, journal recovery and retry; synthetic files only"
+  },
+  "controllerPolicy": {
+    "passed": true,
+    "checks": {
+      "authenticationConsumesLibraryActions": true,
+      "axisDeadzone": true,
+      "axisDebouncesHeldUpdates": true,
+      "axisDominantHorizontal": true,
+      "axisHysteresisDoesNotRetrigger": true,
+      "axisNeutralRearmsAndVerticalDirection": true,
+      "axisRecoversAfterInvalidInput": true,
+      "axisRejectsNonFiniteInput": true,
+      "axisRepeatInterval": true,
+      "axisRepeatRateLimited": true,
+      "axisRepeatsAfterInitialDelay": true,
+      "axisWaitsForInitialRepeatDelay": true,
+      "libraryOnlyAfterOtherOwners": true,
+      "maintenanceIgnoresControllerEvenWithModal": true,
+      "modalCancelDoesNotChooseDestructiveTitleSubstring": true,
+      "modalCancelUsesExplicitButtonSemantics": true,
+      "modalPrecedesAuthenticationRouting": true,
+      "parentRouting-false-false-false": true,
+      "parentRouting-false-false-true": true,
+      "parentRouting-false-true-false": true,
+      "parentRouting-false-true-true": true,
+      "parentRouting-true-false-false": true,
+      "parentRouting-true-false-true": true,
+      "parentRouting-true-true-false": true,
+      "parentRouting-true-true-true": true,
+      "popupBoundsAndEmptyMenu": true,
+      "popupSkipsDisabledAndSeparatorItems": true,
+      "selectionBoundsAndEmptyLibrary": true,
+      "sessionOwnsControllerEvenWithModalAndAuthentication": true,
+      "storeCycleWrapsBothDirections": true
+    },
+    "physicalDeviceVerified": false,
+    "actualModalInteractionVerified": false
+  },
+  "appleEvaluation": {
+    "dx12GPUVerified": true,
+    "wineVersion": "wine-11.19",
+    "consumerPlayEnabled": false,
+    "binaryRedistributionEnabled": false,
+    "actualOverlayPaths": [
+      "metal4"
+    ],
+    "overlayGPUCompleted": 118,
+    "overlayGPUFailures": 0,
+    "hiddenTextureBytes": 0,
+    "appleEndToEndPixelReadbackVerified": false,
+    "directToDisplayVerified": false
+  },
+  "providerRoundTrip": {
+    "passed": true,
+    "checks": {
+      "baseWineWritesPrivateState": true,
+      "defaultAndEvaluationSourceConfigurationsRemainUnchanged": true,
+      "evaluationUnavailableWithoutExplicitOptIn": true,
+      "evaluationUsesItsOwnPurePE32Core": true,
+      "otherGameRegistryAndDLLsRemainUnchanged": true,
+      "returnToBaseRestoresPurePE32Core": true,
+      "roundTripPreservesRegistryAndPersistentPersonalFolders": true,
+      "samePrefixSwitchesToWineCXAndRendersDX12": true
+    },
+    "scope": "real SessionManager + keeper + Wine 11.20 \u2192 WineCX 11.19/Apple GPTK4b3 DX12 \u2192 Wine 11.20, same synthetic game/profile and combined runtime ID"
+  },
+  "runtimeBinaryRedistributionReady": false,
   "sessionHost": {
     "passed": true,
     "checks": {
@@ -47,7 +151,15 @@
       "failedChild": true,
       "missingChild": true,
       "invalidStdinRejected": true,
-      "nativeMetalOverlayHandoff": true
+      "nativeMetalOverlayHandoff": true,
+      "atomicKeeperRebuildPreservesLiveSession": true,
+      "nativeReaderBlocksSameNestedAndParentPythonWriters": true,
+      "nativeReaderAllowsPythonReaderAndSiblingWriter": true,
+      "twoNativeReadersShareInstallation": true,
+      "pythonWriterPreventsNativeChildSpawn": true,
+      "installationReadSurvivesLauncherCrash": true,
+      "installationReadCoversExactServerWait": true,
+      "invalidInstallationAndUnsafeLockRootRejected": true
     },
     "scope": "real processes, file locks, crash handoff and exact-prefix waiter"
   },
@@ -67,6 +179,8 @@
       "launchHookMainAfterInitializationBeforeSpawn": true,
       "missingHostPreflight": true,
       "noCommandLineOrLaunchSecretLogging": true,
+      "providerChangeDoesNotRestoreObsoleteDLLs": true,
+      "providerChangeReinitializesSamePrefix": true,
       "quickExitLifecycleOrdering": true,
       "reservedEnvironmentRejectedBeforeMutation": true,
       "timeoutKeepsLivePrefixLocked": true,
@@ -78,17 +192,21 @@
   "realWineSessions": {
     "passed": true,
     "checks": {
+      "activeWineSessionsBlockRealStoreWriter": true,
       "bothInitiallyLocked": true,
       "bothLeasesReleasedAfterExactServerWait": true,
       "callbacksMainThread": true,
       "distinctPrefixes": true,
       "quitADoesNotStopB": true,
       "realInitializationMarkers": true,
+      "realStoreWriterPreventsWindowsChild": true,
+      "sameSessionStartsAfterWriterRelease": true,
       "windowsAHeartbeatStops": true,
-      "windowsBHeartbeatStops": true
+      "windowsBHeartbeatStops": true,
+      "writerDoesNotBlockPrefixInitialization": true
     },
     "scope": "actual SessionManager + native keeper + Wine + compiled Windows WinAPI helper; no protocol mocks, account, or game",
-    "runtimeID": "ready-runtime-b4a90f0d97ce75cdd949+ready-dxmt-24e0d9894971a103e68d"
+    "runtimeID": "ready-runtime-b4a90f0d97ce75cdd949+ready-dxmt-fed085e828b5281fc1e4"
   },
   "winePE32": {
     "verified": true,
@@ -121,10 +239,12 @@
   "openGates": [
     "Real account login, entitlement downloads and commercial game launch",
     "Actual direct-to-display mode; current tested fullscreen baseline is Composited",
-    "D3D12 / latest proprietary Apple runtime ABI integration",
+    "Open DX12 production path; Apple GPU path is verified only for local evaluation under its license",
     "Physical-controller behavior and in-game input suppression",
     "Native macOS game save/account isolation and complete release packaging",
-    "Real legacy user-data migration beyond synthetic copies; guided UI and interrupted-copy recovery",
-    "Shared game update coordination with already-running consumers"
+    "Guided migration UI visual verification (Mac locked during current attempt)",
+    "Real legacy user-data/game migration and rollback interrupted mid-move",
+    "External updaters that do not participate in the installation lease protocol",
+    "Corresponding source, build provenance and license notices for bootstrapped runtime dependency binaries"
   ]
 }

@@ -13,6 +13,12 @@ jobs:
           swift run --jobs 2 ReadyCoreProbe
       - name: Store protocol tests
         run: python3 -m unittest discover -s Tests/StoreBridgeTests -v
+      - name: Store client lifecycle without real accounts
+        run: python3 Scripts/test_store_client.py
+      - name: Controller navigation policy
+        run: python3 Scripts/test_controller_navigation.py
+      - name: Interrupted migration copy and recovery
+        run: python3 Scripts/test_migration_crash.py
       - name: Overlay compile
         run: |
           sdk_major="$(xcrun --show-sdk-version | cut -d. -f1)"

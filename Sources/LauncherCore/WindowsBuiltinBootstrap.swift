@@ -14,8 +14,10 @@ public enum WindowsBuiltinBootstrap {
     SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined()
   }
   /// Caller must hold this prefix's lease. Existing custom DLLs are preserved.
-  public static func prepare(runtime: RuntimeConfiguration, prefix: URL) throws {
-    guard let directory = runtime.builtin32Directory else { return }
+  public static func prepare(
+    runtime: RuntimeConfiguration, prefix: URL, engine: GraphicsEngine? = nil
+  ) throws {
+    guard let directory = runtime.bootstrap32Directory(engine: engine) else { return }
     let fm = FileManager.default
     let source = URL(fileURLWithPath: directory)
     guard fm.fileExists(atPath: source.appendingPathComponent("kernel32.dll").path) else {

@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/dappermint/winecx",
+  "sourceCommit": "9f3f6447844add700bc0dde650e4f398fd5f69ab",
+  "sourceBranchAtSelection": "wine1119",
+  "wineVersion": "11.19",
+  "selectedAt": "2026-10-28",
+  "archiveURL": "https://codeload.github.com/dappermint/winecx/tar.gz/9f3f6447844add700bc0dde650e4f398fd5f69ab",
+  "archiveSHA256": "a248a69e794b0dcfc86fea82dc5b67070611ca285e5033c9cba1fd4f56fd6a6b",
+  "license": "LGPL-2.1-or-later",
+  "licenseSHA256": "ae025f125a5d639f0f7abe5146efa1e3d7453cc10b744b2910806fa3f46626ef",
+  "upstreamSourceModified": false,
+  "purpose": "Optional Apple-compatible Wine provider; upstream Wine 11.20 remains the default",
+  "bridgeFileLicenses": {
+    "dlls/winemac.drv/d3dmetal.c": {
+      "license": "LGPL-2.1-or-later",
+      "sha256": "97b7b638080d56d9511730e7cd062b636a349bf2d7a026bbc349e8fc963e279b",
+      "copyright": [
+        "Copyright 2023 Brendan Shanks for CodeWeavers, Inc."
+      ]
+    },
+    "dlls/winemac.drv/d3dmetal_objc.h": {
+      "license": "LGPL-2.1-or-later",
+      "sha256": "6eeb595910f4dd495786b3d206d54e6859edbcf234b267b4245849479639eb56",
+      "copyright": [
+        "Copyright 2025 Brendan Shanks for CodeWeavers, Inc."
+      ]
+    },
+    "dlls/winemac.drv/d3dmetal_objc.m": {
+      "license": "LGPL-2.1-or-later",
+      "sha256": "6a2f914b8d1ece300170e388716bd6c26cf52d222aa9f32aac8a203e3b9f3976",
+      "copyright": [
+        "Copyright 2025 Brendan Shanks for CodeWeavers, Inc."
+      ]
+    },
+    "dlls/winemac.drv/macdrv.h": {
+      "license": "LGPL-2.1-or-later",
+      "sha256": "45975def370c542f3f5c06719decd12efdda4a1dc9544a83e62ff3e329d0787a",
+      "copyright": [
+        "Copyright 1996 Alexandre Julliard",
+        "Copyright 1999 Patrik Stridvall",
+        "Copyright 2011, 2012, 2013 Ken Thomases for CodeWeavers Inc."
+      ]
+    },
+    "dlls/ntdll/loader.c": {
+      "license": "LGPL-2.1-or-later",
+      "sha256": "17f24750a8a809869fc8c84163d7144a44af9490fd982a8e38d93256945f0e1e",
+      "copyright": [
+        "Copyright 1995, 2003 Alexandre Julliard",
+        "Copyright 2002 Dmitry Timoshkov for CodeWeavers"
+      ]
+    },
+    "dlls/ntdll/unix/loader.c": {
+      "license": "LGPL-2.1-or-later",
+      "sha256": "990a122df6b93243d5eaadb9baa0e5cd70981703c75179bf9e210ced1415d2d4",
+      "copyright": [
+        "Copyright (C) 2020 Alexandre Julliard"
+      ]
+    },
+    "dlls/ntdll/unix/unix_private.h": {
+      "license": "LGPL-2.1-or-later",
+      "sha256": "f80d9f473dc0f42011b7fd3662960ab0371ba2712ad5381a9d852854bf66d65d",
+      "copyright": [
+        "Copyright (C) 2020 Alexandre Julliard"
+      ]
+    },
+    "dlls/ntdll/unix/signal_x86_64.c": {
+      "license": "LGPL-2.1-or-later",
+      "sha256": "3fa1d950579438c5767ce92a177d528f37d5987f209b9222670cc3d06a380b1c",
+      "copyright": [
+        "Copyright 1999, 2005 Alexandre Julliard"
+      ]
+    }
+  },
+  "applePayloadOrSDKHeaderPathsFound": [],
+  "systemSDKHeadersRedistributed": false
+}

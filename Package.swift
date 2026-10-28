@@ -5,7 +5,7 @@ let package = Package(
   name: "M1Launcher", platforms: [.macOS(.v14)],
   products: [
     .executable(name: "M1Launcher", targets: ["M1Launcher"]),
-    .library(name: "LauncherCore", targets: ["LauncherCore"]),
+    .library(name: "LauncherCore", type: .static, targets: ["LauncherCore"]),
     .executable(name: "ReadyCoreProbe", targets: ["ReadyCoreProbe"]),
   ],
   targets: [

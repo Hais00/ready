@@ -17,7 +17,7 @@ static BOOL RDEnabled, RDVisible, RDInjectionSupported, RDMetal3Hooked, RDMetal4
 static NSInteger RDSelection;
 static int64_t RDControlSequence = INT64_MIN;
 static uint64_t RDFrameCount, RDOverlayFrameCount, RDActionSequence, RDGPUWorkCount;
-static uint64_t RDControlReadCount;
+static uint64_t RDControlReadCount, RDGPUCompletedCount, RDGPUFailureCount, RDMetal3GPUWorkCount, RDMetal4GPUWorkCount;
 static NSString *RDRequestedAction = @"", *RDError = @"";
 static NSMutableDictionary<NSString *, NSValue *> *RDOriginals;
 static NSMapTable<id<MTLTexture>,id<CAMetalDrawable>> *RDLiveDrawables;
@@ -64,7 +64,9 @@ static NSDictionary *RDStatus(void) {
     return @{@"schema":@1,@"pid":@(getpid()),@"visible":@(RDVisible),@"selection":@(RDSelection),
         @"frameCount":@(RDFrameCount),@"overlayFrameCount":@(RDOverlayFrameCount),
         @"metalAllocatedBytes":@(bytes),@"trackedTextureBytes":@(bytes),
-        @"gpuOverlaySubmissions":@(RDGPUWorkCount),@"injectionSupported":@(RDInjectionSupported),
+        @"gpuOverlaySubmissions":@(RDGPUWorkCount),
+        @"metal3OverlaySubmissions":@(RDMetal3GPUWorkCount),@"metal4OverlaySubmissions":@(RDMetal4GPUWorkCount),
+        @"completedGPUOverlaySubmissions":@(RDGPUCompletedCount),@"failedGPUOverlaySubmissions":@(RDGPUFailureCount),@"injectionSupported":@(RDInjectionSupported),
         @"metal3Hooked":@(RDMetal3Hooked),@"metal4Hooked":@(RDMetal4Hooked),
         @"requestedAction":RDRequestedAction ?: @"",@"actionSequence":@(RDActionSequence),
         @"controlSequence":@(RDControlSequence),@"error":RDError ?: @"",
@@ -194,7 +196,15 @@ static void RDText(CGContextRef context,NSString *text,CGFloat x,CGFloat y,CGFlo
     [encoder setVertexBytes:extents length:sizeof(extents) atIndex:0];[encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];[encoder endEncoding];
     // Some hosts use unretained command buffers. Explicitly retain what this pass needs until completion.
     id<MTLTexture> keepTexture=self.panel;id<MTLRenderPipelineState> keepPipeline=pipeline;
-    [command addCompletedHandler:^(id<MTLCommandBuffer> done){(void)keepTexture;(void)keepPipeline;}];
+    [command addCompletedHandler:^(id<MTLCommandBuffer> done){
+        (void)keepTexture;(void)keepPipeline;
+        [RDLock lock];
+        BOOL failed=done.status!=MTLCommandBufferStatusCompleted || done.error!=nil;
+        if(failed){RDGPUFailureCount++;RDError=done.error.localizedDescription ?: @"Overlay command buffer did not complete successfully";}
+        else RDGPUCompletedCount++;
+        if(failed || RDGPUCompletedCount==1 || RDGPUCompletedCount%120==0)RDWriteStatus();
+        [RDLock unlock];
+    }];
     return YES;
 }
 @end
@@ -258,7 +268,7 @@ static void RDCommitHook(id<MTLCommandBuffer> self,SEL cmd) {
     for(id<CAMetalDrawable> drawable in drawables){
         RDFrameCount++;BOOL show=RDShouldRender();
         RDEmitting=YES;
-        if(show && [RDRendererForDevice(self.device) encodeOn:self texture:drawable.texture layer:drawable.layer]){RDOverlayFrameCount++;RDGPUWorkCount++;}
+        if(show && [RDRendererForDevice(self.device) encodeOn:self texture:drawable.texture layer:drawable.layer]){RDOverlayFrameCount++;RDGPUWorkCount++;RDMetal3GPUWorkCount++;}
         RDEmitting=NO;
     }
     IMP original=RDOriginal(self,cmd);
@@ -285,7 +295,7 @@ static void RDSignalDrawableHook(id<MTL4CommandQueue> self,SEL cmd,id<MTLDrawabl
                     [overlay encodeSignalEvent:resources.event value:end];
                     // Order actual game work -> overlay work -> original drawable signal entirely on GPU.
                     [self signalEvent:resources.event value:begin];[overlay commit];[self waitForEvent:resources.event value:end];
-                    resources.eventValue=end;RDOverlayFrameCount++;RDGPUWorkCount++;
+                    resources.eventValue=end;RDOverlayFrameCount++;RDGPUWorkCount++;RDMetal4GPUWorkCount++;
                 }
             }
         }

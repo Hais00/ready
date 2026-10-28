@@ -39,6 +39,14 @@ are coalesced by macOS; this is not a low-latency IPC guarantee.
 - `metalAllocatedBytes` / `trackedTextureBytes` count the overlay panel texture only,
   not every internal driver allocation. The probe separately records the device's
   `currentAllocatedSize`. Neither metric measures WindowServer's memory.
+- `gpuOverlaySubmissions` counts encoded overlay passes, while
+  `completedGPUOverlaySubmissions` counts those whose command buffer completed
+  successfully. `failedGPUOverlaySubmissions` and `error` report failures. In-flight
+  completions can arrive just after hide; wait for them before comparing snapshots.
+- `metal3OverlaySubmissions` and `metal4OverlaySubmissions` identify the actual
+  entry path that injected the pass. The tiny Metal 3 helper queue in a Metal 4
+  path does not count again as a Metal 3 path. Installed hook flags alone do not
+  establish which API the game actually used.
 - `directToDisplayVerified` deliberately remains false. The overlay cannot infer
   direct scanout merely from an opaque layer or full-screen window.
 
@@ -112,7 +120,9 @@ slices. The tests run native arm64 and x86_64 through Rosetta on the actual M1:
 - Two simultaneous injected processes have independent controls and status. Sending
   quit/resume to one does not hide, quit, or modify the other's action state.
 
-Evidence lives in `Evidence/overlay-*.json` and PNGs. Timings are diagnostics of a
+Builds compile and sign fresh temporary inodes, then publish the dylib and probe
+with same-filesystem renames. They do not overwrite the inode a running process has
+mapped. Evidence lives in `Evidence/overlay-*.json` and PNGs. Timings are diagnostics of a
 synchronized synthetic probe, **not gaming performance benchmarks**.
 
 The real Windows Vulkan swapchain probe also passes through ReadySessionHost →
@@ -128,6 +138,43 @@ waits for the exact prefix and removes its temporary files. On the tested M1 run
 tracked overlay texture bytes change 0 → 835,584 → 0. Evidence is
 `Evidence/overlay-wine-present.json`. This verifies that Windows Vulkan path; it does
 not establish arbitrary game or Direct3D backend compatibility.
+
+The optional local Apple/WineCX evaluation has a separate integration probe:
+
+```sh
+python3 Scripts/test_apple_overlay.py --api d3d11
+python3 Scripts/test_apple_overlay.py --api d3d12
+```
+
+It requires the frozen local provider referenced by `Runtime/evaluation-runtime.json`,
+keeps that configuration disabled for consumer play, and checks that the default
+`Runtime/runtime.json` remains byte-identical. It starts a fresh private prefix under
+the native keeper and clones the matching pure WineCX PE32 bootstrap before Wineboot.
+The resulting Apple graphics DLLs are checked against the frozen provider's hashes.
+No Apple binary or license is added to tracked source or the application bundle.
+
+The real D3D11 run on M1 completed 600 Windows presentations at feature level
+11_0. With the overlay shown, GPU-completed passes increased; after hide they drained
+without failures and stayed stable while game frames continued, and the tracked
+panel texture returned from 835,584 bytes to 0. In the instrumented repeat, the
+observed overlay entry was Metal 3 (119 passes, all completed / 0 failed) even though
+Metal 4 was requested; installed hook flags are not treated as path evidence.
+`Evidence/overlay-apple-d3d11.json`
+records actual game PID, hashes, phase snapshots, and prefix cleanup. This establishes
+command-buffer/drawable integration for that synthetic Apple backend path. It does
+**not** establish Apple end-to-end pixel output, arbitrary game compatibility,
+fullscreen, or direct-to-display. The desktop was locked, and no UI control or screen
+observation was performed. The six native Metal path tests separately retain their
+actual pixel readback checks.
+
+The D3D12 swapchain probe also passed with `D3DM_MTL4=1`: 600 submitted shader frames,
+600 successful presentations, and zero occluded presents. The overlay's actual Metal 4
+entry recorded 118 passes, all GPU-completed with zero failures; the Metal 3 entry
+recorded zero. Counts stayed at 118 through a later hidden frame snapshot while the
+texture allocation was zero. `Evidence/overlay-apple-d3d12.json` records this specific
+local evaluation result. The per-path counters, rather than the requested environment
+or hook-installation flags, establish the observed injection path. The same pixel,
+fullscreen, direct-display, and arbitrary-game verification limits still apply.
 
 For a framebuffer-only fullscreen probe, run
 `Build/ReadyMetalProbe.app/Contents/MacOS/ReadyMetalProbe` with the injection environment
@@ -153,9 +200,10 @@ in its observed JSON output. No system-wide capture or security settings were ch
 
 - Direct-to-display with the overlay visible must be verified with the Metal HUD or
   Instruments for each real backend. A fullscreen probe passing is not sufficient.
-- DXVK/MoltenVK and GPTK/D3DMetal game processes still need end-to-end testing.
-  The successful Wine/KosmicKrisp Windows Vulkan probe establishes one real backend
-  path, alongside the synthetic Metal contract tests.
+- DXVK/MoltenVK and arbitrary GPTK/D3DMetal games still need end-to-end testing.
+  Wine/KosmicKrisp Windows Vulkan and the local Apple D3D11/D3D12 swapchain evaluations
+  establish specific backend integration paths, alongside the Metal contract tests.
+  Apple end-to-end pixel output remains unverified.
 - Hardened-runtime/library-validation restrictions may reject dynamic injection.
   Do not disable SIP or alter third-party code signatures to claim compatibility.
 - Games acquiring drawables exclusively through other APIs such as an internal

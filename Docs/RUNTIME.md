@@ -9,6 +9,7 @@ supplies its own `WINEPREFIX`. Native macOS games have no Wine prefix.
 | Component | Version | Source / provenance |
 | --- | --- | --- |
 | Wine | 11.20 development | `Vendor/wine`; public WineHQ source recorded in `sources.lock.json` |
+| Optional WineCX provider | 11.19 development, `9f3f6447844add700bc0dde650e4f398fd5f69ab` | public LGPL compatibility source; `Scripts/runtime_winecx.lock.json` |
 | KosmicKrisp | Mesa 26.3.0-rc2 | `Vendor/mesa`; built for arm64 and x86_64 |
 | Vulkan Loader / headers | 1.4.366 | Khronos tagged source; `Scripts/runtime_fetch.py` |
 | MoltenVK | 1.4.2 | source in `Vendor/moltenvk`; official universal binary for local tests |
@@ -60,8 +61,9 @@ These are synthetic tests, not game compatibility or direct display guarantees.
 | DXMT / Metal | D3D11 feature level 11_0, SM5 vertex/pixel shader rasterization with target readback, 600 presented frames | Individual games and direct display remain unverified |
 | DXVK / KosmicKrisp | Device gate fails | Upstream KosmicKrisp lacks required `fillModeNonSolid` |
 | DXVK / MoltenVK | Instance gate repaired; device gate fails | Required `geometryShader` unsupported |
-| VKD3D-Proton / KosmicKrisp | Device gate fails | DXVK DXGI adapter filtering fails; builtin DXGI experiment returns E_INVALIDARG |
-| Apple D3DMetal 4.0b3 | Framework and Unix bridge load in isolated Wine projection | Initialization faults; D3D11/D3D12 remain disabled |
+| VKD3D-Proton / KosmicKrisp | Device gate fails | DXVK DXGI filter fails; direct builtin-DXGI diagnostic additionally faults in Wine Vulkan property query |
+| Apple D3DMetal 4.0b3 / upstream Wine 11.20 | Framework and Unix bridge load | Native GS/TLS incompatibility; disabled |
+| Apple D3DMetal 4.0b3 / WineCX 11.19 | D3D11 FL11_0 buffer readback; D3D12 GPU copies, clear, SM5 shader draw/readback and 600 shader swapchain frames | Local development/evaluation only, PE64; product selection disabled |
 
 DXVK and VKD3D probes use native-only DLL overrides. Allowing builtin fallback
 would otherwise misreport a WineD3D feature-level-9_3 device as a successful DXVK
@@ -166,10 +168,84 @@ native-only override. A separate Wine projection installs the PE shims, Unix
 symlinks, complete external directory, and framework together. The final loader
 trace confirms the actual local 4.0b3 D3DMetal, libd3dshared, metalirconverter and
 dxccontainer loaded. Initialization then faults in the native thread boundary
-and times out; no successful device or rendering is claimed. The public Apple
-Wine tap and LGPL WineCX sources are used to investigate the compatibility ABI.
+and times out with upstream Wine 11.20. The public Apple Wine tap and LGPL
+WineCX sources establish the required compatibility ABI.
 `Evidence/runtime-apple-projection-complete.json` and `runtime-apple-seh.log`
 retain the real failed result. The launcher keeps this optional engine disabled.
+
+An isolated diagnostic Wine module now establishes the native failure more
+precisely. Before Wine's signal handler restores native TLS, GS slot 0 is zero
+and GS slot 0x30 equals the Windows TEB. The native pthread TLS base remains
+valid in Wine's thread data. `dladdr` inside the same faulting process identifies
+`pthread_setname_np+51` (read from address 0) and `pthread_setspecific+74` (write
+to 0x8e8). Resolving symbols inside the same process avoids cross-process ASLR
+assumptions. The stack unwinder stops at the signal trampoline, so a full caller
+chain is not claimed. This is a native thread-context ABI failure, not a missing
+Vulkan feature or proof that M1 cannot execute D3D12.
+
+`Scripts/runtime_trace_native_fault.py` compiles only a copied LGPL Wine signal
+source with observation/logging hooks. `runtime_apple_trace.py --observer-ntdll
+Runtime/wine-native-fault-observer/ntdll.so --api dx12` runs it in a complete,
+separate synthetic Apple projection. No Apple instructions are decoded or
+modified, no security setting changes, and no active runtime is replaced.
+`Evidence/runtime-apple-gs-diagnosis.json` records the actual GS values, public
+symbol resolutions, observer hash, and limits of this diagnostic.
+
+The public [WineCX compatibility source](https://github.com/dappermint/winecx/tree/9f3f6447844add700bc0dde650e4f398fd5f69ab)
+retains the compatible native-GS model and includes the LGPL D3DMetal driver
+hooks, the 24-slot `macdrv_functions` window adapter, and non-native code-region
+handling. This unmodified source was successfully built and reports `wine-11.19`.
+The source archive and eight bridge/ABI file license grants are hash-pinned in
+`Scripts/runtime_winecx.lock.json`; copyrights and scope are recorded in
+`Scripts/runtime_winecx_NOTICE.txt`. The audited source archive contains no
+D3DMetal framework, libd3dshared, native dylib/metallib payload, or copied
+Metal.h/AppKit.h system SDK header. The pure source build contains no Apple
+evaluation payload. Wine 11.20 remains the default runtime.
+
+For a prepared optional provider, the **pure** WineCX tree must be frozen before
+projecting Apple's PE/Unix libraries and framework into a separate local engine.
+Its `engineBootstrap32Dirs` entry must reference pure WineCX i386 builtins. Using
+the default Wine 11.20 bootstrap for a different Wine host would mix core ABIs.
+The selected host/pure bootstrap participates in prefix initialization identity.
+
+The freestanding `Scripts/runtime_d3d12_probe.c` exercises queue copies through
+a default GPU buffer, fence completion, render-target clear/readback, HLSL SM5
+vertex/pixel compilation, root signature and graphics pipeline creation, and a
+draw whose 256 output pixels must all match. All gates passed with source-built
+WineCX 11.19 and local Apple 4.0b3: actual GPU buffer readback, clear/readback,
+and 256 green pixels from the compiled shader draw. The trace loads the precise
+projected Apple DLLs, libd3dshared, D3DMetal 4.0b3, and shader converter. Wine's
+`d3dcompiler_47` also imports WineD3D for compilation helpers; this auxiliary
+module load is separate from the Apple D3D12 renderer. Prefix/engine Apple DLL
+hashes match. Evidence: `Evidence/runtime-winecx-probes.json` and module logs.
+
+`Scripts/runtime_d3d12_present.c` additionally creates a real HWND/DXGI swapchain,
+compiles the SM5 shaders and PSO, draws a full-screen triangle, waits on a GPU
+fence, and presents each frame. The frozen evaluation Wine wrapper passed 600
+submitted shader frames and 600 S_OK presents, with zero occluded presents,
+requesting `D3DM_MTL4=1`. Its deliberate 16 ms sleep is test pacing, not a frame
+rate measurement. `Evidence/runtime-winecx-dx12-present.json` records the result.
+This does not establish direct display or any individual game's compatibility.
+
+The injected overlay also passed inside this Apple D3D12 process: the observer
+recorded 118 Metal 4 overlay entries, zero Metal 3 entries, 118 completed GPU
+submissions and zero failures. Showing the overlay used 835584 texture bytes;
+hiding it returned to zero bytes with the counter stable at the later hidden
+frame. `Evidence/overlay-apple-d3d12.json` records this actual process/Metal 4
+path. Native tests separately verify pixels for all six overlay paths. No
+end-to-end pixel-difference result inside Apple's drawable or direct display
+result is claimed.
+
+The local evaluation provider is immutable and separate from the pure WineCX
+provider. `Scripts/runtime_freeze_apple.py` writes only
+`Runtime/evaluation-runtime.json`, verifies the default configuration remains
+unchanged, and preserves the original Apple notices. The fragment records
+technical D3D11/D3D12 proof while setting `evaluationOnlyEngines=["d3dMetal"]`,
+`evaluationModeEnabled=false`, `enabledForConsumerPlay=false`, and the exact
+Apple license hash. Core blocks its selection until evaluation mode is explicitly
+enabled in a **synthetic development test root**. The normal GUI/default runtime
+does not enable or bundle the Apple provider. A GPU pass does not make Apple's
+software open source or extend its license scope.
 
 ## Actual prefix isolation and persistence
 
@@ -207,8 +283,26 @@ python3 Scripts/runtime_freeze.py
 See `Docs/DXMT.md` for the pinned DXMT preparation/device/shader steps. After
 installing the window adapter in the isolated DXMT Wine projection and passing
 the standalone presentation probe, run `python3 Scripts/runtime_freeze_dxmt.py`.
-`python3 Scripts/runtime_smoke.py --compile-only` builds both presentation probes.
+`python3 Scripts/runtime_smoke.py --compile-only` builds the presentation probes.
 The generated probes and runtime files remain local ignored build outputs.
+
+For the separate local Apple development/evaluation experiment, with the complete
+redist and its original license already obtained separately:
+
+```sh
+python3 Scripts/runtime_build_winecx.py fetch
+python3 Scripts/runtime_build_winecx.py configure
+python3 Scripts/runtime_build_winecx.py build --jobs 2
+python3 Scripts/runtime_winecx_probe.py prepare --apple-root /path/to/local/redist-with-license
+python3 Scripts/runtime_winecx_probe.py probe
+python3 Scripts/runtime_freeze_apple.py
+```
+
+Preparation refuses to overwrite an existing experiment. A new proof uses its
+own synthetic prefix; after exact-prefix server shutdown, that fixture can be
+removed while keeping source, installed runtimes, immutable providers and reports.
+No Apple download, license-dialog acceptance, public distribution, or consumer
+selection is performed by this recipe.
 
 Dependency headers currently come from locally fetched, uninstalled Homebrew
 bottles (GnuTLS 3.8.13_2 and FreeType 2.15.0). Runtime dependency dylibs are

@@ -21,7 +21,17 @@ public struct RuntimeConfiguration: Codable {
   public var builtin32Directory: String?
   public var engineDLLs32: [String: String]?
   public var engineArchitectures: [String: [String]]?
+  public var engineBootstrap32Dirs: [String: String]?
+  public var evaluationOnlyEngines: [String]?
+  public var evaluationModeEnabled: Bool?
   public var runtimeIdentity: String { runtimeID ?? wineVersion ?? wine ?? "unknown" }
+  public func bootstrap32Directory(engine: GraphicsEngine?) -> String? {
+    engine.flatMap { engineBootstrap32Dirs?[$0.rawValue] } ?? builtin32Directory
+  }
+  public func initializationIdentity(engine: GraphicsEngine) -> String {
+    runtimeIdentity + ":wine:" + (engineWineBinaries?[engine.rawValue] ?? wine ?? "unavailable")
+      + ":pe32:" + (bootstrap32Directory(engine: engine) ?? "none")
+  }
   public init(
     wine: String? = nil, wineServer: String? = nil, wineBoot: String? = nil,
     kosmicICD: String? = nil, moltenICD: String? = nil, vulkanLibrary: String? = nil,

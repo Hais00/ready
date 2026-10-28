@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Actual SessionManager/Wine sessions, with two freshly initialized isolated prefixes.
+"""Actual SessionManager/Wine sessions with fresh isolated prefixes and real store locks.
 
 Compiles our Windows WinAPI heartbeat helper locally; no game, account, downloaded
 fixture, external template, or user data is used. Runtime configuration is read by
 SessionManager from this project's existing Runtime/runtime.json and never modified.
 """
-import fcntl,hashlib,json,os,pathlib,shutil,subprocess,time,uuid
+import fcntl,hashlib,json,os,pathlib,shutil,subprocess,time,uuid,sys
+from swift_probe_support import prepare_core
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 HEARTBEAT_SOURCE=r'''
 /* SPDX-License-Identifier: GPL-3.0-only */
@@ -48,13 +49,10 @@ def build():
     run(['/opt/homebrew/opt/llvm/bin/clang','--target=x86_64-windows','--no-default-config','-ffreestanding','-fno-builtin','-fno-stack-protector','-O2','-c',source,'-o',out/'heartbeat.obj'])
     executable=out/'heartbeat.exe'
     run(['/opt/homebrew/opt/lld/bin/lld-link','/entry:mainCRTStartup','/subsystem:console','/machine:x64','/nodefaultlib',out/'heartbeat.obj',out/'kernel32.lib','/out:'+str(executable)])
-    run(['swift','build'])
+    products,modules,archive=prepare_core()
     run(['sh',ROOT/'Scripts/build_session_host.sh'])
-    directory=pathlib.Path(subprocess.check_output(['swift','build','--show-bin-path'],cwd=ROOT,text=True).strip())
-    modules=directory if (directory/'LauncherCore.swiftmodule').exists() else directory/'Modules'
     command=['swiftc','-swift-version','5','-parse-as-library','-I',modules,ROOT/'Sources/M1Launcher/SessionManager.swift',ROOT/'Synthetic/ReadyWineSessionProbe.swift']
-    if (directory/'libLauncherCore.a').exists():command+=['-L',directory,'-lLauncherCore']
-    else:command+=list((directory/'LauncherCore.build').glob('*.o'))
+    command += [archive]
     command+=['-framework','AppKit','-o',ROOT/'Build/ReadyWineSessionProbe']
     run(command)
     return executable
@@ -86,10 +84,39 @@ def cleanup(scratch):
 def main():
     executable=build()
     scratch=ROOT/'Runtime/TestPrefixes'/('sessions-'+str(uuid.uuid4()));scratch.mkdir(parents=True,mode=0o700)
-    result=None
+    result=None;process=None;writer=None
+    sys.path.insert(0,str(ROOT/'StoreBridge'))
+    import install_lock
+    from bridge import BridgeError
+    install_lock.LOCK_ROOT=scratch/'data/InstallLocks'
     try:
         env={k:v for k,v in os.environ.items() if not k.startswith(('DYLD_','M1L_','READY_'))}
-        result=subprocess.run([str(ROOT/'Build/ReadyWineSessionProbe'),str(scratch),str(ROOT),str(executable)],cwd=ROOT,env=env,capture_output=True,text=True,timeout=150)
+        process=subprocess.Popen([str(ROOT/'Build/ReadyWineSessionProbe'),str(scratch),str(ROOT),str(executable)],cwd=ROOT,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        deadline=time.monotonic()+150;handled=0
+        while process.poll() is None:
+            if time.monotonic()>deadline:raise TimeoutError('Real Wine session integration exceeded 150 seconds')
+            request=scratch/'writer-request.json'
+            if request.exists():
+                data=json.loads(request.read_text());sequence=data['sequence']
+                if sequence>handled:
+                    target=install_lock.canonical_installation(data['installation'])
+                    assert target==executable.parent.resolve()
+                    if data['phase']=='read-check':
+                        busy=False
+                        try:
+                            with install_lock.installation_lease(target):pass
+                        except BridgeError as error:
+                            assert error.code=='installation_busy';busy=True
+                        response={'busy':busy}
+                    elif data['phase']=='hold-writer':
+                        writer=install_lock.installation_lease(target);writer.__enter__();response={'held':True}
+                    elif data['phase']=='release-writer':
+                        assert writer is not None;writer.__exit__(None,None,None);writer=None;response={'released':True}
+                    else:raise AssertionError('Unknown fixture coordination phase')
+                    output=scratch/('writer-response-'+str(sequence)+'.json');temporary=output.with_suffix('.tmp');temporary.write_text(json.dumps(response));temporary.chmod(0o600);temporary.replace(output);handled=sequence
+            time.sleep(.02)
+        stdout,stderr=process.communicate(timeout=5)
+        result=subprocess.CompletedProcess(process.args,process.returncode,stdout,stderr)
         (ROOT/'Evidence/session-host-wine-real.log').write_text(result.stdout+'\n'+result.stderr)
         assert result.returncode==0,result.stderr+'\n'+result.stdout
         report=json.loads(result.stdout);assert report['passed']
@@ -98,6 +125,8 @@ def main():
         (ROOT/'Evidence/session-host-wine-real.json').write_text(json.dumps(report,indent=2)+'\n')
         print(json.dumps(report,indent=2))
     finally:
+        if writer is not None:writer.__exit__(None,None,None)
+        if process is not None and process.poll() is None:process.kill();process.wait(timeout=5)
         try:cleanup(scratch)
         except Exception:
             print('Scratch preserved for its exact session:',scratch)

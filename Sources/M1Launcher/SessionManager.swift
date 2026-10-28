@@ -208,7 +208,7 @@ final class SessionManager {
   }
   private func configureHost(
     _ ctx: Context, program: String, arguments: [String], environment: [String: String],
-    directory: URL? = nil
+    directory: URL? = nil, installation: String? = nil
   ) throws -> (Process, FileHandle) {
     guard let lease = ctx.lease else { throw LauncherError.failed("Lock del prefix assente.") }
     let task = Process()
@@ -222,6 +222,12 @@ final class SessionManager {
         throw LauncherError.unavailable("Wineserver non disponibile per questo runtime.")
       }
       hostArguments = ["--wine-server", server, "--prefix", prefix.path]
+    }
+    if let installation {
+      hostArguments += [
+        "--installation", installation,
+        "--installation-lock-root", paths.root.appendingPathComponent("InstallLocks").path,
+      ]
     }
     task.arguments = hostArguments + ["--", program] + arguments
     task.currentDirectoryURL = directory
@@ -281,16 +287,22 @@ final class SessionManager {
     let plan = try LaunchPlan.build(
       game: ctx.game, variant: ctx.variant, runtime: ctx.runtime, paths: paths,
       profile: ctx.profile, overlay: overlay, controlURL: ctx.controlFile)
+    let installation = try ctx.variant.installationDirectory().path
     ctx.selectedEngine = plan.engine
     if plan.usesWine, let prefix = ctx.prefix {
+      guard !LegacyMigration.blocksSession(paths: paths, profile: ctx.profile, gameID: ctx.game.id)
+      else {
+        throw LauncherError.unavailable(
+          "Recupera la migrazione interrotta da Dati e ripristino prima di avviare il gioco.")
+      }
       _ = try PrefixManager(paths: paths).prepare(profile: ctx.profile, gameID: ctx.game.id)
       try checkCancellation(ctx)
       let marker = prefix.appendingPathComponent(".ready/runtime-initialized")
-      let version = ctx.runtime.runtimeIdentity
+      let version = ctx.runtime.initializationIdentity(engine: plan.engine)
       try EngineInstaller.prepareForRuntimeChange(version, prefix: prefix)
       // Project pure Wine PE32 builtins before wineboot. Renderer DLLs are selected
       // afterwards, so switching engines can restore the matching pure originals.
-      try WindowsBuiltinBootstrap.prepare(runtime: ctx.runtime, prefix: prefix)
+      try WindowsBuiltinBootstrap.prepare(runtime: ctx.runtime, prefix: prefix, engine: plan.engine)
       if (try? String(contentsOf: marker, encoding: .utf8)) != version {
         try runInitializationStage(
           ctx, name: "Inizializzazione Wine", program: plan.executable,
@@ -322,7 +334,8 @@ final class SessionManager {
     ctx.gameLogOffset = (try? ctx.log?.seekToEnd()) ?? 0
     let (task, input) = try configureHost(
       ctx, program: plan.executable, arguments: plan.arguments + ctx.extraArguments,
-      environment: gameEnvironment, directory: URL(fileURLWithPath: plan.currentDirectory))
+      environment: gameEnvironment, directory: URL(fileURLWithPath: plan.currentDirectory),
+      installation: installation)
     defer { try? input.close() }
     task.terminationHandler = { [weak self, ctx] exited in
       self?.onMain { [weak self, ctx] in self?.gameExited(ctx, status: exited.terminationStatus) }
@@ -371,10 +384,8 @@ final class SessionManager {
     ctx.finishing = true
     // At most 1 MiB is read, off the UI thread. Never persist log contents or command lines.
     worker.async { [self, ctx] in
-      if ctx.prefix != nil, !ctx.isCancelled, ctx.selectedEngine != .automatic,
-        let file = ctx.logURL
-      {
-        var diagnostic = ""
+      var diagnostic = ""
+      if let file = ctx.logURL {
         if let handle = try? FileHandle(forReadingFrom: file) {
           defer { try? handle.close() }
           if let end = try? handle.seekToEnd() {
@@ -385,6 +396,8 @@ final class SessionManager {
             }
           }
         }
+      }
+      if ctx.prefix != nil, !ctx.isCancelled, ctx.selectedEngine != .automatic {
         if RendererFailureLedger.graphicsInitializationFailed(
           exitCode: status, userRequestedStop: ctx.isCancelled, diagnostic: diagnostic)
         {
@@ -393,7 +406,11 @@ final class SessionManager {
             engine: ctx.selectedEngine)
         }
       }
-      onMain { [self, ctx] in finish(ctx, "Sessione terminata · codice \(status)") }
+      let message =
+        status == 73 && diagnostic.contains("ReadySessionHost: installation lease busy")
+        ? "Installazione in aggiornamento. Attendi il termine del download o aggiornamento e riprova."
+        : "Sessione terminata · codice \(status)"
+      onMain { [self, ctx] in finish(ctx, message) }
     }
   }
   private func startupFailed(_ ctx: Context, error: Error) {

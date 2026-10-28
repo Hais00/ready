@@ -160,9 +160,7 @@ public enum LegacyMigration {
         result.status = "rolled-back-copies-archived-original-retained"
         try AtomicFile.writePrivate(
           JSONEncoder().encode(result), to: archive.appendingPathComponent("plan.json"))
-        try AtomicFile.writePrivate(
-          JSONEncoder().encode(result), to: paths.root.appendingPathComponent("Migration/plan.json")
-        )
+        try record(result, paths: paths)
         return archive
       } catch {
         // No recursive deletion: restore moves where possible and retain any
@@ -178,6 +176,20 @@ public enum LegacyMigration {
   public static func prepare(paths: LauncherPaths, profile: UUID, games: [Game]) throws
     -> LegacyMigrationPlan?
   {
+    guard !requiresRecovery(paths: paths) else {
+      throw LauncherError.invalid(
+        "Recupera prima la migrazione interrotta: gli originali sono conservati.")
+    }
+    let oldJournal = paths.root.appendingPathComponent("Migration/journal.json")
+    if FileManager.default.fileExists(atPath: oldJournal.path),
+      let previous = loadPlan(paths: paths)
+    {
+      let destination = historyDirectory(previous, paths: paths).appendingPathComponent(
+        "completed-journal-" + UUID().uuidString + ".json")
+      try FileManager.default.createDirectory(
+        at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try FileManager.default.moveItem(at: oldJournal, to: destination)
+    }
     guard FileManager.default.fileExists(atPath: paths.legacyPrefix.path) else { return nil }
     guard
       (try? FileManager.default.destinationOfSymbolicLink(atPath: paths.legacyPrefix.path)) == nil
@@ -198,8 +210,7 @@ public enum LegacyMigration {
       warning:
         "The legacy prefix may contain mixed accounts. Assign its data to the correct profile before executing migration. Keep the original until real games and saves have been verified."
     )
-    try AtomicFile.writePrivate(
-      JSONEncoder().encode(plan), to: directory.appendingPathComponent("plan.json"))
+    try record(plan, paths: paths)
     return plan
   }
   /// Clone only on explicit execution after assigning legacy ownership. No hard links: registry writes must remain isolated.
@@ -239,16 +250,16 @@ public enum LegacyMigration {
           try PrefixManager(paths: paths).prepare(profile: plan.ownerProfile, gameID: id)
         }
       } catch {
-        // Roll back only copies created by this attempt. Preserve both legacy and personal data.
-        for destination in created.reversed() {
-          if fm.fileExists(atPath: destination.path) { try? fm.removeItem(at: destination) }
-        }
+        // Retain partial copies and journal. Recovery archives them, never deletes
+        // user-visible data or assumes a partly copied prefix is ready to launch.
         throw error
       }
       var result = plan
       result.status = "copied-awaiting-real-validation-original-retained"
-      try AtomicFile.writePrivate(
-        JSONEncoder().encode(result), to: paths.root.appendingPathComponent("Migration/plan.json"))
+      try record(result, paths: paths)
+      let completed = historyDirectory(plan, paths: paths).appendingPathComponent(
+        "copy-journal.json")
+      try fm.moveItem(at: journal, to: completed)
       return result
     }
   }

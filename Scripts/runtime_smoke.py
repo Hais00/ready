@@ -19,6 +19,35 @@ LINK='/opt/homebrew/opt/lld/bin/lld-link'
 
 def command(args,**kwargs):subprocess.run(list(map(str,args)),check=True,**kwargs)
 
+def compile_d3d12_probe():
+    PROBES.mkdir(exist_ok=True)
+    definition=PROBES/'d3d12-kernel32.def'
+    definition.write_text('LIBRARY KERNEL32.dll\nEXPORTS\nGetStdHandle\nWriteFile\nExitProcess\nLoadLibraryW\nGetProcAddress\nCreateEventW\nWaitForSingleObject\nCloseHandle\nFreeLibrary\n')
+    command([DLLTOOL,'-m','i386:x86-64','-d',definition,'-l',PROBES/'d3d12-kernel32.lib'])
+    command([CLANG,'--target=x86_64-windows','--no-default-config','-ffreestanding','-fno-builtin','-fshort-wchar','-O2',
+             '-I',RUNTIME/'wine-11.20/include/wine/windows','-I',ROOT/'Vendor/wine/include/msvcrt',
+             '-c',ROOT/'Scripts/runtime_d3d12_probe.c','-o',PROBES/'runtime_d3d12_probe.obj'])
+    pending=PROBES/'runtime_d3d12_probe.exe.pending'
+    command([LINK,'/entry:mainCRTStartup','/subsystem:console','/machine:x64','/nodefaultlib',
+             PROBES/'runtime_d3d12_probe.obj',PROBES/'d3d12-kernel32.lib','/out:'+str(pending)])
+    os.replace(pending,PROBES/'runtime_d3d12_probe.exe')
+
+def compile_d3d12_present():
+    PROBES.mkdir(exist_ok=True)
+    libraries={
+        'd3d12-present-kernel32':('KERNEL32.dll',['GetStdHandle','WriteFile','ExitProcess','LoadLibraryW','GetProcAddress','CreateEventW','WaitForSingleObject','CloseHandle','FreeLibrary','GetModuleHandleW','Sleep']),
+        'd3d12-present-user32':('USER32.dll',['RegisterClassW','CreateWindowExW','DefWindowProcW','ShowWindow','UpdateWindow','PeekMessageW','TranslateMessage','DispatchMessageW','DestroyWindow','PostQuitMessage'])}
+    for name,(dll,exports) in libraries.items():
+        definition=PROBES/(name+'.def');definition.write_text('LIBRARY '+dll+'\nEXPORTS\n'+'\n'.join(exports)+'\n')
+        command([DLLTOOL,'-m','i386:x86-64','-d',definition,'-l',PROBES/(name+'.lib')])
+    command([CLANG,'--target=x86_64-windows','--no-default-config','-ffreestanding','-fno-builtin','-fshort-wchar','-O2',
+             '-I',RUNTIME/'wine-11.20/include/wine/windows','-I',ROOT/'Vendor/wine/include/msvcrt',
+             '-c',ROOT/'Scripts/runtime_d3d12_present.c','-o',PROBES/'runtime_d3d12_present.obj'])
+    pending=PROBES/'runtime_d3d12_present.exe.pending'
+    command([LINK,'/entry:mainCRTStartup','/subsystem:console','/machine:x64','/nodefaultlib',
+             PROBES/'runtime_d3d12_present.obj',*[PROBES/(name+'.lib') for name in libraries],'/out:'+str(pending)])
+    os.replace(pending,PROBES/'runtime_d3d12_present.exe')
+
 def compile_probes():
     PROBES.mkdir(exist_ok=True)
     libraries={
@@ -50,6 +79,8 @@ def compile_probes():
     command([CLANG,'--target=i686-windows','--no-default-config','-ffreestanding','-fno-builtin','-fshort-wchar','-O2','-c',ROOT/'Scripts/runtime_d3d11_present.c','-o',PROBES/'runtime_d3d11_present32.obj'])
     command([LINK,'/entry:mainCRTStartup','/subsystem:console','/machine:x86','/nodefaultlib','/safeseh:no',PROBES/'runtime_d3d11_present32.obj',*[PROBES/(name+'.lib') for name in present32],'/out:'+str(PROBES/'runtime_d3d11_present32.exe')])
     command(['/usr/bin/clang','-arch','arm64','-arch','x86_64','-O2','-I',RUNTIME/'vulkan-headers-1.4.366/include',ROOT/'Scripts/runtime_vulkan_probe.c','-o',RUNTIME/'runtime_vulkan_probe'])
+    compile_d3d12_probe()
+    compile_d3d12_present()
 
 def execute(args,env,timeout=90):
     started=time.monotonic()

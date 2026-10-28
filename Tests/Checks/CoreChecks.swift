@@ -29,6 +29,12 @@ public final class CoreChecks {
       ("Dependencies and registry remain isolated between games", testDependencyIsolation),
       ("Non-destructive legacy migration and rollback source", testLegacyMigration),
       ("Migration preflight does not leave partial prefixes", testMigrationPreflight),
+      ("Migrated executable bindings belong only to the assigned profile", testMigrationBindings),
+      ("Interrupted copies are archived and block only affected sessions", testMigrationRecovery),
+      (
+        "Installation roots contain the executable after resolving aliases",
+        testInstallationDirectory
+      ),
       ("Runtime upgrade never restores old Wine DLLs", testRuntimeUpgrade),
       ("Legacy symlink cannot redirect migration into original data", testLegacySymlink),
       ("Store manifest identifiers preserve 64-bit integer precision", testMetadataPrecision),
@@ -257,6 +263,128 @@ public final class CoreChecks {
     XCTAssertFalse(
       FileManager.default.fileExists(atPath: p.prefix(profile: profile, gameID: "A").path))
   }
+  func testInstallationDirectory() throws {
+    let game = temporary.appendingPathComponent("game")
+    try FileManager.default.createDirectory(
+      at: game.appendingPathComponent("bin"), withIntermediateDirectories: true)
+    let executable = game.appendingPathComponent("bin/game.exe")
+    try Data([0x4d, 0x5a]).write(to: executable)
+    let alias = temporary.appendingPathComponent("alias")
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: game)
+    var variant = GameVariant(
+      id: "w", platform: .windows, executable: alias.appendingPathComponent("bin/game.exe").path,
+      installationRoot: alias.path, installed: true)
+    try XCTAssertEqual(try variant.installationDirectory(), game)
+    variant.installationRoot = "/"
+    XCTAssertThrowsError(try variant.installationDirectory())
+    variant.installationRoot = temporary.appendingPathComponent("missing").path
+    XCTAssertThrowsError(try variant.installationDirectory())
+    variant.installationRoot = game.path
+    variant.executable = temporary.appendingPathComponent("outside.exe").path
+    XCTAssertThrowsError(try variant.installationDirectory())
+  }
+  func testMigrationBindings() throws {
+    let paths = LauncherPaths(root: temporary)
+    let fm = FileManager.default
+    let source = paths.legacyPrefix.appendingPathComponent("drive_c/LegacyGame")
+    try fm.createDirectory(at: source, withIntermediateDirectories: true)
+    let executable = source.appendingPathComponent("game.exe")
+    try Data("game bytes".utf8).write(to: executable)
+    let a = Profile(name: "A")
+    let b = Profile(name: "B")
+    let game = Game(
+      id: "legacy", store: .local, storeID: "legacy", title: "legacy",
+      variants: [
+        .init(
+          id: "w", platform: .windows, executable: executable.path, workingDirectory: source.path,
+          installationRoot: source.path, installed: true)
+      ], engine: .wineD3D)
+    let state = LibraryState(profiles: [a, b], activeProfile: a.id, games: [game])
+    let plan = try LegacyMigration.prepare(paths: paths, profile: a.id, games: [game])!
+    let copied = try LegacyMigration.execute(plan, paths: paths)
+    let bound = try LegacyMigration.bindLibrary(state, plan: copied, paths: paths)
+    let first = bound.configured(game, profile: a.id)
+    let second = bound.configured(game, profile: b.id)
+    XCTAssertEqual(first.engine, .wineD3D)
+    XCTAssertEqual(
+      first.variants[0].executable,
+      paths.prefix(profile: a.id, gameID: game.id).appendingPathComponent(
+        "drive_c/LegacyGame/game.exe"
+      ).path)
+    XCTAssertEqual(second.variants[0].executable, executable.path)
+    XCTAssertEqual(bound.games[0].variants[0].executable, executable.path)
+    let twice = try LegacyMigration.bindLibrary(bound, plan: copied, paths: paths)
+    XCTAssertEqual(twice.configured(game, profile: a.id).variants, first.variants)
+    var updated = bound
+    var refreshed = game
+    refreshed.variants.append(.init(id: "native-new", platform: .macOS, architecture: .arm64))
+    updated.games = [refreshed]
+    XCTAssertEqual(updated.configured(refreshed, profile: a.id).variants.count, 2)
+    XCTAssertEqual(updated.configured(refreshed, profile: a.id).variants[1].id, "native-new")
+    refreshed.variants[0].executable = temporary.appendingPathComponent("shared-new/game.exe").path
+    updated.games = [refreshed]
+    updated.clearVariantOverride(profile: a.id, gameID: game.id, variantID: "w")
+    XCTAssertEqual(
+      updated.configured(refreshed, profile: a.id).variants[0].executable,
+      refreshed.variants[0].executable)
+    var forged = copied
+    forged.destinations[game.id] = temporary.appendingPathComponent("outside").path
+    XCTAssertThrowsError(try LegacyMigration.bindLibrary(bound, plan: forged, paths: paths))
+    _ = try LegacyMigration.rollback(copied, paths: paths)
+    let restored = LegacyMigration.libraryAfterRollback(bound, plan: copied)
+    XCTAssertFalse(restored.configured(game, profile: a.id).variants[0].installed)
+    XCTAssertEqual(restored.configured(game, profile: b.id).variants[0].executable, executable.path)
+    try XCTAssertEqual(try String(contentsOf: executable), "game bytes")
+  }
+  func testMigrationRecovery() throws {
+    let paths = LauncherPaths(root: temporary)
+    let fm = FileManager.default
+    try fm.createDirectory(at: paths.legacyPrefix, withIntermediateDirectories: true)
+    try Data("original".utf8).write(to: paths.legacyPrefix.appendingPathComponent("original.txt"))
+    let profile = UUID()
+    let games = ["A", "B"].map {
+      Game(
+        id: $0, store: .local, storeID: $0, title: $0,
+        variants: [.init(id: "w", platform: .windows)])
+    }
+    let plan = try LegacyMigration.prepare(paths: paths, profile: profile, games: games)!
+    let partial = paths.prefix(profile: profile, gameID: "A")
+    try fm.createDirectory(at: partial, withIntermediateDirectories: true)
+    try Data("partial bytes".utf8).write(to: partial.appendingPathComponent("partial.txt"))
+    let journal = paths.root.appendingPathComponent("Migration/journal.json")
+    try AtomicFile.writePrivate(JSONEncoder().encode([partial.path]), to: journal)
+    XCTAssertEqual(LegacyMigration.blocksSession(paths: paths, profile: profile, gameID: "A"), true)
+    XCTAssertFalse(LegacyMigration.blocksSession(paths: paths, profile: UUID(), gameID: "A"))
+    XCTAssertFalse(
+      LegacyMigration.blocksSession(paths: paths, profile: profile, gameID: "unrelated"))
+    XCTAssertThrowsError(try LegacyMigration.prepare(paths: paths, profile: profile, games: games))
+    try AtomicFile.writePrivate(
+      JSONEncoder().encode([temporary.appendingPathComponent("not-a-destination").path]),
+      to: journal)
+    XCTAssertThrowsError(try LegacyMigration.recoverInterrupted(paths: paths))
+    XCTAssertEqual(fm.fileExists(atPath: partial.path), true)
+    try AtomicFile.writePrivate(JSONEncoder().encode([partial.path]), to: journal)
+    do {
+      let lease = try PrefixLease(paths: paths, profile: profile, gameID: "A")
+      try withExtendedLifetime(lease) {
+        XCTAssertThrowsError(try LegacyMigration.recoverInterrupted(paths: paths))
+      }
+    }
+    let archive = try LegacyMigration.recoverInterrupted(paths: paths)
+    try XCTAssertEqual(
+      try String(
+        contentsOf: archive.appendingPathComponent(partial.lastPathComponent + "/partial.txt")),
+      "partial bytes")
+    try XCTAssertEqual(
+      try String(contentsOf: paths.legacyPrefix.appendingPathComponent("original.txt")), "original")
+    XCTAssertFalse(fm.fileExists(atPath: partial.path))
+    XCTAssertFalse(LegacyMigration.requiresRecovery(paths: paths))
+    XCTAssertEqual(
+      LegacyMigration.loadPlan(paths: paths)?.status,
+      "interrupted-copies-archived-original-retained")
+    XCTAssertNotNil(try LegacyMigration.prepare(paths: paths, profile: profile, games: games))
+    XCTAssertEqual(plan.ownerProfile, profile)
+  }
   func testRuntimeUpgrade() throws {
     let p = LauncherPaths(root: temporary)
     let profile = UUID()
@@ -380,6 +508,11 @@ public final class CoreChecks {
     }
     runtime.engineOverrides = ["d3dMetal": "d3d11,dxgi=b"]
     runtime.engineSearchPaths = ["d3dMetal": temporary.path]
+    XCTAssertThrowsError(
+      try LaunchPlan.build(
+        game: game, variant: variant, runtime: runtime, paths: paths, profile: profile,
+        overlay: nil, controlURL: temporary.appendingPathComponent("control.json")))
+    runtime.evaluationModeEnabled = true
     let plan = try LaunchPlan.build(
       game: game, variant: variant, runtime: runtime, paths: paths, profile: profile, overlay: nil,
       controlURL: temporary.appendingPathComponent("control.json"))

@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 import json,os,pathlib,subprocess,sys,tempfile
+from swift_probe_support import prepare_core
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-subprocess.run(['swift','build'],cwd=ROOT,check=True)
+products,module_dir,archive=prepare_core()
 subprocess.run(['sh',str(ROOT/'Scripts/build_session_host.sh')],check=True)
-build=pathlib.Path(subprocess.check_output(['swift','build','--show-bin-path'],cwd=ROOT,text=True).strip())
-module_dir=build if (build/'LauncherCore.swiftmodule').exists() else build/'Modules'
 command=['swiftc','-swift-version','5','-parse-as-library','-I',str(module_dir),str(ROOT/'Sources/M1Launcher/SessionManager.swift'),str(ROOT/'Synthetic/ReadySessionManagerProbe.swift')]
-if (build/'libLauncherCore.a').exists():command += ['-L',str(build),'-lLauncherCore']
-else:command += list(map(str,(build/'LauncherCore.build').glob('*.o')))
+command += [str(archive)]
 command += ['-framework','AppKit','-o',str(ROOT/'Build/ReadySessionManagerProbe')]
 subprocess.run(command,cwd=ROOT,check=True)
 with tempfile.TemporaryDirectory(prefix='ready-manager-integration-') as temp:

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import contextlib
+import fcntl
 import io
 import json
 import os
@@ -26,7 +27,7 @@ sys.path.insert(0,sys.argv[1])
 import install_lock
 install_lock.LOCK_ROOT=pathlib.Path(sys.argv[2])
 path=install_lock.canonical_installation(sys.argv[3])
-with install_lock.installation_lease(path):
+with install_lock.installation_lease(path,sys.argv[4]):
  print('ready',flush=True)
  sys.stdin.read(1)
 '''
@@ -40,8 +41,8 @@ class InstallationCoordinationTests(unittest.TestCase):
     def request(self,profile=PROFILE,game='one',path=None):
         return {'operation':'download','store':'epic','profileID':profile,'credentials':{'access_token':profile},'options':{'gameID':game,'platform':'windows','installDir':str(path or self.root/'Games'/game)}}
     @contextlib.contextmanager
-    def holder(self,path):
-        p=subprocess.Popen([sys.executable,'-c',HOLDER,str(ROOT/'StoreBridge'),str(self.locks),str(path)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    def holder(self,path,mode='write'):
+        p=subprocess.Popen([sys.executable,'-c',HOLDER,str(ROOT/'StoreBridge'),str(self.locks),str(path),mode],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
         try:
             self.assertTrue(select.select([p.stdout],[],[],5)[0],'Lease subprocess did not start')
             self.assertEqual(p.stdout.readline().strip(),'ready')
@@ -115,6 +116,67 @@ class InstallationCoordinationTests(unittest.TestCase):
         with self.assertRaises(bridge.BridgeError):
             with install_lock.installation_lease(target):pass
         self.assertEqual(list(other.iterdir()),[])
+    def test_read_read_is_parallel_for_equal_and_nested_roots(self):
+        parent=install_lock.canonical_installation(str(self.root/'Games/one'));child=install_lock.canonical_installation(str(parent/'DLC'))
+        for held,wanted in [(parent,parent),(parent,child),(child,parent)]:
+            with self.holder(held,'read'):
+                with install_lock.installation_lease(wanted,'read'):pass
+    def test_read_write_overlap_is_symmetric_in_both_hierarchy_directions(self):
+        parent=install_lock.canonical_installation(str(self.root/'Games/one'));child=install_lock.canonical_installation(str(parent/'DLC'))
+        for held,wanted in [(parent,parent),(parent,child),(child,parent)]:
+            for first,second in [('read','write'),('write','read')]:
+                with self.subTest(first=first,held=held,wanted=wanted),self.holder(held,first):
+                    with self.assertRaises(bridge.BridgeError)as error:
+                        with install_lock.installation_lease(wanted,second):pass
+                    self.assertEqual(error.exception.code,'installation_busy')
+    def test_reader_and_writer_siblings_do_not_block_each_other(self):
+        one=install_lock.canonical_installation(str(self.root/'Games/one'));two=install_lock.canonical_installation(str(self.root/'Games/two'))
+        for first,second in [('read','read'),('read','write'),('write','read'),('write','write')]:
+            with self.holder(one,first):
+                with install_lock.installation_lease(two,second):pass
+    @contextlib.contextmanager
+    def native_reader(self,path,expect_busy=False):
+        host=ROOT/'Build/ReadySessionHost'
+        if sys.platform!='darwin' or not host.is_file():self.skipTest('Native macOS ReadySessionHost must be built for cross-language test')
+        number=getattr(self,'keeper_number',0)+1;self.keeper_number=number
+        ready=self.root/f'keeper-{number}.ready';lease_path=self.root/f'keeper-{number}.prefix.lock'
+        handle=lease_path.open('a+b');os.fchmod(handle.fileno(),0o600);fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        worker='import pathlib,sys,time;pathlib.Path(sys.argv[1]).touch();time.sleep(30)'
+        argv=[str(host),'--installation',str(path),'--installation-lock-root',str(self.locks),'--',sys.executable,'-c',worker,str(ready)]
+        process=subprocess.Popen(argv,stdin=handle,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True);handle.close()
+        try:
+            if expect_busy:
+                _,error=process.communicate(timeout=5);self.assertEqual(process.returncode,73,error);self.assertFalse(ready.exists())
+            else:
+                until=time.monotonic()+5
+                while not ready.exists():
+                    self.assertIsNone(process.poll(),'Keeper failed: '+(process.stderr.read()if process.poll()is not None else ''))
+                    if time.monotonic()>until:self.fail('Keeper child never signaled installation admission')
+                    time.sleep(.02)
+            yield process
+        finally:
+            if process.poll()is None:process.terminate()
+            try:process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:process.kill();process.communicate()
+    def test_native_keeper_read_lease_blocks_python_writers_and_allows_other_readers(self):
+        parent=install_lock.canonical_installation(str(self.root/'Games'));one=install_lock.canonical_installation(str(parent/'one'));child=install_lock.canonical_installation(str(one/'DLC'));two=install_lock.canonical_installation(str(parent/'two'))
+        alias=self.root/'OneAlias';alias.symlink_to(one,target_is_directory=True)
+        with self.native_reader(alias):
+            for target in (parent,one,child):
+                with self.assertRaises(bridge.BridgeError):
+                    with install_lock.installation_lease(target,'write'):pass
+            with install_lock.installation_lease(two,'write'):pass
+            with self.native_reader(child):
+                with install_lock.installation_lease(one,'read'):pass
+        with install_lock.installation_lease(one,'write'):pass
+    def test_python_writer_blocks_native_keeper_for_equal_ancestor_and_nested_targets(self):
+        parent=install_lock.canonical_installation(str(self.root/'Games'));one=install_lock.canonical_installation(str(parent/'one'));child=install_lock.canonical_installation(str(one/'DLC'));two=install_lock.canonical_installation(str(parent/'two'))
+        with install_lock.installation_lease(one,'write'):
+            for target in (parent,one,child):
+                with self.native_reader(target,expect_busy=True):pass
+            with self.native_reader(two):pass
+        with self.native_reader(one):pass
+
     def test_downloader_keeps_lease_if_the_bridge_process_dies(self):
         target=install_lock.canonical_installation(str(self.root/'Game'))
         code='''import os,pathlib,subprocess,sys
