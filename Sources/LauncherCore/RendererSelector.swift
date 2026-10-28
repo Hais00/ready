@@ -38,7 +38,7 @@ public enum RendererSelector {
       return false
     }
     guard let wine = runtime.engineWineBinaries?[engine.rawValue] ?? runtime.wine,
-      fm.isExecutableFile(atPath: wine)
+      RuntimeExecutable.isAvailable(atPath: wine)
     else { return false }
     if architecture == .x86 {
       guard let builtin = runtime.bootstrap32Directory(engine: engine),

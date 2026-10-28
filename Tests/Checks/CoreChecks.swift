@@ -35,7 +35,12 @@ public final class CoreChecks {
         "Literal process arguments and verified engine selection",
         testLaunchPlanUsesLiteralArgumentsAndIsolatedPrefix
       ),
+      (
+        "Wine executable validation rejects directories and accepts file symlinks",
+        testWineExecutableRequiresRegularFile
+      ),
       ("Dependencies and registry remain isolated between games", testDependencyIsolation),
+      ("Interrupted renderer projection recovers both DLL manifests", EngineTransactionChecks.validate),
       ("Non-destructive legacy migration and rollback source", testLegacyMigration),
       (
         "Interrupted rollback restores copies and preserves conflicts",
@@ -624,6 +629,63 @@ public final class CoreChecks {
       at: prefix.appendingPathComponent("escape"), withDestinationURL: temporary)
     XCTAssertThrowsError(try SafePath.resolve("escape/outside", under: prefix))
   }
+  func testWineExecutableRequiresRegularFile() throws {
+    let fm = FileManager.default
+    let paths = LauncherPaths(root: temporary)
+    try paths.prepare()
+    let exe = temporary.appendingPathComponent("fixture.exe")
+    try Data([0x4d, 0x5a]).write(to: exe)
+    let variant = GameVariant(
+      id: "windows", platform: .windows, executable: exe.path, installed: true)
+    let game = Game(
+      id: "wine-file-check", store: .local, storeID: "wine-file-check", title: "Fixture",
+      variants: [variant], engine: .wineD3D)
+    let profile = UUID()
+    func plan(_ runtime: RuntimeConfiguration) throws -> LaunchPlan {
+      try LaunchPlan.build(
+        game: game, variant: variant, runtime: runtime, paths: paths, profile: profile,
+        overlay: nil, controlURL: paths.session(UUID()).appendingPathComponent("control.json"))
+    }
+    let directory = temporary.appendingPathComponent("wine-directory")
+    try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+    try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+    XCTAssertEqual(fm.isExecutableFile(atPath: directory.path), true)
+    var runtime = RuntimeConfiguration(wine: directory.path)
+    XCTAssertFalse(RendererSelector.available(.wineD3D, runtime: runtime))
+    XCTAssertThrowsError(try plan(runtime))
+    let directoryLink = temporary.appendingPathComponent("wine-directory-link")
+    try fm.createSymbolicLink(at: directoryLink, withDestinationURL: directory)
+    runtime.wine = directoryLink.path
+    XCTAssertFalse(RendererSelector.available(.wineD3D, runtime: runtime))
+    XCTAssertThrowsError(try plan(runtime))
+
+    let file = temporary.appendingPathComponent("wine-file")
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: file)
+    try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
+    runtime.wine = file.path
+    XCTAssertEqual(RendererSelector.available(.wineD3D, runtime: runtime), true)
+    try XCTAssertEqual(try plan(runtime).executable, file.path)
+    let fileLink = temporary.appendingPathComponent("wine-file-link")
+    try fm.createSymbolicLink(at: fileLink, withDestinationURL: file)
+    runtime.wine = fileLink.path
+    XCTAssertEqual(RendererSelector.available(.wineD3D, runtime: runtime), true)
+    try XCTAssertEqual(try plan(runtime).executable, fileLink.path)
+
+    runtime.wine = file.path
+    runtime.engineWineBinaries = [GraphicsEngine.wineD3D.rawValue: directory.path]
+    XCTAssertFalse(RendererSelector.available(.wineD3D, runtime: runtime))
+    XCTAssertThrowsError(try plan(runtime))
+    runtime.engineWineBinaries = [GraphicsEngine.wineD3D.rawValue: fileLink.path]
+    XCTAssertEqual(RendererSelector.available(.wineD3D, runtime: runtime), true)
+    try XCTAssertEqual(try plan(runtime).executable, fileLink.path)
+    try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    XCTAssertFalse(RendererSelector.available(.wineD3D, runtime: runtime))
+    XCTAssertThrowsError(try plan(runtime))
+    try fm.removeItem(at: file)
+    XCTAssertFalse(RendererSelector.available(.wineD3D, runtime: runtime))
+    XCTAssertThrowsError(try plan(runtime))
+  }
+
   func testLaunchPlanUsesLiteralArgumentsAndIsolatedPrefix() throws {
     let p = LauncherPaths(root: temporary)
     try p.prepare()

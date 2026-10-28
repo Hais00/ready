@@ -31,6 +31,14 @@ Each prefix has its own OS file lock. A running game's prefix cannot have its DL
 
 Automatic selection requires a runtime that exists and a path recorded as verified. Exact game/wine-version compatibility rules have priority; generic verified API paths can be candidates but are not described as per-game proof. Advanced overrides never cause simultaneous indiscriminate renderer loading. Selection and DLL changes occur before launch, not while a game is active. Runtime and game behavior must be validated beyond a synthetic file-existence check.
 
+### Interrupted renderer DLL projection
+
+Each architecture has an independent private intent (`managed-dlls.intent.json` / `managed-dlls32.intent.json`). Before changing any DLL, EngineInstaller retains COW/file snapshots of the affected system files, permanent originals and prior manifest, then records the complete old/new name union. Newly introduced DLLs therefore cannot escape tracking if copying finishes before the final manifest write.
+
+On the next initialization, recovery runs **before** an unchanged-runtime-marker early return and before another renderer selection. Under the caller's same game/profile prefix lease it restores the exact pre-swap state; changed or newly written current DLLs are archived inside `.ready/EngineTransactions/<transaction>/recovery`, including custom post-interruption versions. Normal swaps retain the replaced versions and snapshot packet as well. Existing original-backup/provider-epoch rules and separate PE32/PE64 manifests remain in force. A corrupt manifest, intent or snapshot stops the operation without guessing an empty state or discarding the journal.
+
+`EngineTransactionChecks` injects an exception through an explicitly marked fixture callback after a new DLL has actually been projected and before manifest commit, for both system32 and syswow64. It verifies unchanged-version recovery, absent-new-DLL cleanup, preservation of before/after custom versions, pure Wine restoration, corruption rejection and central-payload immutability. This is a process-interruption state/fixture test, **not a real SIGKILL or power-loss claim**. Production configuration has no environment-driven fault hook or sleeps.
+
 ## Recreation and migration
 
 Prefix recreation acquires its lease, moves the old prefix into Backups, and prepares a new prefix pointing at the same persistent personal directories. On setup failure it restores the old prefix. This preserves saves in redirected locations; games saving elsewhere need explicit save rules and real verification.
