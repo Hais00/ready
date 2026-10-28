@@ -217,3 +217,9 @@ in its observed JSON output. No system-wide capture or security settings were ch
 The launcher disables its interface menu actions while a game owns the session. Background store errors are deferred to Library → Notifications; they do not create an AppKit alert, re-show the launcher or restore its Metal canvas during play. The normal session-finish callback restores the UI and points to pending notifications.
 
 `python3 Scripts/test_frontend_lifecycle.py` runs the actual AppDelegate, MetalCanvas, SessionManager and native keeper with a two-second synthetic native helper. Eleven checks verify initial allocation, teardown, no modal/window/texture on a background error, and restoration after exit. It creates only its own marked data root. This is logical resource/window-state evidence, not a visual test or direct-display proof.
+
+## CPU heartbeat for paused presentation
+
+After a process has rendered its first supported drawable, the overlay publishes a private atomic heartbeat four times per second and polls its existing raw GameController profile. A renderer that never draws does not start this heartbeat or overwrite the actual game status. The heartbeat allocates no Metal texture, creates no encoder/command buffer, and does not force a game frame. Status files are created at0600 before atomic rename, rather than chmod after publication.
+
+The real Metal probe now pauses rendering for1.3seconds while visible and hidden. On all six native/Rosetta/Metal3/Metal4 paths, heartbeat sequences advance while frame counts and GPU submission counts remain unchanged; hidden texture memory stays zero. This supports scoped input liveness, not a claim that a stalled game can display a newly rendered panel without another drawable.

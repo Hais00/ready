@@ -19,7 +19,11 @@ def prepare_core():
     archive=products/'libLauncherCore.a'
     if not archive.is_file():raise RuntimeError('The explicit static LauncherCore product was not emitted')
     module=modules/'LauncherCore.swiftmodule'
-    newest=max((p.stat().st_mtime_ns for p in module.rglob('*') if p.is_file()),default=module.stat().st_mtime_ns) if module.is_dir() else module.stat().st_mtime_ns
+    # Only imported compiler modules carry the value-type layout. Xcode can
+    # rewrite ABI reports/source-info metadata independently after archiving.
+    importable=list(module.glob('*.swiftmodule')) if module.is_dir() else [module]
+    if not importable:raise RuntimeError('No importable LauncherCore Swift module was emitted')
+    newest=max(p.stat().st_mtime_ns for p in importable)
     if archive.stat().st_mtime_ns<newest:
         raise RuntimeError('Refusing a static archive older than its Swift module')
     return products,modules,archive

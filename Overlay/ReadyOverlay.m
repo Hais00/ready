@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
 #include "ReadyOverlay.h"
 
 static NSRecursiveLock *RDLock;
@@ -23,11 +24,15 @@ static NSMutableDictionary<NSString *, NSValue *> *RDOriginals;
 static NSMapTable<id<MTLTexture>,id<CAMetalDrawable>> *RDLiveDrawables;
 static _Thread_local BOOL RDEmitting;
 static dispatch_source_t RDControlWatch;
+static dispatch_source_t RDHeartbeat;
+static uint64_t RDHeartbeatSequence;
 static __weak CAMetalLayer *RDLastLayer;
 static unsigned char RDDrawablesKey;
 static void RDWriteStatus(void);
 static void RDReadControl(void);
 static void RDPrepareHooks(id<MTLDevice> device);
+static void RDPollControllers(void);
+static void RDStartHeartbeat(void);
 
 @interface RDRenderer : NSObject
 @property(nonatomic,strong) id<MTLDevice> device;
@@ -71,6 +76,7 @@ static NSDictionary *RDStatus(void) {
         @"requestedAction":RDRequestedAction ?: @"",@"actionSequence":@(RDActionSequence),
         @"controlSequence":@(RDControlSequence),@"error":RDError ?: @"",
         @"controlWatchActive":@(RDControlWatch!=nil),@"controlReadCount":@(RDControlReadCount),
+        @"heartbeatActive":@(RDHeartbeat!=nil),@"heartbeatSequence":@(RDHeartbeatSequence),
         @"separateWindowCount":@0,@"separateLayerCount":@0,
         @"directToDisplayVerified":@NO};
 }
@@ -79,7 +85,15 @@ static void RDWriteStatus(void) {
     // that never renders must not overwrite the actual game's session status.
     if(!RDStatusPath.length || RDFrameCount==0)return;
     NSData *data=[NSJSONSerialization dataWithJSONObject:RDStatus() options:NSJSONWritingSortedKeys error:nil];
-    if(data){[data writeToFile:RDStatusPath options:NSDataWritingAtomic error:nil];chmod(RDStatusPath.fileSystemRepresentation,0600);}
+    if(!data)return;
+    NSString *temporary=[RDStatusPath.stringByDeletingLastPathComponent stringByAppendingPathComponent:[@".ready-status-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+    int fd=open(temporary.fileSystemRepresentation,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0600);
+    if(fd<0)return;
+    const unsigned char *bytes=data.bytes;NSUInteger offset=0;
+    while(offset<data.length){ssize_t count=write(fd,bytes+offset,data.length-offset);if(count<0 && errno==EINTR)continue;if(count<=0)break;offset+=(NSUInteger)count;}
+    close(fd);
+    if(offset==data.length)rename(temporary.fileSystemRepresentation,RDStatusPath.fileSystemRepresentation);
+    unlink(temporary.fileSystemRepresentation);
 }
 char *ReadyOverlayCopyStatusJSON(void) {
     [RDLock lock];NSData *d=[NSJSONSerialization dataWithJSONObject:RDStatus() options:0 error:nil];
@@ -223,8 +237,17 @@ static void RDPollControllers(void) {
         if(RDVisible){if(edge&2)RDSetVisible(YES,0);if(edge&4)RDSetVisible(YES,1);if(edge&8)RDRequestAction(RDSelection==0?@"resume":@"quit");if(edge&16)RDRequestAction(@"resume");}
     }
 }
+static void RDStartHeartbeat(void) {
+    if(RDHeartbeat || !RDEnabled || !RDInjectionSupported || RDFrameCount==0)return;
+    RDHeartbeat=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0));
+    dispatch_source_set_timer(RDHeartbeat,dispatch_time(DISPATCH_TIME_NOW,250*NSEC_PER_MSEC),250*NSEC_PER_MSEC,25*NSEC_PER_MSEC);
+    dispatch_source_set_event_handler(RDHeartbeat,^{@autoreleasepool{
+        [RDLock lock];RDPollControllers();RDHeartbeatSequence++;RDWriteStatus();[RDLock unlock];
+    }});
+    dispatch_resume(RDHeartbeat);
+}
 static BOOL RDShouldRender(void) {
-    RDPollControllers();return RDVisible;
+    RDStartHeartbeat();RDPollControllers();return RDVisible;
 }
 static void RDRecordDrawable(id command,id<CAMetalDrawable> drawable) {
     if(!drawable || RDEmitting)return;

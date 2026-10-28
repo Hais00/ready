@@ -68,7 +68,7 @@ int main(int argc,const char **argv){@autoreleasepool{
     id<MTLCommandQueue> queue3=[device newCommandQueue];
     id<MTL4CommandQueue> queue4=nil;id<MTL4CommandBuffer> command4=nil;id<MTL4CommandAllocator> allocator4=nil;
     if(metal4){if(@available(macOS 26.0,*)){queue4=[device newMTL4CommandQueue];command4=[device newCommandBuffer];allocator4=[device newCommandAllocator];[queue4 addResidencySet:layer.residencySet];}else{fprintf(stderr,"Metal4 unavailable\n");return 4;}}
-    NSMutableArray *phases=[NSMutableArray array];NSMutableArray<NSData *> *images=[NSMutableArray array];
+    NSMutableArray *phases=[NSMutableArray array];NSMutableArray<NSData *> *images=[NSMutableArray array];NSMutableDictionary *heartbeatTests=[NSMutableDictionary dictionary];
     for(int phase=0;phase<(sessionProbe?1:3);phase++){@autoreleasepool{
         if(!sessionProbe)setState(phase==1,0);Pump(0.03);NSDictionary *before=Status(status);CFAbsoluteTime began=CFAbsoluteTimeGetCurrent();NSData *capture=nil;
         for(NSInteger n=0;n<frameCount && !delegate.closed;n++){@autoreleasepool{
@@ -94,6 +94,13 @@ int main(int argc,const char **argv){@autoreleasepool{
                 NSData *g=[NSJSONSerialization dataWithJSONObject:geometry options:NSJSONWritingPrettyPrinted error:nil];[g writeToFile:[out stringByAppendingPathComponent:@"overlay-probe-window.json"] atomically:YES];
             }
         }}
+        if(!sessionProbe && phase>0){
+            NSDictionary *pausedBefore=Status(status);Pump(1.3);NSDictionary *pausedAfter=Status(status);
+            BOOL alive=[pausedAfter[@"heartbeatSequence"]unsignedLongLongValue]>[pausedBefore[@"heartbeatSequence"]unsignedLongLongValue]+2;
+            BOOL noGPU=[pausedAfter[@"gpuOverlaySubmissions"]unsignedLongLongValue]==[pausedBefore[@"gpuOverlaySubmissions"]unsignedLongLongValue] && [pausedAfter[@"frameCount"]unsignedLongLongValue]==[pausedBefore[@"frameCount"]unsignedLongLongValue];
+            BOOL resourceState=phase==1 || [pausedAfter[@"trackedTextureBytes"]unsignedLongLongValue]==0;
+            heartbeatTests[phase==1?@"visiblePauseAliveWithoutGPUWork":@"hiddenPauseAliveWithoutGPUWorkOrTextures"]=@(alive && noGPU && resourceState);
+        }
         if(capture)[images addObject:capture];NSDictionary *after=Status(status);
         [phases addObject:@{@"phase":@(phase),@"before":before,@"after":after,@"startUnixTime":@(began+kCFAbsoluteTimeIntervalSince1970),@"endUnixTime":@(CFAbsoluteTimeGetCurrent()+kCFAbsoluteTimeIntervalSince1970),@"seconds":@(CFAbsoluteTimeGetCurrent()-began),@"deviceCurrentAllocatedSize":@(device.currentAllocatedSize)}];
     }}
@@ -114,9 +121,9 @@ int main(int argc,const char **argv){@autoreleasepool{
     WriteControl(control,2,YES,1,0600);BOOL fileShow=[Status(status)[@"visible"]boolValue] && [Status(status)[@"controlSequence"]integerValue]==2;
     WriteControl(control,3,NO,0,0644);BOOL insecureIgnored=[Status(status)[@"controlSequence"]integerValue]==2;
     WriteControl(control,4,NO,0,0600);BOOL fileHide=![Status(status)[@"visible"]boolValue] && [Status(status)[@"controlSequence"]integerValue]==4;
-    passes=passes && keyToggle && keyQuit && keyResume && mouseQuit && fileShow && insecureIgnored && fileHide;
+    passes=passes && keyToggle && keyQuit && keyResume && mouseQuit && fileShow && insecureIgnored && fileHide && [heartbeatTests[@"visiblePauseAliveWithoutGPUWork"]boolValue] && [heartbeatTests[@"hiddenPauseAliveWithoutGPUWorkOrTextures"]boolValue];
     NSDictionary *input=@{@"keyboardToggle":@(keyToggle),@"keyboardQuitRequest":@(keyQuit),@"keyboardResume":@(keyResume),@"mouseQuitRequest":@(mouseQuit),@"controlFileShow":@(fileShow),@"insecureControlIgnored":@(insecureIgnored),@"controlFileHide":@(fileHide)};
-    NSDictionary *result=@{@"schema":@1,@"processArchitecture":architecture,@"metalVersion":@(metal4?4:3),@"presentationStyle":scheduled?@"scheduledHandler":@"default",@"device":device.name,@"framesPerPhase":@(frameCount),@"phases":phases,@"inputTests":input,@"framebufferOnly":@(layer.framebufferOnly),@"fullscreen":@(!!(window.styleMask&NSWindowStyleMaskFullScreen)),@"windowCount":@(NSApp.windows.count),@"layerSublayerCount":@(layer.sublayers.count),@"changedPixelsShown":@(images.count>=2?ChangedPixels(images[0],images[1]):0),@"changedPixelsAfterHide":@(images.count==3?ChangedPixels(images[0],images[2]):0),@"passed":@(passes),@"directToDisplayVerified":@NO,@"note":presentationOnly ? @"Opaque framebuffer-only fullscreen-eligible presentation. Direct mode still requires authoritative Metal HUD or Instruments evidence.":@"Readback probe intentionally uses framebufferOnly=NO. It proves in-drawable injection and cleanup, not exclusive presentation or game compatibility."};
+    NSDictionary *result=@{@"schema":@1,@"processArchitecture":architecture,@"metalVersion":@(metal4?4:3),@"presentationStyle":scheduled?@"scheduledHandler":@"default",@"device":device.name,@"framesPerPhase":@(frameCount),@"phases":phases,@"inputTests":input,@"heartbeatTests":heartbeatTests,@"framebufferOnly":@(layer.framebufferOnly),@"fullscreen":@(!!(window.styleMask&NSWindowStyleMaskFullScreen)),@"windowCount":@(NSApp.windows.count),@"layerSublayerCount":@(layer.sublayers.count),@"changedPixelsShown":@(images.count>=2?ChangedPixels(images[0],images[1]):0),@"changedPixelsAfterHide":@(images.count==3?ChangedPixels(images[0],images[2]):0),@"passed":@(passes),@"directToDisplayVerified":@NO,@"note":presentationOnly ? @"Opaque framebuffer-only fullscreen-eligible presentation. Direct mode still requires authoritative Metal HUD or Instruments evidence.":@"Readback probe intentionally uses framebufferOnly=NO. It proves in-drawable injection and cleanup, not exclusive presentation or game compatibility."};
     NSData *json=[NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingPrettyPrinted|NSJSONWritingSortedKeys error:nil];[json writeToFile:[out stringByAppendingPathComponent:[NSString stringWithFormat:@"overlay-%@.json",label]] atomically:YES];puts([[NSString alloc]initWithData:json encoding:NSUTF8StringEncoding].UTF8String);
     [window orderOut:nil];return passes?0:7;
 }}
