@@ -4,10 +4,8 @@ import LauncherCore
 
 extension AppDelegate {
   func activeRuntime() -> RuntimeConfiguration {
-    let local = EvaluationMode.configuration(paths: paths)
-    return RuntimeConfiguration.load(
-      FileManager.default.fileExists(atPath: local.path)
-        ? local : project.appendingPathComponent("Runtime/runtime.json"))
+    RuntimeConfiguration.load(
+      FrontendSupportPaths.configuration(paths: paths, runtimeRoot: runtimeRoot))
   }
   @objc func evaluationSettings() {
     guard !maintenanceInProgress, !session.running, pendingLaunch == nil,
@@ -41,7 +39,7 @@ extension AppDelegate {
         try EvaluationMode.restore(paths: paths)
       } else {
         try EvaluationMode.enable(
-          fragment: project.appendingPathComponent("Runtime/evaluation-runtime.json"), paths: paths)
+          fragment: runtimeRoot.appendingPathComponent("evaluation-runtime.json"), paths: paths)
       }
       canvas.evaluationMode = activeRuntime().evaluationModeEnabled == true
       canvas.message =

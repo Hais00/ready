@@ -12,6 +12,7 @@ final class ReadyWindow: NSWindow {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
   let paths: LauncherPaths
   let project: URL
+  var runtimeRoot: URL
   var repository: LibraryRepository!
   var state = LibraryState.initial()
   var window: ReadyWindow!
@@ -25,8 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   var pendingLaunch: UUID?
   var maintenanceInProgress = false
   var backgroundNotices = [String]()
-  init(project: URL, paths: LauncherPaths = LauncherPaths()) {
+  init(project: URL, runtimeRoot: URL? = nil, paths: LauncherPaths = LauncherPaths()) {
     self.project = project
+    self.runtimeRoot = runtimeRoot ?? project.appendingPathComponent("Runtime")
     self.paths = paths
   }
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -41,14 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       NSApp.terminate(nil)
       return
     }
-    session = SessionManager(paths: paths, project: project)
-    session.onWillLaunch = { [weak self] in
-      guard let self else { return }
-      self.canvas.releaseGraphics()
-      self.window.orderOut(nil)
-      self.window.contentView = nil
-    }
-    storeClient = StoreClient(project: project, stateRoot: paths.root)
+    configureRuntimeClients()
     window = ReadyWindow(
       contentRect: NSRect(x: 0, y: 0, width: 1240, height: 760),
       styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -72,9 +67,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     window.center()
     setupMenu()
     setupControllers()
-    session.onFinish = { [weak self] message in
-      self?.restoreLauncher(message)
-    }
     let args = CommandLine.arguments
     if args.contains("--background-error-self-test") {
       runBackgroundErrorProbe()
@@ -161,6 +153,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     return .terminateNow
   }
   func windowDidResize(_ notification: Notification) { canvas?.refresh() }
+  // Called only at initial startup or while every session/store operation is idle.
+  func configureRuntimeClients() {
+    session = SessionManager(paths: paths, project: project, runtimeRoot: runtimeRoot)
+    session.onWillLaunch = { [weak self] in
+      guard let self else { return }
+      self.canvas.releaseGraphics()
+      self.window.orderOut(nil)
+      self.window.contentView = nil
+    }
+    session.onFinish = { [weak self] message in self?.restoreLauncher(message) }
+    storeClient = StoreClient(project: project, stateRoot: paths.root, runtimeRoot: runtimeRoot)
+  }
   func setupMenu() {
     let menu = NSMenu()
     let app = NSMenuItem()
@@ -175,6 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     for (name, key, selector) in [
       ("Importa gioco…", "o", #selector(importGame)), ("Cerca…", "f", #selector(search)),
       ("Profili…", "u", #selector(profiles)), ("Account e runtime…", ",", #selector(settings)),
+      ("Motori…", "", #selector(runtimeLocationSettings)),
       ("Dati e ripristino…", "", #selector(dataMaintenance)),
       ("Notifiche…", "", #selector(showNotifications)),
     ] {
@@ -194,7 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let busy = session?.running == true || maintenanceInProgress || pendingLaunch != nil
     let interfaceActions: [Selector] = [
       #selector(importGame), #selector(search), #selector(profiles),
-      #selector(settings), #selector(dataMaintenance), #selector(showNotifications),
+      #selector(settings), #selector(runtimeLocationSettings), #selector(dataMaintenance), #selector(showNotifications),
       #selector(toggleFullscreen),
     ]
     if let action = item.action, interfaceActions.contains(action) {
@@ -486,11 +491,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     a.addButton(withTitle: "Collega uno store…")
     a.addButton(withTitle: "Dati e ripristino…")
     a.addButton(withTitle: "Valutazione Apple…")
+    a.addButton(withTitle: "Motori…")
     let choice = a.runModal()
     if choice == .alertSecondButtonReturn { connectStore() }
     if choice == .alertThirdButtonReturn { dataMaintenance() }
     if choice.rawValue == NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + 3 {
       evaluationSettings()
+    }
+    if choice.rawValue == NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + 4 {
+      runtimeLocationSettings()
     }
   }
   func connectStore() {
@@ -849,40 +858,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 }
 
 let args = CommandLine.arguments
-let executable = URL(fileURLWithPath: args[0]).standardizedFileURL
-let developmentRoot = Bundle.main.resourceURL.flatMap {
-  try? String(contentsOf: $0.appendingPathComponent("development-root.txt"))
-}?.trimmingCharacters(in: .whitespacesAndNewlines)
-let project = URL(
-  fileURLWithPath: ProcessInfo.processInfo.environment["READY_PROJECT_ROOT"]
-    ?? developmentRoot ?? FileManager.default.currentDirectoryPath)
-if args.contains("--diagnostics") {
-  let device = MTLCreateSystemDefaultDevice()
-  let record: [String: Any] = [
-    "device": device?.name ?? "none", "unifiedMemory": device?.hasUnifiedMemory ?? false,
-    "gpuAllocatedBytes": device?.currentAllocatedSize ?? 0,
-    "recommendedWorkingSet": device?.recommendedMaxWorkingSetSize ?? 0,
-    "prefixRoot": LauncherPaths().root.appendingPathComponent("Prefixes").path,
-    "project": project.path,
+var dataPaths = LauncherPaths()
+if let index = args.firstIndex(of: "--data-root") {
+  guard args.indices.contains(index + 1), args[index + 1].hasPrefix("/"), args[index + 1] != "/"
+  else {
+    FileHandle.standardError.write(
+      Data("--data-root requires an absolute application-data directory.\n".utf8))
+    exit(64)
+  }
+  dataPaths = LauncherPaths(root: URL(fileURLWithPath: args[index + 1]))
+}
+let runtimeLocationActions = ["--set-runtime-root", "--reset-runtime-root", "--restore-runtime-root"]
+if runtimeLocationActions.contains(where: args.contains) {
+  do {
+    let actions = runtimeLocationActions.filter(args.contains)
+    guard actions.count == 1, let dataIndex = args.firstIndex(of: "--data-root"),
+      args[dataIndex + 1] == dataPaths.root.path else {
+      throw LauncherError.invalid("Runtime location changes require exactly one action and an explicit canonical --data-root.")
+    }
+    if let index = args.firstIndex(of: "--set-runtime-root") {
+      guard args.indices.contains(index + 1), args[index + 1].hasPrefix("/") else {
+        throw LauncherError.invalid("--set-runtime-root requires an absolute runtime directory.")
+      }
+      try RuntimeLocationStore.set(URL(fileURLWithPath: args[index + 1]), paths: dataPaths)
+    } else if args.contains("--restore-runtime-root") {
+      try RuntimeLocationStore.restorePrevious(paths: dataPaths)
+    } else {
+      try RuntimeLocationStore.reset(paths: dataPaths)
+    }
+  } catch {
+    FileHandle.standardError.write(Data((error.localizedDescription + "\n").utf8))
+    exit(64)
+  }
+}
+let support = FrontendSupportPaths(paths: dataPaths)
+let project = support.codeRoot
+if runtimeLocationActions.contains(where: args.contains) || args.contains("--diagnostics") || args.contains("--frontend-self-test") {
+  // Report generation is headless and read-only. Only an explicit location
+  // action above writes its owned pointer/history; no accounts or engines run.
+  let config = FrontendSupportPaths.configuration(paths: dataPaths, runtimeRoot: support.runtimeRoot)
+  let fm = FileManager.default
+  let complete = [support.sessionHost, support.overlay, support.storeBridge,
+    project.appendingPathComponent("StoreBridge/supervisor.py"),
+    project.appendingPathComponent("LICENSE"), project.appendingPathComponent("Docs/LICENSES.md")
+  ].allSatisfy { fm.isReadableFile(atPath: $0.path) }
+    && fm.isExecutableFile(atPath: support.sessionHost.path)
+  var record: [String: Any] = [
+    "prefixRoot": dataPaths.root.appendingPathComponent("Prefixes").path,
+    "dataRoot": dataPaths.root.path, "project": project.path,
+    "codeRoot": project.path, "runtimeRoot": support.runtimeRoot.path,
+    "runtimeConfiguration": config.path,
+    "runtimeConfigurationAvailable": fm.isReadableFile(atPath: config.path),
+    "runtimeLocationOrigin": support.runtimeLocationOrigin,
+    "runtimeLocationIssue": support.runtimeLocationIssue ?? "",
+    "bundledFrontend": support.isBundled, "frontendSupportAvailable": complete,
+    "sessionHost": support.sessionHost.path, "overlay": support.overlay.path,
+    "storeBridge": support.storeBridge.path,
   ]
-  print(
-    String(
-      data: try JSONSerialization.data(
-        withJSONObject: record, options: [.prettyPrinted, .sortedKeys]), encoding: .utf8)!)
+  if args.contains("--diagnostics") {
+    let device = MTLCreateSystemDefaultDevice()
+    record["device"] = device?.name ?? "none"
+    record["unifiedMemory"] = device?.hasUnifiedMemory ?? false
+    record["gpuAllocatedBytes"] = device?.currentAllocatedSize ?? 0
+    record["recommendedWorkingSet"] = device?.recommendedMaxWorkingSetSize ?? 0
+  }
+  print(String(data: try JSONSerialization.data(
+    withJSONObject: record, options: [.prettyPrinted, .sortedKeys]), encoding: .utf8)!)
+  if args.contains("--frontend-self-test") && !complete { exit(1) }
 } else {
   let app = NSApplication.shared
   app.setActivationPolicy(.regular)
-  var dataPaths = LauncherPaths()
-  if let index = args.firstIndex(of: "--data-root") {
-    guard args.indices.contains(index + 1), args[index + 1].hasPrefix("/"), args[index + 1] != "/"
-    else {
-      FileHandle.standardError.write(
-        Data("--data-root requires an absolute application-data directory.\n".utf8))
-      exit(64)
-    }
-    dataPaths = LauncherPaths(root: URL(fileURLWithPath: args[index + 1]).standardizedFileURL)
-  }
-  let delegate = AppDelegate(project: project, paths: dataPaths)
+  let delegate = AppDelegate(project: project, runtimeRoot: support.runtimeRoot, paths: dataPaths)
   app.delegate = delegate
   withExtendedLifetime(delegate) { app.run() }
 }

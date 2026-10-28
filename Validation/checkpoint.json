@@ -1,5 +1,5 @@
 {
-  "createdAt": "2026-10-28T03:46:18.080837+01:00",
+  "createdAt": "2026-10-28T04:57:08.214513+01:00",
   "goalComplete": false,
   "core": {
     "checks": 26,
@@ -251,7 +251,7 @@
       "writerDoesNotBlockPrefixInitialization": true
     },
     "scope": "actual SessionManager + native keeper + Wine + compiled Windows WinAPI helper; no protocol mocks, account, or game",
-    "runtimeID": "ready-runtime-b4a90f0d97ce75cdd949+ready-dxmt-fed085e828b5281fc1e4"
+    "runtimeID": "ready-source-runtime-68c00b7d3878699829eb+ready-source-dxmt-68c00b7d3878699829eb"
   },
   "winePE32": {
     "verified": true,
@@ -291,6 +291,24 @@
     "scope": "actual AppDelegate + MetalCanvas + SessionManager + native keeper; logical resource/window state, no visual input or real game",
     "visualVerificationPerformed": false,
     "directToDisplayVerified": false
+  },
+  "frontendPackage": {
+    "passed": true,
+    "checks": 14,
+    "scope": "headless relocated frontend only; no real GPU, game, account, or full-runtime validation",
+    "externalRuntimesBundled": false,
+    "proprietaryAppleFilesBundled": false,
+    "runtimeLocationGUIVerified": false,
+    "wholeApplicationDistributionApproved": false
+  },
+  "diagnosticXInputCapture": {
+    "passed": true,
+    "dllArchitectureCases": 10,
+    "separateSessionsVerified": true,
+    "actualInjectedOverlayStatusVerified": true,
+    "physicalControllerVerified": false,
+    "activated": false,
+    "scope": "Wine 11.20 builtin XInput with simulated device input; other input APIs and WineCX unverified"
   },
   "overlay": {
     "gpuPaths": 6,

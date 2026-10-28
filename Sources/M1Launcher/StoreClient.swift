@@ -40,6 +40,7 @@ final class StoreClient {
   }
 
   let project: URL
+  let runtimeRoot: URL
   private let stateRoot: URL?
   private let credentials: CredentialAccess
   private let workerQueue: DispatchQueue
@@ -51,10 +52,11 @@ final class StoreClient {
   var hasActiveRequests: Bool { withLock { !pendingRequests.isEmpty } }
 
   init(
-    project: URL, stateRoot: URL? = nil, credentialAccess: CredentialAccess? = nil,
+    project: URL, stateRoot: URL? = nil, runtimeRoot: URL? = nil, credentialAccess: CredentialAccess? = nil,
     workerQueue: DispatchQueue = .global(qos: .userInitiated)
   ) {
     self.project = project
+    self.runtimeRoot = runtimeRoot ?? project.appendingPathComponent("Runtime")
     self.stateRoot = stateRoot
     self.credentials = credentialAccess ?? .keychain(stateRoot: stateRoot)
     self.workerQueue = workerQueue
@@ -173,11 +175,11 @@ final class StoreClient {
       task.standardOutput = output
       task.standardError = FileHandle.nullDevice
       task.currentDirectoryURL = project
-      if let stateRoot {
-        var environment = ProcessInfo.processInfo.environment
-        environment["READY_DATA_ROOT"] = stateRoot.path
-        task.environment = environment
-      }
+      var environment = ProcessInfo.processInfo.environment
+      environment["READY_RUNTIME_ROOT"] = runtimeRoot.path
+      environment["PYTHONDONTWRITEBYTECODE"] = "1"
+      if let stateRoot { environment["READY_DATA_ROOT"] = stateRoot.path }
+      task.environment = environment
       // Prevent a closed request pipe from delivering process-wide SIGPIPE.
       guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) != -1 else {
         throw Failure.pipe

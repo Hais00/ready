@@ -3,7 +3,8 @@
 import contextlib, fcntl, hashlib, json, os, pathlib, re, shutil, signal, subprocess, sys, tempfile, time, uuid, zlib
 from bridge import BridgeError, ROOT, emit, require, PUBLIC_CLIENT_IDS, inspect_native
 
-TOOLS=ROOT/'Runtime/Tools/StoreBridge'
+from runtime_paths import tools_root, tool_payload
+TOOLS=tools_root()
 LEGENDARY_CACHE=('installed.json','metadata','manifests')
 from state_paths import state_root
 PROFILE_ROOT=state_root()/'Profiles'
@@ -31,7 +32,7 @@ def transfer_legendary_cache(source,dest):
         else:shutil.copy2(src,target)
 def steam_request(request):
     if request['operation'] in ('download','install'):return download(request)
-    dotnet=TOOLS/'dotnet/dotnet';helper=ROOT/'StoreBridge/SteamBridge/bin/Release/net10.0/ReadySteamBridge.dll'
+    dotnet=TOOLS/'dotnet/dotnet';helper=tool_payload('SteamBridge/ReadySteamBridge.dll','StoreBridge/SteamBridge/bin/Release/net10.0/ReadySteamBridge.dll')
     if not dotnet.exists() or not helper.exists():raise BridgeError('backend_missing','Build the open Steam bridge with Scripts/store_bootstrap.py first')
     env={**os.environ,'DOTNET_CLI_TELEMETRY_OPTOUT':'1','DOTNET_GENERATE_ASPNET_CERTIFICATE':'false'}
     p=subprocess.Popen([str(dotnet),str(helper)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,env=env,start_new_session=not supervised())
@@ -80,7 +81,7 @@ def prepare_download(request,config,secrets_dir):
     if store=='steam':
         if not gid.isdigit():raise BridgeError('invalid_game_id','Steam gameID must be numeric')
         require(c.get('username'),'Steam username missing');require(c.get('refresh_token'),'Steam refresh token missing')
-        dll=ROOT/'StoreBridge/Dependencies/depotdownloader/DepotDownloader/bin/Release/net9.0/DepotDownloader.dll';dotnet=TOOLS/'dotnet/dotnet'
+        dll=tool_payload('DepotDownloader/DepotDownloader.dll','StoreBridge/Dependencies/depotdownloader/DepotDownloader/bin/Release/net9.0/DepotDownloader.dll');dotnet=TOOLS/'dotnet/dotnet'
         if not dotnet.exists() or not dll.exists():raise BridgeError('backend_missing','Build the open Steam downloader first')
         env['READY_TOKEN_STDIN']='1'
         args=[str(dotnet),str(dll),'-app',gid,'-username','ready-stdin-account','-remember-password','-os','macos' if platform=='macOS' else 'windows','-osarch','64','-dir',str(path)]

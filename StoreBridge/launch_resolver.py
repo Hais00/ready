@@ -139,7 +139,8 @@ def json_document(path,json5=False):
     except json.JSONDecodeError:
         if not json5:raise BridgeError('invalid_launch_metadata','Invalid store launch JSON') from None
     # Nile's open JSON5 dependency is already installed locally by store_bootstrap.
-    py=ROOT/'Runtime/Tools/StoreBridge/venv/bin/python'
+    from runtime_paths import tools_root
+    py=tools_root()/'venv/bin/python'
     if not py.exists():raise BridgeError('backend_missing','JSON5 launch manifest requires the open store helper environment')
     code='import json,json5,sys;json.dump(json5.loads(sys.stdin.read()),sys.stdout)'
     try:

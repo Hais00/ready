@@ -18,7 +18,7 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp .build/release/M1Launcher "$app/Contents/MacOS/ready"
-printf '%s\n' "$PWD" > "$app/Contents/Resources/development-root.txt"
+python3 Scripts/package_frontend.py "$app/Contents/Resources/ReadySupport"
 cat > "$app/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -33,6 +33,8 @@ cat > "$app/Contents/Info.plist" <<'EOF'
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 EOF
+/usr/bin/codesign --verify --strict "$app/Contents/Resources/ReadySupport/Build/ReadySessionHost"
+/usr/bin/codesign --verify --strict "$app/Contents/Resources/ReadySupport/Build/libReadyOverlay.dylib"
 /usr/bin/codesign --force --sign - "$app"
 /usr/bin/codesign --verify --strict "$app"
 if [ -e "$final" ]; then

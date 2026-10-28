@@ -15,7 +15,7 @@ Repository: https://github.com/Hais00/ready (currently private). Our code is **G
 - Automatic renderer selection uses runtime availability and verification evidence, exact game/runtime rules when available, and advanced overrides. No arbitrary simultaneous loading of DXVK and D3DMetal.
 - Store tokens are stored in the macOS Keychain, scoped to the launcher profile. No telemetry.
 
-See [requirements and evidence gates](Docs/REQUIREMENTS.md), [prefix architecture](Docs/PREFIXES.md), [store integration](Docs/STORES.md), [overlay](Docs/OVERLAY.md), and [current work state](Docs/STATUS.md).
+See [portable frontend packaging](Docs/FRONTEND_PACKAGING.md), [requirements and evidence gates](Docs/REQUIREMENTS.md), [prefix architecture](Docs/PREFIXES.md), [store integration](Docs/STORES.md), [overlay](Docs/OVERLAY.md), and [current work state](Docs/STATUS.md).
 
 ## Build and test
 
@@ -37,7 +37,7 @@ swift run M1Launcher --preview Evidence/ready-preview.png
 swift run M1Launcher --graphics-self-test
 ```
 
-The app is generated at `Build/ready.app`. This development bundle records the source directory in its resources, so Finder launch can find the local runtime and helpers. `READY_PROJECT_ROOT` can override it. Moving the project requires rebuilding the bundle; self-contained release packaging is still an open gate.
+The app is generated at `Build/ready.app`. The frontend carries its own support code, native overlay, session keeper, sources and notices. Engines and store tools remain external and central; `READY_RUNTIME_ROOT` selects their location. A packaged frontend defaults to the selected application-data directory’s Runtimes folder and reports an absent runtime honestly. Source execution retains its development fallback. See the packaging guide for the exact scope and remaining distribution requirements.
 
 ## Sources and runtimes
 
@@ -54,6 +54,8 @@ Apple D3DMetal/GPTK evaluation libraries are **proprietary optional local inputs
 The [sanitized checkpoint](Validation/checkpoint.json) records 26 domain checks, 64 store protocol/concurrency tests, real process/session coordination, and real Wine registry/folder API checks across game/profile prefixes. Two actual Windows sessions also verify that terminating A leaves B running with its lease intact. Game readers and store writers now protect shared installation files with an interoperable lease. Sixteen real-process StoreClient checks cover cancellation and private credential transport without accessing real Keychain accounts. Actual Metal overlay rendering passes six ARM64/x64 paths and a Windows Vulkan → Wine → KosmicKrisp path. The launcher releases its canvas texture during play; a local Metal allocation measurement falls from about 47 MB to 0.74 MB.
 
 The Library menu and settings expose **Dati e ripristino** for guided legacy migration, interrupted-copy recovery and archival rollback. The copy crash probe passes; visual verification of the new dialogs is pending because the Mac was locked during the attempt.
+
+The relocatable frontend passes 14 packaging/configuration checks, including a saved central-runtime location, restoration and invalid-path rejection. **Libreria → Motori…** selects that location without copying engines or changing their configuration. The graphical selection flow still needs visual verification. A separate [diagnostic XInput provider](Docs/XINPUT_CAPTURE.md) passes ten DLL/architecture combinations and actual injected-overlay integration with simulated controller input; it is not the active runtime and does not establish physical-controller or other input-API support.
 
 For an isolated application-data root use `--data-root /absolute/path` (profiles, store state, installation locks and Keychain service namespace are separated).
 

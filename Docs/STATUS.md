@@ -29,10 +29,12 @@ Started 2026-10-27. Repository: `https://github.com/Hais00/ready` (private). Loc
 - Standalone Swift probes explicitly build the static LauncherCore product before linking. This prevents a newer Swift module from being linked with an older archive after model-layout changes.
 - Keeper and overlay builds publish signed binaries by atomic rename; a real running-child rebuild test verifies old executable mappings and leases remain intact.
 - Native controller policy has 30 logic checks; real AppKit modal interaction and hardware remain unverified while the Mac is locked.
-- See Docs/DISTRIBUTION.md: dependency provenance blocks binary-runtime redistribution. Source rebuilds are in progress; active runtime binaries remain unchanged.
+- See Docs/DISTRIBUTION.md: a selected source-built dependency payload now passes provenance and runtime checks; remaining components and whole-application distribution are separate gates.
 
 - Settings now offers explicit local evaluation activation and byte-exact runtime restoration with private history. It accepts no vendor terms, grants no rights and includes no Apple binaries. GUI visual verification remains pending; configuration policy/restore checks pass.
 
 - Source generation `68c00b7d3878699829eb` is active after 26 real-wrapper checks and an 8-check Core provider round-trip. Before-images and old immutable providers are retained; user overrides/prefixes were not changed.
 - The 17-component source dependency build and selected 25-library/module payload pass the source/runtime gate. Whole-app distribution is a separate gate, and Apple remains external/evaluation-only.
 - Game-specific extra save directories are now applied and persisted across recreation. Five real Windows API checks prove normal C:\ProgramData access, game/profile separation and recreation survival; the Core domain suite has 26 checks.
+- The frontend is relocatable with its own source, notices, overlay and session keeper. Fourteen relocation/configuration checks pass. Central engines and store tools remain external; Libreria → Motori… stores a private location pointer with history and restore, without editing engine files. Actual selection through the graphical dialogs remains unverified while the Mac is locked.
+- A frozen diagnostic Wine 11.20 XInput provider passes ten DLL/architecture combinations, negative protocol checks, two-session isolation and actual injected-overlay integration with simulated controller input. It remains separate from the active runtime; physical controllers, WineCX and other input APIs are open gates.

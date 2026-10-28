@@ -74,6 +74,7 @@ final class SessionManager {
   }
   let paths: LauncherPaths
   let project: URL
+  let runtimeRoot: URL
   private let stateLock = NSLock()
   private let worker = DispatchQueue(label: "ready.session.initialize", qos: .userInitiated)
   private var phase: Phase = .idle
@@ -112,11 +113,12 @@ final class SessionManager {
   }
   var sessionProcessIdentifier: Int32? { currentContext()?.currentProcess()?.processIdentifier }
   init(
-    paths: LauncherPaths, project: URL, initializationTimeout: TimeInterval = 120,
+    paths: LauncherPaths, project: URL, runtimeRoot: URL? = nil, initializationTimeout: TimeInterval = 120,
     shutdownGrace: TimeInterval = 10
   ) {
     self.paths = paths
     self.project = project
+    self.runtimeRoot = runtimeRoot ?? project.appendingPathComponent("Runtime")
     self.initializationTimeout = max(0.05, initializationTimeout)
     self.shutdownGrace = max(0.05, shutdownGrace)
   }
@@ -170,10 +172,8 @@ final class SessionManager {
             LauncherError.unavailable("Compila il supervisore con Scripts/build_session_host.sh.")))
         return
       }
-      let userRuntime = paths.runtimes.appendingPathComponent("runtime.json")
       let runtime = RuntimeConfiguration.load(
-        FileManager.default.fileExists(atPath: userRuntime.path)
-          ? userRuntime : project.appendingPathComponent("Runtime/runtime.json"))
+        FrontendSupportPaths.configuration(paths: paths, runtimeRoot: runtimeRoot))
       let ctx = Context(
         game: game, variant: variant, profile: profile, runtime: runtime, paths: paths, host: host,
         arguments: launchArguments, environment: launchEnvironment, completion: completion)

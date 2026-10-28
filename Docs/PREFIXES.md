@@ -49,6 +49,25 @@ Wine PE32 builtins are projected separately into each prefix's `syswow64` using 
 
 ## Scope and unresolved limits
 
+The architecture correction is checked at the following boundaries. These are
+repeatable probes of synthetic games and data, not certification of arbitrary
+commercial games or ownership of mixed legacy accounts.
+
+| Requested verification | Concrete evidence |
+| --- | --- |
+| A dependency change in A leaves B unchanged | Shared `LauncherChecks` domain suite plus `Scripts/runtime_prefix_proof.py`; Core provider round-trip also compares the other game's DLL and registry bytes |
+| Profiles do not share personal account markers, registry or saves | `Scripts/runtime_prefix_proof.py` uses actual Windows registry/folder APIs; `Scripts/test_custom_saves.py` checks another game and another profile |
+| Documents are normal Windows paths | Wine canonical-folder and CreateFile probes in `Scripts/runtime_prefix_proof.py` |
+| Automatic rendering uses available engines | Domain renderer-policy checks reject unavailable or unverified paths; wrapper E2E and Core provider probes test the specific locally installed runtime generation |
+| Recreating a prefix retains saves | Windows API prefix probe and five `Scripts/test_custom_saves.py` checks, including a later launch with no incoming recipe |
+| Terminating A leaves B active | `Scripts/test_wine_sessions.py` runs two actual Windows sessions; keeper and SessionManager tests check leases and exact-prefix shutdown |
+| Migration preserves originals and can recover | `Scripts/test_migration_crash.py` and `Scripts/test_rollback_crash.py`, including real process kills at copy/rollback boundaries |
+
+Run the domain suite with `swift run --jobs 2 ReadyCoreProbe`. Runtime probes need
+the separately provisioned central engines; their raw local evidence is ignored
+by Git. The sanitized [checkpoint](../Validation/checkpoint.json) reports their
+scope and the remaining verification gates.
+
 - Profiles are launcher profiles within one macOS account. This is logical data separation, not a sandbox against malicious same-user code.
 - macOS-native apps can ignore HOME or share OS services. Their per-profile save/account isolation still needs game-specific handling; they are not forced into Wine.
 - Launched games now hold a shared installation lease in the native keeper. Store downloads hold an exclusive writer lease; overlapping target/ancestor/descendant paths conflict while distinct games and multiple readers stay independent. Protocol v2 is tested across native C and Python plus real SessionManager/Wine sessions. All participants must be upgraded together; old v1 download processes must finish before switching. External store clients/updaters that do not participate cannot be coordinated automatically.

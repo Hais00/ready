@@ -28,6 +28,10 @@ source_activation=read('runtime-source-activation.json')
 source_e2e=read('runtime-source-candidate-e2e.json')
 source_core=read('runtime-source-core-switch.json')
 source_gate=read('runtime-source-activation-dependency-gate.json')
+frontend_package=read('frontend-package-tests.json')
+xinput=read('runtime-xinput-capture.json')
+xinput_overlay=read('runtime-xinput-real-overlay.json')
+xinput_provider=read('runtime-xinput-provider.json')
 store_log=(ROOT/'Evidence/stores-parent-tests.log').read_text()
 match=re.search(r'Ran (\d+) tests',store_log)
 assert core['pass'] and host['passed'] and manager['passed']
@@ -39,6 +43,10 @@ assert rollback_crash['passed']
 assert custom_saves['passed']
 assert source_activation['state']=='committed' and source_e2e['passed'] and source_core['passed']
 assert source_gate['binaryRedistributionReady'] and not source_gate['runtimeValidationPending']
+assert frontend_package['passed']
+assert xinput['passed'] and xinput['twoSessionIsolation']['passed'] and xinput_overlay['passed']
+assert not xinput['defaultRuntimeModified'] and not xinput_overlay['defaultRuntimeModified']
+assert xinput_provider['diagnosticOnly'] and not xinput_provider['activated']
 assert apple_gpu['evaluationOnly'] and not apple_gpu['enabledForConsumerPlay']
 assert prefix['verified'] and canonical['verified'] and wine_overlay['passed'] and frontend['pass']
 gpu_paths=[path for path in overlay if 'architecture' in path]
@@ -78,6 +86,14 @@ report={
  'frontendMemory':frontend,
  'frontendLifecycle':{'passed':True,'checks':frontend_lifecycle['checks'],'scope':frontend_lifecycle['scope'],
   'visualVerificationPerformed':False,'directToDisplayVerified':False},
+ 'frontendPackage':{'passed':True,'checks':len(frontend_package['checks']),
+  'scope':frontend_package['scope'],'externalRuntimesBundled':False,
+  'proprietaryAppleFilesBundled':False,'runtimeLocationGUIVerified':False,
+  'wholeApplicationDistributionApproved':False},
+ 'diagnosticXInputCapture':{'passed':True,'dllArchitectureCases':len(xinput['cases']),
+  'separateSessionsVerified':True,'actualInjectedOverlayStatusVerified':True,
+  'physicalControllerVerified':False,'activated':False,
+  'scope':'Wine 11.20 builtin XInput with simulated device input; other input APIs and WineCX unverified'},
  'overlay':{'gpuPaths':len(gpu_paths),
   'wineVulkanMetalVerified':True,'shownTrackedTextureBytes':835584,'hiddenTrackedTextureBytes':0,
   'directToDisplayVerified':False,'observedHUDMode':'Composited in both native baseline and overlay samples'},
