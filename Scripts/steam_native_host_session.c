@@ -46,14 +46,15 @@ static int ready_session_environment(const char *private_name) {
     return 1;
 }
 int main(int argc,char **argv) {
-    const char *library=NULL,*mode=NULL,*discovery=NULL,*service=NULL,*sdk=NULL;int life=-1,event=-1;
-    if(argc!=16||strcmp(argv[1],"--host-session"))return 64;
+    const char *library=NULL,*mode=NULL,*discovery=NULL,*service=NULL,*sdk=NULL;int life=-1,event=-1,health=-1;
+    if((argc!=16&&argc!=18)||strcmp(argv[1],"--host-session"))return 64;
     for(int i=2;i+1<argc;i+=2) {
         const char *key=argv[i],*value=argv[i+1];
         if(!strcmp(key,"--library")&&!library)library=value;
         else if(!strcmp(key,"--mode")&&!mode)mode=value;
         else if(!strcmp(key,"--lifeline-fd")&&life<0)life=ready_session_number(value);
         else if(!strcmp(key,"--events-fd")&&event<0)event=ready_session_number(value);
+        else if(!strcmp(key,"--game-health-fd")&&health<0)health=ready_session_number(value);
         else if(!strcmp(key,"--discovery-library")&&!discovery)discovery=value;
         else if(!strcmp(key,"--discovery-service")&&!service)service=value;
         else if(!strcmp(key,"--sdk")&&!sdk)sdk=value;
@@ -74,6 +75,12 @@ int main(int argc,char **argv) {
             setenv("DYLD_INSERT_LIBRARIES",injected,1);
         }
         setenv("READY_STEAM_NATIVE_REEXEC","1",1);execv(argv[0],argv);return 74;
+    }
+    if(argc==18&&health<3)return 64;
+    if(health>=0){
+        struct stat info;int flags=fcntl(health,F_GETFL);
+        if(health==life||health==event||flags<0||fstat(health,&info)||!S_ISFIFO(info.st_mode)||info.st_uid!=geteuid()||(flags&O_ACCMODE)!=O_WRONLY||fcntl(health,F_SETFD,FD_CLOEXEC))return 65;
+        atomic_store(&ready_session_health,health);
     }
     event=fcntl(event,F_DUPFD_CLOEXEC,5);if(event<0)return 65;
     int null=open("/dev/null",O_WRONLY);if(null<0)return 73;

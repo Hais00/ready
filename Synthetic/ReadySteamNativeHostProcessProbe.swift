@@ -17,6 +17,16 @@ private func pump(_ condition:()->Bool,seconds:TimeInterval=10)throws {
   while !condition()&&Date()<deadline {RunLoop.current.run(until:Date().addingTimeInterval(0.005))}
   try check(condition(),"deadline")
 }
+private func healthEOF(_ fd:Int32)throws->Bool {
+  var info=stat();let flags=fcntl(fd,F_GETFL)
+  try check(fstat(fd,&info)==0&&(info.st_mode&S_IFMT)==S_IFIFO&&flags&O_ACCMODE==O_RDONLY&&fcntl(fd,F_GETFD)&FD_CLOEXEC != 0,"owned close-on-exec health reader")
+  try check(fcntl(fd,F_SETFL,flags|O_NONBLOCK)==0,"nonblocking test health reader")
+  var byte:UInt8=0;let count=read(fd,&byte,1)
+  if count==0{return true}
+  try check(count<0&&(errno==EAGAIN||errno==EWOULDBLOCK),"health pipe never carries bytes")
+  return false
+}
+private func descriptorCount()->Int { (0..<256).filter{fcntl(Int32($0),F_GETFD)>=0}.count }
 @main private struct ReadySteamNativeHostProcessProbe {
   @MainActor static func main() {
     do {try run()}
@@ -36,6 +46,10 @@ private func pump(_ condition:()->Bool,seconds:TimeInterval=10)throws {
       while true{RunLoop.current.run(until:Date().addingTimeInterval(0.1))}
     }
     var checks=[String:Bool](),eventsA=[[String:Any]](),eventsB=[[String:Any]]()
+    var fixtureGameAssetsRejected=false
+    do{_=try binding.verifiedGameAssets()}catch{fixtureGameAssetsRejected=true}
+    try check(fixtureGameAssetsRejected,"fixture cannot supply production game assets")
+    checks["fixtureBindingCannotSupplyGameAssets"]=true
     var exitA:SteamNativeHostProcess.Exit?,exitB:SteamNativeHostProcess.Exit?
     var inputA=packet(),inputB=packet()
     let hostA=try SteamNativeHostProcess.spawn(binding:binding,credentialPacket:&inputA,profile:profile,sessionID:UUID(),gameID:480,profileStateRoot:state,onEvent:{eventsA.append($0)},onExit:{exitA=$0})
@@ -44,19 +58,56 @@ private func pump(_ condition:()->Bool,seconds:TimeInterval=10)throws {
     try pump{exitA != nil||exitB != nil||(eventsA.contains{$0["type"]as?String=="ready"}&&eventsB.contains{$0["type"]as?String=="ready"})}
     try check(exitA==nil&&exitB==nil,"fixture startup exited A:\(String(describing:exitA?.code)) B:\(String(describing:exitB?.code))")
     checks["realPOSIXSpawnFDMappingAndSandboxControls"]=true
+    checks["privateWorkingDirectoryInsideSandbox"]=true
+    let healthA=try hostA.takeGameHealthReadFD(),healthB=try hostB.takeGameHealthReadFD()
+    defer{close(healthA);close(healthB)}
+    let aliveA=try healthEOF(healthA),aliveB=try healthEOF(healthB)
+    try check(!aliveA && !aliveB,"health leases remain open while hosts live")
+    var repeated=false;do{_=try hostA.takeGameHealthReadFD()}catch{repeated=true}
+    try check(repeated&&fcntl(healthA,F_GETFD)>=0,"health reader transferred only once")
+    checks["healthReaderTransferredOnceWithReadOnlyCLOEXEC"]=true
     try check(hostA.processID != hostB.processID,"separate exact child PID")
     hostA.stop();hostA.stop();try pump{exitA != nil}
     try check(exitA?.code==42&&exitA?.cancelled==true&&exitA?.invalidEvents==false,"EOF orderly release")
     try check(exitB==nil&&kill(hostB.processID!,0)==0,"other host remains live")
+    let closedA=try healthEOF(healthA),stillAliveB=try healthEOF(healthB)
+    try check(closedA && !stillAliveB,"A health EOF independent of B")
+    checks["hostStopClosesHealthWithoutAffectingOtherHost"]=true
     checks["closingAIsIdempotentAndDoesNotStopB"]=true
     hostB.stop();try pump{exitB != nil};try check(exitB?.code==42,"B own cleanup")
+    let closedB=try healthEOF(healthB);try check(closedB,"B own health cleanup")
+    do {
+      var input=packet(),seen=[[String:Any]](),ended:SteamNativeHostProcess.Exit?
+      let child=try SteamNativeHostProcess.spawn(binding:binding,credentialPacket:&input,profile:profile,sessionID:UUID(),gameID:480,profileStateRoot:state,onEvent:{seen.append($0)},onExit:{ended=$0})
+      try pump{seen.contains{$0["type"]as?String=="ready"}}
+      let descriptor=try child.takeGameHealthReadFD();close(descriptor)
+      RunLoop.current.run(until:Date().addingTimeInterval(0.04))
+      try check(ended==nil&&kill(child.processID!,0)==0,"consumer close does not stop host")
+      child.stop();try pump{ended != nil};checks["closingHealthConsumerDoesNotStopHost"]=true
+    }
+    do {
+      let path=root.appendingPathComponent("revoke.json"),selected=try SteamNativeHostProcess.Binding.load(manifestURL:path,expectedSHA256:digest(path))
+      var input=packet(),seen=[[String:Any]](),ended:SteamNativeHostProcess.Exit?
+      let child=try SteamNativeHostProcess.spawn(binding:selected,credentialPacket:&input,profile:profile,sessionID:UUID(),gameID:480,profileStateRoot:state,onEvent:{seen.append($0)},onExit:{ended=$0})
+      let descriptor=try child.takeGameHealthReadFD();defer{close(descriptor)}
+      try pump{seen.contains{$0["type"]as?String=="state"&&$0["revoked"]as?Bool==true}}
+      let eof=try healthEOF(descriptor)
+      try check(eof&&ended==nil&&kill(child.processID!,0)==0,"revocation closes health before simulated cleanup")
+      try pump{ended != nil};try check(ended?.code==43,"revoked host own exit")
+      checks["healthEOFPrecedesRevokedHostCleanup"]=true
+    }
     try check(!String(describing:eventsA+eventsB).contains("fixture_private"),"no raw credentials forwarded")
     checks["eventWhitelistDropsUnexpectedSecretFields"]=true
+    let beforeUntaken=descriptorCount()
     var cancelledInput=packet(),earlyExit:SteamNativeHostProcess.Exit?,lateReady=0
     let early=try SteamNativeHostProcess.spawn(binding:binding,credentialPacket:&cancelledInput,profile:profile,sessionID:UUID(),gameID:480,profileStateRoot:state,onEvent:{if $0["type"]as?String=="ready"{lateReady+=1}},onExit:{earlyExit=$0})
     early.stop();try pump{earlyExit != nil}
     try check(lateReady==0&&earlyExit!.cancelled,"startup cancellation bars queued ready")
     checks["startupCancellationSuppressesLateReady"]=true
+    try pump({descriptorCount()<=beforeUntaken},seconds:2)
+    var afterExit=false;do{_=try early.takeGameHealthReadFD()}catch{afterExit=true}
+    try check(afterExit,"untaken health reader closed on host reap")
+    checks["untakenHealthReaderClosedAtHostExit"]=true
     let receipt=try JSONSerialization.jsonObject(with:Data(contentsOf:hostA.receiptURL))as![String:Any]
     let policy=hostA.receiptURL.deletingLastPathComponent().appendingPathComponent("host.sb")
     let policyDigest=try digest(policy),manifestDigest=try digest(manifest)

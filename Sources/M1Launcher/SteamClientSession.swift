@@ -55,6 +55,15 @@ final class SteamClientSession {
   init(profile: UUID, command: [String], credentialAccess: StoreClient.CredentialAccess) {
     self.profile = profile; self.command = command; self.credentialAccess = credentialAccess
   }
+  /// A new logon can report online before publishing its new persona. Wait for
+  /// the persona to match the currently saved account before resuming a game.
+  func accountReadyForGame() -> Bool {
+    guard state.online, !state.steamID.isEmpty, !state.accountName.isEmpty,
+      let data = credentialAccess.load(profile, .steam), CredentialVault.steamStatus(data) == .available,
+      let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let account = value["username"] as? String else { return false }
+    return account.caseInsensitiveCompare(state.accountName) == .orderedSame
+  }
   static func installedCommand(project: URL, runtimeRoot: URL) -> [String]? {
     let env = ProcessInfo.processInfo.environment
     let tools = env["READY_STORE_TOOLS_ROOT"].map { URL(fileURLWithPath: $0) }

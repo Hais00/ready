@@ -44,6 +44,11 @@
 static char original_root[PATH_MAX], private_root[PATH_MAX], code_root[PATH_MAX], private_code_root[PATH_MAX];
 static char own_shm_prefix[20]; /* RS + 16 namespace hex + '_' + NUL */
 static pthread_once_t configuration_once = PTHREAD_ONCE_INIT;
+/* Darwin getcwd may fall back to libc stat/lstat of relative names. Those
+ * calls re-enter this interposer. Refuse that uncertain lookup on this thread,
+ * rather than recursively resolving cwd or bypassing the managed namespace. */
+static _Thread_local bool resolving_cwd;
+static _Thread_local bool cwd_reentered;
 
 static bool below(const char *path, const char *root) {
     size_t size = strlen(root);
@@ -127,6 +132,7 @@ __attribute__((constructor)) static void ready_state_fs_start(void) {
 /* Returns a physical path and whether it is in the managed namespace. The real
  * functions referenced from this interposer image are not interposed by dyld. */
 static int mapped(int dirfd, const char *path, bool writing, char out[PATH_MAX], bool *managed) {
+    if (resolving_cwd) { cwd_reentered = true; errno = ELOOP; return -1; }
     pthread_once(&configuration_once, configure);
     if (!path) { errno = EFAULT; return -1; }
     char absolute[PATH_MAX], normalized[PATH_MAX];
@@ -135,7 +141,26 @@ static int mapped(int dirfd, const char *path, bool writing, char out[PATH_MAX],
         strcpy(absolute, path);
     } else {
         char base[PATH_MAX];
-        if (dirfd == AT_FDCWD) { if (!getcwd(base, sizeof base)) return -1; }
+        if (dirfd == AT_FDCWD) {
+            resolving_cwd = true; cwd_reentered = false;
+            /* Ask the kernel for an already-open cwd first. Unlike libc's
+             * getcwd fallback, F_GETPATH does not walk relative stat names.
+             * Opening this directory remains subject to the independent SB;
+             * no unresolved relative operation is ever passed through. */
+            char *result = NULL;
+            int cwd_fd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+            if (cwd_fd >= 0) {
+                if (fcntl(cwd_fd, F_GETPATH, base) == 0) result = base;
+                int saved = errno; close(cwd_fd); errno = saved;
+            }
+            if (!result && !cwd_reentered) result = getcwd(base, sizeof base);
+            int saved = errno; bool recursive = cwd_reentered;
+            resolving_cwd = false; cwd_reentered = false;
+            /* A libc fallback might recover after a denied nested operation.
+             * Do not accept that result as a trustworthy mapping context. */
+            if (recursive) { errno = ELOOP; return -1; }
+            if (!result) { errno = saved ? saved : EIO; return -1; }
+        }
         else if (fcntl(dirfd, F_GETPATH, base) < 0) return -1;
         int n = snprintf(absolute, sizeof absolute, "%s/%s", base, path);
         if (n < 0 || n >= (int)sizeof absolute) { errno = ENAMETOOLONG; return -1; }

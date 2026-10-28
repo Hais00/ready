@@ -8,7 +8,7 @@ import Darwin
 /// through stdin; only the read end of an anonymous lifeline reaches the host.
 /// This supervisor does not authenticate accounts or grant game entitlements.
 final class SteamNativeHostProcess: @unchecked Sendable {
-  enum Failure: Error { case invalidBinding, invalidStateRoot, invalidPacket, system(Int32) }
+  enum Failure: Error { case invalidBinding, invalidStateRoot, invalidPacket, healthUnavailable, system(Int32) }
   enum Mode: String, Sendable { case credentials, cached }
   struct Exit: Sendable {
     let code: Int32?
@@ -18,6 +18,14 @@ final class SteamNativeHostProcess: @unchecked Sendable {
   }
   struct Binding: Sendable {
     struct Asset: Codable, Sendable { let path: String; let sha256: String }
+    struct GameAssets: Sendable {
+      let clientDirectory:URL
+      let originalStateRoot:URL
+      let sdk:URL
+      let fsAdapter:URL
+      let ipcAdapter:URL
+      let lookupAdapter:URL
+    }
     private struct Manifest: Decodable {
       let schema: Int
       let kind: String
@@ -29,7 +37,7 @@ final class SteamNativeHostProcess: @unchecked Sendable {
     let manifestSHA256: String
     fileprivate let assets: [String: Asset]
     fileprivate let extraFiles: [Asset]
-    fileprivate let fixtureOnly: Bool
+    let fixtureOnly: Bool
     fileprivate let bundle: URL
     private init(manifestURL: URL, manifestSHA256: String, document: Manifest, bundle: URL) {
       self.manifestURL=manifestURL; self.manifestSHA256=manifestSHA256
@@ -55,6 +63,16 @@ final class SteamNativeHostProcess: @unchecked Sendable {
     fileprivate func revalidate() throws {
       let actual=try Self.load(manifestURL:manifestURL,expectedSHA256:manifestSHA256)
       guard actual.fixtureOnly==fixtureOnly else { throw Failure.invalidBinding }
+    }
+    /// Read-only code paths for a separately authorized game launch. The caller
+    /// must additionally bind the SDK to that game's selected installation.
+    func verifiedGameAssets() throws -> GameAssets {
+      guard !fixtureOnly else{throw Failure.invalidBinding}
+      try revalidate()
+      return GameAssets(clientDirectory:URL(fileURLWithPath:path("library")).deletingLastPathComponent(),
+        originalStateRoot:bundle.deletingLastPathComponent(),sdk:URL(fileURLWithPath:path("sdk")),
+        fsAdapter:URL(fileURLWithPath:path("fsAdapter")),ipcAdapter:URL(fileURLWithPath:path("ipcAdapter")),
+        lookupAdapter:URL(fileURLWithPath:path("lookupAdapter")))
     }
     fileprivate func path(_ name: String) -> String { assets[name]!.path }
   }
@@ -85,8 +103,23 @@ final class SteamNativeHostProcess: @unchecked Sendable {
   private var publicPID: pid_t?
   private var publicReapedAt: UInt64?
   private var publicReadySuppressed=false
+  private var healthRead:Int32 = -1
   var processID: pid_t? { publicLock.lock(); defer{publicLock.unlock()}; return publicPID }
   let receiptURL: URL
+
+  /// Transfers the sole parent read-end to its caller exactly once. The caller
+  /// owns/ closes it and may pass it via SCM_RIGHTS to a game keeper. This class
+  /// never reads this pipe; closing a consumer does not stop the Steam host.
+  func takeGameHealthReadFD() throws -> Int32 {
+    publicLock.lock();defer{publicLock.unlock()}
+    guard healthRead>=0,publicReapedAt==nil else{throw Failure.healthUnavailable}
+    let fd=healthRead;healthRead = -1;return fd
+  }
+  private func closeUnusedHealthRead() {
+    publicLock.lock();defer{publicLock.unlock()}
+    if healthRead>=0{close(healthRead);healthRead = -1}
+  }
+  deinit { closeUnusedHealthRead() }
 
   private init(binding:Binding, profile:UUID, sessionID:UUID, gameID:UInt32, sessionRoot:URL,
                master:String, serviceEndpoint:String, onEvent:@escaping EventHandler, onExit:@escaping ExitHandler) {
@@ -122,7 +155,8 @@ final class SteamNativeHostProcess: @unchecked Sendable {
       "sessionID":sessionID.uuidString,"gameID":gameID,"bindingManifestSHA256":binding.manifestSHA256,
       "sandboxSHA256":hex(Data(policy.utf8)),"namespace":instance.namespace,"discoveryService":instance.service,
       "masterEndpoint":instance.masterEndpoint,"serviceEndpoint":instance.serviceEndpoint,"credentialTransport":"anonymous-stdin-EOF",
-      "endpointReservationRaceFree":false,"fixtureOnly":binding.fixtureOnly]
+      "endpointReservationRaceFree":false,"fixtureOnly":binding.fixtureOnly,
+      "gameHealthTransport":"anonymous-fifo-EOF","gameHealthChildWriterFD":4]
     try writePrivate(try JSONSerialization.data(withJSONObject:receipt,options:[.sortedKeys]),to:instance.receiptURL)
     var packet=credentialPacket.withUnsafeBytes { Data(bytes:$0.baseAddress!,count:$0.count) }
     do {
@@ -159,16 +193,20 @@ final class SteamNativeHostProcess: @unchecked Sendable {
     }
     var actions:posix_spawn_file_actions_t?,attributes:posix_spawnattr_t?
     defer { for fd in descriptors{close(fd)};if actions != nil{posix_spawn_file_actions_destroy(&actions)};if attributes != nil{posix_spawnattr_destroy(&attributes)} }
-    let stdinPipe=try pair(),lifePipe=try pair(),eventPipe=try pair()
+    let stdinPipe=try pair(),lifePipe=try pair(),eventPipe=try pair(),healthPipe=try pair()
     guard fcntl(stdinPipe.1,F_SETNOSIGPIPE,1)==0,fcntl(lifePipe.1,F_SETNOSIGPIPE,1)==0 else { throw Failure.system(errno) }
     let eventFlags=fcntl(eventPipe.0,F_GETFL)
     guard eventFlags>=0,fcntl(eventPipe.0,F_SETFL,eventFlags|O_NONBLOCK)==0 else { throw Failure.system(errno) }
     func require(_ code:Int32) throws { if code != 0 {throw Failure.system(code)} }
     try require(posix_spawn_file_actions_init(&actions));try require(posix_spawnattr_init(&attributes))
+    // Relative paths must begin inside the allowed private filesystem. Inherit
+    // neither the launcher's repository cwd nor its caller's denied directory.
+    try require(posix_spawn_file_actions_addchdir_np(&actions,temporary.path))
     try require(posix_spawn_file_actions_adddup2(&actions,stdinPipe.0,0))
     try require(posix_spawn_file_actions_adddup2(&actions,eventPipe.1,1))
     try require(posix_spawn_file_actions_addopen(&actions,2,"/dev/null",O_WRONLY,0))
     try require(posix_spawn_file_actions_adddup2(&actions,lifePipe.0,3))
+    try require(posix_spawn_file_actions_adddup2(&actions,healthPipe.1,4))
     for fd in descriptors { try require(posix_spawn_file_actions_addclose(&actions,fd)) }
     let flags=Int16(POSIX_SPAWN_SETPGROUP|POSIX_SPAWN_SETSIGMASK|POSIX_SPAWN_SETSIGDEF|POSIX_SPAWN_CLOEXEC_DEFAULT)
     try require(posix_spawnattr_setflags(&attributes,flags));try require(posix_spawnattr_setpgroup(&attributes,0))
@@ -176,7 +214,7 @@ final class SteamNativeHostProcess: @unchecked Sendable {
     for signal in [SIGPIPE,SIGTERM,SIGINT,SIGHUP]{sigaddset(&defaults,signal)}
     try require(posix_spawnattr_setsigmask(&attributes,&mask));try require(posix_spawnattr_setsigdefault(&attributes,&defaults))
     let arguments=["/usr/bin/sandbox-exec","-f",policyURL.path,binding.path("host"),"--host-session","--library",binding.path("library"),
-      "--lifeline-fd","3","--events-fd","1","--mode",mode.rawValue,"--discovery-library",binding.path("discoveryLibrary"),"--discovery-service",service,"--sdk",binding.path("sdk")]
+      "--lifeline-fd","3","--events-fd","1","--game-health-fd","4","--mode",mode.rawValue,"--discovery-library",binding.path("discoveryLibrary"),"--discovery-service",service,"--sdk",binding.path("sdk")]
     guard let passwd=getpwuid(getuid()) else { throw Failure.invalidStateRoot }
     let environment=["PATH=/usr/bin:/bin","LANG=C","LC_ALL=C","HOME="+String(cString:passwd.pointee.pw_dir),
       "USER="+String(cString:passwd.pointee.pw_name),"LOGNAME="+String(cString:passwd.pointee.pw_name),
@@ -189,7 +227,8 @@ final class SteamNativeHostProcess: @unchecked Sendable {
     try require(posix_spawn(&pid,"/usr/bin/sandbox-exec",&actions,&attributes,&argv,&env))
     lifeline=lifePipe.1;input=stdinPipe.1;events=eventPipe.0
     descriptors.removeAll(where:{$0==lifeline||$0==input||$0==events})
-    publicLock.lock();publicPID=pid;publicLock.unlock()
+    publicLock.lock();publicPID=pid;healthRead=healthPipe.0;publicLock.unlock()
+    descriptors.removeAll(where:{$0==healthPipe.0})
     reader.async{self.readEvents()}
     guardian.async{self.poll()}
     guardian.asyncAfter(deadline:.now()+50){if !self.readyReceived && !self.reaped{self.stopInternal(invalid:true)}}
@@ -234,12 +273,14 @@ final class SteamNativeHostProcess: @unchecked Sendable {
     if result==pid {
       reaped=true;childStatus=status
       publicLock.lock();publicReapedAt=DispatchTime.now().uptimeNanoseconds;publicLock.unlock()
+      closeUnusedHealthRead()
       if lifeline>=0{close(lifeline);lifeline = -1}
       finishIfPossible();return
     }
     if result<0&&errno != EINTR {
       reaped=true;invalidEvents=true
       publicLock.lock();publicReapedAt=DispatchTime.now().uptimeNanoseconds;publicLock.unlock()
+      closeUnusedHealthRead()
       if lifeline>=0{close(lifeline);lifeline = -1}
       finishIfPossible();return // Never signal an unowned/reaped PID.
     }

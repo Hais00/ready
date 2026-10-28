@@ -369,7 +369,14 @@ int main(int argc,char **argv) {
         }
         fputs("}\n",events);fflush(events);
         ReadySteamDiscovery *discovery=NULL;
+#ifdef READY_STEAM_HOST_SESSION
+        // The watchdog may retain this address across main-thread cleanup.
+        // Static storage keeps that final revocation valid until process exit.
+        static ReadySteamAuthenticatedHostRecord discovery_record;
+        discovery_record.abi_version=1;discovery_record.owned_host_pid=getpid();discovery_record.generation=1;
+#else
         ReadySteamAuthenticatedHostRecord discovery_record={.abi_version=1,.owned_host_pid=getpid(),.generation=1};
+#endif
         atomic_init(&discovery_record.authenticated,authenticated&&ownership?1:0);
         void (*stop_discovery)(ReadySteamDiscovery *)=NULL;
         size_t (*discovery_stats)(ReadySteamDiscovery *,char *,size_t)=NULL;

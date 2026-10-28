@@ -18,11 +18,15 @@ static volatile sig_atomic_t stopped;
 static void stop_handler(int value){(void)value;stopped=1;}
 static const char* arg(int count,char**values,const char*name){for(int i=1;i+1<count;i++)if(!strcmp(values[i],name))return values[i+1];return NULL;}
 int main(int argc,char**argv){
+ char cwd[PATH_MAX];const char *temporary=getenv("TMPDIR");
+ if(!temporary||!getcwd(cwd,sizeof cwd)||strlen(temporary)!=strlen(cwd)+1||strncmp(cwd,temporary,strlen(cwd))||temporary[strlen(cwd)]!='/')return 79;
  if(!arg(argc,argv,"--library")||!arg(argc,argv,"--sdk")||!arg(argc,argv,"--discovery-library")||
     !arg(argc,argv,"--lifeline-fd")||strcmp(arg(argc,argv,"--lifeline-fd"),"3")||
     !arg(argc,argv,"--events-fd")||strcmp(arg(argc,argv,"--events-fd"),"1"))return 80;
+ if(!arg(argc,argv,"--game-health-fd")||strcmp(arg(argc,argv,"--game-health-fd"),"4"))return 80;
  struct stat info;if(fstat(3,&info)||!S_ISFIFO(info.st_mode)||(fcntl(3,F_GETFL)&O_ACCMODE)!=O_RDONLY)return 81;
- for(int fd=4;fd<128;fd++)if(fcntl(fd,F_GETFD)>=0)return 82;
+ if(fstat(4,&info)||!S_ISFIFO(info.st_mode)||(fcntl(4,F_GETFL)&O_ACCMODE)!=O_WRONLY)return 81;
+ for(int fd=5;fd<128;fd++)if(fcntl(fd,F_GETFD)>=0)return 82;
  if(getenv("READY_FIXTURE_SECRET")||getenv("DYLD_INSERT_LIBRARIES"))return 83;
  char input[9000];size_t used=0;ssize_t count;
  while((count=read(0,input+used,sizeof(input)-used))>0){used+=(size_t)count;if(used==sizeof(input))return 84;}
@@ -50,11 +54,18 @@ int main(int argc,char**argv){
 #ifdef DROP_EVENTS
  close(1);
 #endif
+#ifdef REVOKE_HEALTH
+ close(4);
+ puts("{\"type\":\"state\",\"revoked\":true,\"authenticated\":false,\"identityMatches\":false,\"ownedSubscription\":false,\"gameID\":480,\"fixtureOnly\":true,\"network\":\"unknown\",\"reason\":43}");fflush(stdout);
+ usleep(500000); /* Simulated cleanup after the health lease was already revoked. */
+ puts("{\"type\":\"stopped\",\"reason\":43,\"userReleased\":true,\"pipeReleased\":true}");fflush(stdout);return 43;
+#endif
 #ifdef IGNORE_LIFELINE
  signal(SIGTERM,SIG_IGN);for(;;)pause();
 #else
  signal(SIGTERM,stop_handler);signal(SIGINT,stop_handler);char byte;
  while(!stopped){count=read(3,&byte,1);if(count==0)break;if(count<0&&errno==EINTR)continue;if(count<0)return 94;}
+ close(4); /* No bytes: EOF revokes the health lease before remaining cleanup. */
  printf("{\"type\":\"stopped\",\"reason\":%d,\"userReleased\":true,\"pipeReleased\":true}\n",stopped?44:42);fflush(stdout);return stopped?44:42;
 #endif
 }

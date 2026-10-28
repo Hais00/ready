@@ -20,6 +20,7 @@ import tempfile
 import uuid
 
 from test_steam_native_ipc_namespace import mapped
+from test_steam_native_state_fs import run_cwd_regressions
 ROOT=Path(__file__).resolve().parents[1]
 WORK=Path('/Volumes/Dati APFS/Codex-ready-01a17e79')
 FIXTURE=r'''
@@ -99,6 +100,8 @@ def main():
     snapshots={}
     for name,path in originals.items():
         target=work/name;target.write_bytes(path.read_bytes());snapshots[name]=target
+    support=ROOT/'Scripts/test_steam_native_state_fs.py';support_snapshot=work/support.name;support_snapshot.write_bytes(support.read_bytes())
+    self_snapshot=work/Path(__file__).name;self_snapshot.write_bytes(Path(__file__).read_bytes())
     c=work/'fixture.c';c.write_text(FIXTURE)
     env={k:v for k,v in os.environ.items() if not k.startswith(('READY_','DYLD_','Steam','STEAM','SB_'))};env['TMPDIR']=str(WORK/'tmp')+'/'
     cache=WORK/'cache/steam-composed-clang';cache.mkdir(mode=0o700,exist_ok=True)
@@ -152,13 +155,23 @@ def main():
     finally:
         for name in owned:libc.shm_unlink(name.encode())
     assert inventory(original)==before
+    cwd_base=base[:-4]  # architecture flags are supplied for each fixture.
+    for order in ('fs-ipc','ipc-fs'):
+        fs=libraries['steam_native_state_fs.c'];ipc=libraries['steam_native_ipc_namespace.c']
+        cwd_checks,cwd_records,cwd_commands=run_cwd_regressions(work,[fs,ipc]if order=='fs-ipc'else[ipc,fs],original,dict(env,READY_STEAM_IPC_NAMESPACE=uuid.uuid4().hex),cwd_base,order)
+        checks.update(cwd_checks);records.extend(cwd_records);commands.extend(cwd_commands)
+    assert inventory(original)==before
     for name,path in originals.items():assert path.read_bytes()==snapshots[name].read_bytes()
+    assert support.read_bytes()==support_snapshot.read_bytes()and Path(__file__).read_bytes()==self_snapshot.read_bytes()
     report={'schema':1,'fixtureOnly':True,'passed':all(checks.values()),'checks':checks,'checkCount':len(checks),'records':records,
-            'sourceSHA256':{name:sha(path) for name,path in originals.items()},'testSHA256':sha(Path(__file__)),'fixtureCSHA256':sha(c),'libraries':{name:{'path':str(path),'sha256':sha(path)} for name,path in libraries.items()},
+            'sourceSHA256':{name:sha(path) for name,path in originals.items()},'testSHA256':sha(Path(__file__)),'cwdTestSupportSHA256':sha(support),'fixtureCSHA256':sha(c),'libraries':{name:{'path':str(path),'sha256':sha(path)} for name,path in libraries.items()},
             'universalPath':str(exe),'universalSHA256':sha(exe),'commands':commands,'fixtureRoot':str(work),'credentialHeaderUsed':False,'hostOS':platform.mac_ver()[0],
             'valveExecuted':False,'realUserStateChanged':False,'normalValveIPCReadOrCleaned':False,
             'limits':['self kernel POSIX SHM flavor/owner/current-prefix proof only; not all unknown FDs','no registry; kernel metadata rechecked after dup/reuse','independent sandbox and unique active namespace prefixes required','actual Valve controller/game compatibility not claimed']}
-    (ROOT/'Evidence/steam-native-shims-composed-fixtures.json').write_text(json.dumps(report,indent=2)+'\n')
+    prior=ROOT/'Evidence/steam-native-shims-composed-fixtures.json'
+    if prior.exists():shutil.copy2(prior,WORK/'retained'/('steam-native-composed-historical-'+uuid.uuid4().hex+'.json'))
+    (work/'report.json').write_text(json.dumps(report,indent=2)+'\n')
+    prior.write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps({k:report[k] for k in ['passed','checkCount','libraries','sourceSHA256','fixtureRoot','hostOS','valveExecuted']},indent=2))
 
 

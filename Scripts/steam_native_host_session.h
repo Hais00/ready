@@ -10,6 +10,7 @@
 #include <stdatomic.h>
 #include <sys/stat.h>
 static int ready_session_lifeline=-1,ready_session_event=-1;
+static _Atomic int ready_session_health=-1;
 static _Atomic int ready_session_reason,ready_session_active;
 static _Atomic(ReadySteamAuthenticatedHostRecord *) ready_session_record;
 static volatile sig_atomic_t ready_session_signal;
@@ -21,6 +22,7 @@ static double ready_session_now(void) {
     struct timespec t;if(clock_gettime(CLOCK_MONOTONIC,&t))_exit(70);
     return (double)t.tv_sec+(double)t.tv_nsec/1000000000.0;
 }
+static void ready_session_stop(int reason);
 static void ready_session_emit(const char *phase,int reason) {
     /* phase is always a literal chosen below, never library/server text. */
     _Bool ready=!strcmp(phase,"ready"),heartbeat=!strcmp(phase,"heartbeat"),revoked=!strcmp(phase,"revoked");
@@ -38,13 +40,15 @@ static void ready_session_emit(const char *phase,int reason) {
     if(n>0&&(size_t)n<sizeof out) {
         ssize_t written;do{written=write(ready_session_event,out,(size_t)n);}while(written<0&&errno==EINTR);
         /* An undrained/broken diagnostic pipe cannot strand this session. */
-        if(written!=n){int expected=0;atomic_compare_exchange_strong(&ready_session_reason,&expected,46);}
+        if(written!=n)ready_session_stop(46);
     }
 }
 static void ready_session_stop(int reason) {
     int expected=0;atomic_compare_exchange_strong(&ready_session_reason,&expected,reason);
     ReadySteamAuthenticatedHostRecord *r=atomic_load(&ready_session_record);
     if(r)atomic_store(&r->authenticated,0);
+    /* Publish revocation BEFORE another process can observe health EOF. */
+    int health=atomic_exchange(&ready_session_health,-1);if(health>=0)close(health);
 }
 static void ready_session_signalled(int signal_number) {(void)signal_number;ready_session_signal=1;}
 static void *ready_session_watch(void *unused) {

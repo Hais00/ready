@@ -4,6 +4,7 @@ import LauncherCore
 
 extension AppDelegate {
   @MainActor func configureSteamNetwork() {
+    cancelSteamGamePreparation()
     steamDownloads?.stop()
     steamNetwork?.stop()
     steamNetwork = nil; steamAccountView = nil; steamGuardChallenge = nil
@@ -28,6 +29,17 @@ extension AppDelegate {
       self.canvas?.steamOnline = status.online
       if !self.session.running { self.canvas?.refresh() }
       if becameOnline{self.steamDownloads?.resumeAfterAuthorization()}
+      if let continuation = self.steamLaunchContinuation, self.steamAccountReady(network) {
+        self.steamLaunchContinuation = nil; self.steamLaunchCancellation = nil
+        if let dialog = self.steamAccountDialog { self.dismissDialog(dialog) }
+        self.steamAccountDialog = nil; self.steamAccountView = nil
+        continuation()
+      }
+      if ["logged_out", "authorization_required"].contains(status.connection)
+        || ["logged_in_elsewhere", "session_replaced", "remote_logout"].contains(status.reason) {
+        self.steamGameAuthorization?.cancel()
+        self.steamNativeGame?.stop()
+      }
     }
     network.onAuthentication = { [weak self, weak network] event in
       guard let self, let network, self.steamNetwork === network, self.state.activeProfile == profile else { return }
@@ -81,9 +93,16 @@ extension AppDelegate {
     }
     view.onLogout = { [weak self, weak network] in
       guard let self, self.state.activeProfile == profile else { return }
+      self.steamGameAuthorization?.cancel(); self.steamNativeGame?.stop()
       self.steamDownloads?.stop();network?.logout(); self.steamAccounts.signOut(profile:profile)
     }
-    _ = presentDialog(title:"Steam · account, amici e attività",message:"Un solo accesso per questo profilo, condiviso da giochi macOS e Windows. La password non viene salvata.",content:view,actions:[.init("Chiudi",role:.cancel)]) { [weak self,weak network] _ in network?.cancelAuthentication();self?.steamAccountView = nil }
+    steamAccountDialog = presentDialog(title:"Steam · account, amici e attività",message:"Un solo accesso per questo profilo, condiviso da giochi macOS e Windows. La password non viene salvata.",content:view,actions:[.init("Chiudi",role:.cancel)]) { [weak self,weak network] _ in
+      network?.cancelAuthentication()
+      self?.steamAccountView = nil; self?.steamAccountDialog = nil
+      self?.steamLaunchContinuation = nil
+      let cancelled = self?.steamLaunchCancellation; self?.steamLaunchCancellation = nil
+      cancelled?()
+    }
     network.start()
     network.request("snapshot") { _ in }
   }

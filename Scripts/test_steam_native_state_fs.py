@@ -117,6 +117,113 @@ def quoted(path):
     return json.dumps(str(path))
 
 
+CWD_FIXTURE = r'''
+// SPDX-License-Identifier: GPL-3.0-only
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+static void (*set_mode)(int);static int (*mock_waiting)(void);static void (*mock_release)(void);
+static int thread_ok;
+static void *thread_run(void *unused){(void)unused;set_mode(3);struct stat st;errno=0;thread_ok=stat("state.bin",&st)<0&&errno==ELOOP;return NULL;}
+int main(int argc,char **argv){
+ alarm(8);if(argc!=2)return 64;const char *mode=argv[1],*dir=getenv("READY_CWD_DIRECTORY"),*private=getenv("READY_STEAM_PRIVATE_STATE_ROOT"),*original=getenv("READY_STEAM_ORIGINAL_STATE_ROOT");
+ struct stat st;char path[PATH_MAX],cwd[PATH_MAX];int result=0,error=0,cwd_error=0;
+ if(!strncmp(mode,"recursive-",10)||!strcmp(mode,"parallel")){
+  set_mode=dlsym(RTLD_DEFAULT,"ready_fixture_cwd_mode");mock_waiting=dlsym(RTLD_DEFAULT,"ready_fixture_cwd_waiting");mock_release=dlsym(RTLD_DEFAULT,"ready_fixture_cwd_release");if(!set_mode||!mock_waiting||!mock_release)return 65;
+  if(!strcmp(mode,"parallel")){
+   pthread_t thread;if(pthread_create(&thread,NULL,thread_run,NULL))return 66;
+   while(!mock_waiting())usleep(1000);
+   snprintf(path,sizeof path,"%s/state.bin",original);if(stat(path,&st))return 67;
+   mock_release();pthread_join(thread,NULL);if(!thread_ok)return 68;
+  }else{
+   set_mode(!strcmp(mode,"recursive-success")?2:1);errno=0;result=stat("state.bin",&st);error=errno;if(result>=0||error!=ELOOP)return 69;set_mode(0);
+  }
+  // Failures cannot leave this thread's guard set or poison another thread.
+  if(chdir(private))return 79;errno=0;if(stat("state.bin",&st))return 70;
+ }else{
+  if(!strcmp(mode,"removed")&&rmdir(dir))return 71;
+  if(!strcmp(mode,"unreadable")&&chmod(dir,0000))return 72;
+  errno=0;if(!getcwd(cwd,sizeof cwd))cwd_error=errno;
+  errno=0;result=stat("state.bin",&st);error=errno;
+  if(result>=0||!(error==ELOOP||error==ENOENT||error==EACCES||error==EPERM))return 73;
+  errno=0;int fd=open("must-not-create",O_CREAT|O_WRONLY,0600);if(fd>=0){close(fd);return 74;}
+  if(!strcmp(mode,"unreadable")&&chmod(dir,0700))return 75;
+ }
+ snprintf(path,sizeof path,"%s/absolute-after-cwd-failure",original);int fd=open(path,O_CREAT|O_WRONLY|O_TRUNC,0600);if(fd<0)return 76;if(write(fd,"owned",5)!=5)return 77;close(fd);
+ snprintf(path,sizeof path,"%s/absolute-after-cwd-failure",private);if(stat(path,&st)||st.st_size!=5)return 78;
+ printf("{\"passed\":true,\"relativeErrno\":%d,\"getcwdErrno\":%d,\"TLSResetAndAbsoluteOwnedIO\":true,\"valveLoaded\":false}\n",error,cwd_error);return 0;
+}
+'''
+CWD_MOCK = r'''
+// SPDX-License-Identifier: GPL-3.0-only
+#include <errno.h>
+#include <stdatomic.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+static _Thread_local int thread_mode;static _Atomic int waiting,released;
+void ready_fixture_cwd_mode(int value){thread_mode=value;}
+int ready_fixture_cwd_waiting(void){return atomic_load(&waiting);}
+void ready_fixture_cwd_release(void){atomic_store(&released,1);}
+static char *mock_getcwd(char *out,size_t length){
+ if(!thread_mode)return getcwd(out,length);
+ struct stat st;errno=0;if(stat(".",&st)>=0||errno!=ELOOP){errno=EPROTO;return NULL;}
+ if(thread_mode==3){atomic_store(&waiting,1);while(!atomic_load(&released))usleep(1000);}
+ if(thread_mode==2){const char*p=getenv("READY_STEAM_PRIVATE_STATE_ROOT");if(strlen(p)>=length){errno=ERANGE;return NULL;}strcpy(out,p);return out;}
+ errno=ELOOP;return NULL;
+}
+__attribute__((used))static const struct{const void*replacement;const void*original;}hook __attribute__((section("__DATA,__interpose")))={(const void*)mock_getcwd,(const void*)getcwd};
+'''
+
+
+def run_cwd_regressions(run, libraries, original, environment, common, label):
+    """Actual unavailable cwd plus deterministic libc-fallback reentrancy."""
+    root=run/('cwd-regressions-'+label);root.mkdir(mode=0o700)
+    source=root/'cwd.c';source.write_text(CWD_FIXTURE)
+    mock_source=root/'getcwd-mock.c';mock_source.write_text(CWD_MOCK)
+    mock=root/'getcwd-mock.dylib'
+    commands=[]
+    command=[*common,'-arch','arm64','-arch','x86_64','-dynamiclib',str(mock_source),'-o',str(mock)]
+    subprocess.run(command,env=environment,check=True,capture_output=True);commands.append(command)
+    checks={};records=[]
+    for arch in ('arm64','x86_64'):
+        exe=root/('cwd-'+arch);command=[*common,'-arch',arch,str(source),'-o',str(exe),'-pthread']
+        subprocess.run(command,env=environment,check=True,capture_output=True);commands.append(command)
+        for mode in ('removed','unreadable','sandbox-denied','recursive-failure','recursive-success','parallel'):
+            private=root/(arch+'-'+mode+'-private');private.mkdir(mode=0o700);(private/'state.bin').write_bytes(b'owned private state')
+            cwd=private if mode.startswith('recursive-')or mode=='parallel'else private/'cwd'
+            if mode=='sandbox-denied'or mode.startswith('recursive-')or mode=='parallel':cwd=root/(arch+'-'+mode+'-denied-cwd')
+            if cwd!=private:cwd.mkdir(mode=0o700);(cwd/'state.bin').write_bytes(b'own inaccessible cwd file')
+            # A removed directory must be empty before entering it.
+            if mode=='removed':(cwd/'state.bin').unlink()
+            sb=root/(arch+'-'+mode+'.sb')
+            policy='(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write* (subpath '+json.dumps(str(private))+'))\n'
+            policy+='(deny file-read* (subpath '+json.dumps(str(original))+'))\n(allow file-read-metadata (literal '+json.dumps(str(original))+'))\n(allow file-read* (subpath '+json.dumps(str(original/'Steam.AppBundle'))+'))\n'
+            if mode=='sandbox-denied'or mode.startswith('recursive-')or mode=='parallel':policy+='(deny file-read* (subpath '+json.dumps(str(cwd))+'))\n'
+            sb.write_text(policy)
+            injected=list(map(str,libraries))
+            if mode.startswith('recursive-')or mode=='parallel':injected.append(str(mock))
+            additions={'DYLD_INSERT_LIBRARIES':':'.join(injected),'READY_STEAM_ORIGINAL_STATE_ROOT':str(original),'READY_STEAM_PRIVATE_STATE_ROOT':str(private),'READY_CWD_DIRECTORY':str(cwd)}
+            args=['/usr/bin/sandbox-exec','-f',str(sb),'/usr/bin/arch','-'+arch,'/usr/bin/env',*[k+'='+v for k,v in additions.items()],str(exe),mode]
+            process=subprocess.run(args,env=environment,cwd=cwd,capture_output=True,text=True,timeout=10)
+            if process.returncode:raise RuntimeError('CWD fixture '+arch+'/'+mode+' failed code '+str(process.returncode)+': '+process.stderr)
+            data=json.loads(process.stdout);assert data['passed']and data['TLSResetAndAbsoluteOwnedIO']and not data['valveLoaded']
+            assert (private/'absolute-after-cwd-failure').read_bytes()==b'owned'
+            assert not(cwd/'must-not-create').exists()
+            checks[arch+'-'+label+'-'+mode+'-bounded-fail-closed']=True
+            records.append({'architecture':arch,'mode':mode,'label':label,**data})
+    return checks,records,commands
+
+
 def main():
     assert WORK.is_dir() and (WORK / '.ready-external-workspace').read_text().strip() == 'ready project work for thread01a17e79'
     run = Path(tempfile.mkdtemp(prefix='steam-state-fs-fixture-', dir=WORK / 'tests')); run.chmod(0o700)
@@ -187,12 +294,21 @@ def main():
             if name == 'overlap': (original / 'nested').rmdir()
             if name == 'aliased-root': Path(value).unlink()
     assert inventory(original) == original_before
+    cwd_checks,cwd_records,cwd_commands=run_cwd_regressions(run,[library],original,env,common,'fs')
+    checks.update(cwd_checks);runs.extend(cwd_records);commands.extend(cwd_commands)
+    assert inventory(original) == original_before
     report = {'schema': 1, 'fixtureOnly': True, 'passed': all(checks.values()), 'checks': checks, 'checkCount': len(checks), 'runs': runs,
               'sourceSHA256': sha(SOURCE), 'testSHA256': sha(Path(__file__)), 'fixtureCSHA256': sha(fixture), 'dylibSHA256': sha(library),
               'commands': commands, 'fixtureRoot': str(run), 'HOMEChanged': False, 'valveClientExecuted': False,
               'realSteamProcessesModified': False, 'originalUserStateAccessed': False, 'configurationChanged': False,
               'limitations': ['prototype only; not full filesystem virtualization', 'requires independent sandbox and closed inherited descriptors', 'outside namespace and unhooked operations remain sandbox responsibilities', 'no real native Steam or game compatibility proven']}
-    path = ROOT / 'Evidence/steam-native-state-fs-fixtures.json'; path.write_text(json.dumps(report, indent=2) + '\n')
+    import shutil,uuid
+    path = ROOT / 'Evidence/steam-native-state-fs-fixtures.json'
+    if path.exists():shutil.copy2(path,WORK/'retained'/('steam-native-state-fs-historical-'+uuid.uuid4().hex+'.json'))
+    (run/'report.json').write_text(json.dumps(report,indent=2)+'\n')
+    (run/SOURCE.name).write_bytes(SOURCE.read_bytes())
+    (run/Path(__file__).name).write_bytes(Path(__file__).read_bytes())
+    path.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report, indent=2))
 
 

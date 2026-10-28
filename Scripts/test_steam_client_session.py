@@ -32,6 +32,9 @@ for line in sys.stdin:
  elif op=='fixture_normalization':
   send('persona',account={'accountName':'fixture_account','displayName':'Fixture Public Name','steamID':'76561198000000001','presence':'Away'})
   send('friends',friends=[{'steamID':'76561198000000002','displayName':'Fixture friend','presence':'Offline','gameID':'0','gameName':''}]);send('result',id)
+ elif op=='fixture_online_before_new_persona':send('state',state='online',reason='');send('result',id)
+ elif op=='fixture_new_persona':
+  send('persona',account={'accountName':'fixture_other','displayName':'Fixture B','steamID':'76561198000000003','presence':'online'});send('result',id)
  elif op=='offline':send('state',state='offline',reason='manual_offline');send('result',id)
  elif op in ['reconnect','fixture_recovered']:online(id)
  elif op=='fixture_network_loss':send('state',state='reconnecting',reason='network_lost');send('result',id)

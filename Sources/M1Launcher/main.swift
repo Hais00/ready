@@ -26,6 +26,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   var steamGuardChallenge: String?
   var steamDownloads: SteamDownloads?
   var steamDownloadsView: SteamDownloadsView?
+  var steamGameAuthorization: SteamGameAuthorization?
+  var steamNativeGame: SteamNativeGameSession?
+  var steamLaunchContinuation: (() -> Void)?
+  var steamLaunchCancellation: (() -> Void)?
+  var steamAccountDialog: UUID?
+  var steamPreparationID: UUID?
   lazy var dialogs = ReadyDialogPresenter(window: { [weak self] in self?.window })
   var qrDialog: UUID?
   var qrImage: NSImageView?
@@ -152,7 +158,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     return !maintenanceInProgress
   }
   func windowWillClose(_ notification: Notification) {
-    if (notification.object as? NSWindow) === window { cancelAuthentication() }
+    if (notification.object as? NSWindow) === window {
+      cancelAuthentication()
+      MainActor.assumeIsolated { cancelSteamGamePreparation() }
+    }
   }
   func cancelAuthentication(closePanel: Bool = true) {
     authenticationSession = nil
@@ -199,6 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       return .terminateLater
     }
     storeClient?.cancelAll()
+    MainActor.assumeIsolated { cancelSteamGamePreparation() }
     MainActor.assumeIsolated { steamDownloads?.stop() }
     MainActor.assumeIsolated { steamNetwork?.stop() }
     return .terminateNow
@@ -222,6 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       self.window.contentView = nil
     }
     session.onFinish = { [weak self] message in
+      self?.steamNativeGame?.stop(); self?.steamNativeGame = nil
       self?.restoreLauncher(message)
       self?.dialogs.attach()
     }
@@ -598,6 +609,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let profile = state.activeProfile
     let launchID = UUID()
     pendingLaunch = launchID
+    var steamLease: SteamGameSessionLease?
     let launch: ([String], [String: String]) -> Void = {
       [weak self] extraArguments, extraEnvironment in
       guard let self else { return }
@@ -607,7 +619,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       self.canvas.refresh()
       self.session.start(
         game: game, variant: variant, profile: profile, launchArguments: extraArguments,
-        launchEnvironment: extraEnvironment
+        launchEnvironment: extraEnvironment, steamSession: steamLease
       ) { [weak self] result in
         guard let self else { return }
         switch result {
@@ -617,6 +629,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             try? self.repository.save(self.state)
           }
         case .failure(let error):
+          self.steamNativeGame?.stop(); self.steamNativeGame = nil
           self.window.contentView = self.canvas
           self.canvas.resumeGraphics()
           self.window.makeKeyAndOrderFront(nil)
@@ -624,7 +637,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
       }
     }
-    if game.store == .epic {
+    if game.store == .steam {
+      MainActor.assumeIsolated {
+        prepareSteamGame(game, variant: variant, profile: profile, launchID: launchID) { host in
+          steamLease = host
+          launch([], [:])
+        }
+      }
+    } else if game.store == .epic {
       canvas.message = "Preparazione accesso Epic…"
       canvas.refresh()
       let options: [String: Any] = [

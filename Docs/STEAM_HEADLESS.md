@@ -60,11 +60,14 @@ logon it requires Valve's successful app-ownership-ticket response for the exact
 AppID, a nonempty ticket and a real returned SteamID. It never returns ticket
 bytes. Its offline decision/protocol tests do not prove real account ownership.
 
-Production SessionManager rejects Steam game launch before creating session or
-prefix state until an authenticated, owned headless host can replace that gate.
-This avoids a direct executable silently restarting the full client through
+SessionManager rejects Windows Steam launch and native Steam launch without a
+matching ready typed host lease before creating session/prefix state. The native
+path now connects a persistent-service authorization grant, owned host, game keeper
+and health channel; missing central bindings still fail before game execution.
+Deployment and real commercial-game validation remain open. This avoids an
+unprepared direct executable silently restarting the full client through
 [SteamAPI_RestartAppIfNecessary](https://partner.steamgames.com/doc/api/steam_api#SteamAPI_RestartAppIfNecessary).
-The new gate is covered for both native and Windows variants by the 21-check
+The missing-lease gate is covered for native and Windows variants by the 21-check
 real SessionManager/keeper suite. Account/library/download operations remain
 separate from this launch gate.
 

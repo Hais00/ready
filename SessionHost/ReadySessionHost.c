@@ -17,10 +17,12 @@
 #include <unistd.h>
 #include <errno.h>
 #include "InstallationLease.h"
+#include "SteamSessionLease.h"
 
 static volatile sig_atomic_t child_group=0;
 static volatile sig_atomic_t pending_signal=0;
 static int spawn_error=0;
+static int steam_bootstrap=0;
 extern char **environ;
 
 static void forward_signal(int signal_number) {
@@ -32,7 +34,7 @@ static void forward_signal(int signal_number) {
 }
 static int usage(const char *message) {
     if(message)fprintf(stderr,"ReadySessionHost: %s\n",message);
-    fprintf(stderr,"usage: ReadySessionHost [--wine-server /path/wineserver --prefix /path/prefix] [--installation /absolute/root] -- /path/program [args...]\n");
+    fprintf(stderr,"usage: ReadySessionHost [--wine-server /path/wineserver --prefix /path/prefix] [--installation /absolute/root] [--steam-bootstrap] -- /path/program [args...]\n");
     return 64;
 }
 static int normal_status(int status) {
@@ -137,6 +139,56 @@ static int wait_for_game(pid_t child,int native,const sigset_t *blocked) {
     sigprocmask(SIG_SETMASK,&mask,NULL);
     return result;
 }
+// Steam-only cancellation never abandons a live native group or its leases.
+// Both direct-child lifetime and WNOWAIT pin the identity before any signal.
+static double monotonic_seconds(void) {
+    struct timespec now;if(clock_gettime(CLOCK_MONOTONIC,&now))return -1;
+    return (double)now.tv_sec+(double)now.tv_nsec/1000000000.0;
+}
+static int wait_for_steam_game(pid_t child,int health,const sigset_t *blocked) {
+    int leader_exited=0,stopping=0,killed=0,dependency_failed=0,warned=0;double deadline=0;
+    for(;;){
+        if(!leader_exited){
+            siginfo_t status;memset(&status,0,sizeof status);
+            int rc=waitid(P_PID,(id_t)child,&status,WEXITED|WNOWAIT|WNOHANG);
+            if(rc<0&&errno!=EINTR){
+                perror("ReadySessionHost: Steam game identity uncertain; retaining leases");
+                sigset_t mask;sigprocmask(SIG_BLOCK,blocked,&mask);child_group=0;sigprocmask(SIG_SETMASK,&mask,NULL);
+                for(;;)group_retry_pause();
+            }
+            if(rc==0&&status.si_pid==child)leader_exited=1;
+        }
+        if(leader_exited){
+            int state=group_has_only_zombies(child);if(state==1)break;
+            if(state<0&&!warned){perror("ReadySessionHost: Steam native group uncertain; retaining leases");warned=1;}
+        }
+        if(ready_steam_health_alive(health)!=1&&!stopping){
+            dependency_failed=1;stopping=1;deadline=monotonic_seconds()+2;kill(-child,SIGTERM);
+        }
+        if(pending_signal&&!stopping){stopping=1;deadline=monotonic_seconds()+2;}
+        if(stopping&&!killed){
+            double now=monotonic_seconds();
+            if(now<0||now>=deadline){kill(-child,SIGKILL);killed=1;}
+        }
+        group_retry_pause();
+    }
+    sigset_t mask;sigprocmask(SIG_BLOCK,blocked,&mask);child_group=0;
+    int result=wait_for(child);sigprocmask(SIG_SETMASK,&mask,NULL);
+    return dependency_failed?75:result;
+}
+static int steam_adapter_file(const char *path) {
+    if(!path||path[0]!='/')return 0;char resolved[PATH_MAX];struct stat st;
+    return realpath(path,resolved)&&!strcmp(path,resolved)&&lstat(path,&st)==0&&S_ISREG(st.st_mode)&&st.st_uid==geteuid()&&!(st.st_mode&0022);
+}
+static int steam_adapters_valid(const char *list) {
+    if(!list||!*list)return 0;char *copy=strdup(list);if(!copy)return 0;
+    unsigned count=0;int valid=1;char *part=copy;
+    for(;;){char *colon=strchr(part,':');if(colon)*colon=0;
+        if(!steam_adapter_file(part)){valid=0;break;}count++;
+        if(!colon)break;part=colon+1;
+    }
+    free(copy);return valid&&count==3;
+}
 static pid_t spawn_program(char *const argv[],int game,const sigset_t *original_mask) {
     posix_spawnattr_t attr;posix_spawn_file_actions_t actions;pid_t pid=-1;
     int error=posix_spawnattr_init(&attr);if(error){spawn_error=error;return -1;}
@@ -156,7 +208,12 @@ static pid_t spawn_program(char *const argv[],int game,const sigset_t *original_
     size_t used=0;
     for(size_t i=0;i<count;i++)if(strncmp(environ[i],"DYLD_INSERT_LIBRARIES=",22))environment[used++]=environ[i];
     char *injection=NULL;const char *overlay=getenv("READY_OVERLAY_LIBRARY");struct stat st;
-    if(game && overlay && *overlay && stat(overlay,&st)==0 && S_ISREG(st.st_mode)){
+    if(game&&steam_bootstrap){
+        const char *adapters=getenv("READY_STEAM_ADAPTER_LIBRARIES");
+        if(!steam_adapters_valid(adapters)||(overlay&&*overlay&&!steam_adapter_file(overlay))){free(environment);error=EINVAL;goto finish;}
+        if(asprintf(&injection,"DYLD_INSERT_LIBRARIES=%s%s%s",adapters,overlay&&*overlay?":":"",overlay&&*overlay?overlay:"")<0){free(environment);error=ENOMEM;goto finish;}
+        environment[used++]=injection;
+    } else if(game && overlay && *overlay && stat(overlay,&st)==0 && S_ISREG(st.st_mode)){
         if(asprintf(&injection,"DYLD_INSERT_LIBRARIES=%s",overlay)<0){free(environment);error=ENOMEM;goto finish;}
         environment[used++]=injection;
     }
@@ -171,18 +228,30 @@ finish:
 }
 int main(int argc,char **argv) {
     const char *server=NULL,*prefix=NULL,*installation=NULL,*installation_root=NULL;int command=0;
+    const char *steam_executable_sha=NULL,*steam_sdk=NULL,*steam_sdk_sha=NULL;
     for(int i=1;i<argc;i++){
         if(!strcmp(argv[i],"--")){command=i+1;break;}
         if(!strcmp(argv[i],"--wine-server") && i+1<argc)server=argv[++i];
         else if(!strcmp(argv[i],"--prefix") && i+1<argc)prefix=argv[++i];
         else if(!strcmp(argv[i],"--installation") && i+1<argc)installation=argv[++i];
         else if(!strcmp(argv[i],"--installation-lock-root") && i+1<argc)installation_root=argv[++i];
+        else if(!strcmp(argv[i],"--steam-bootstrap")&&!steam_bootstrap)steam_bootstrap=1;
+        else if(!strcmp(argv[i],"--steam-executable-sha256")&&i+1<argc&&!steam_executable_sha)steam_executable_sha=argv[++i];
+        else if(!strcmp(argv[i],"--steam-sdk")&&i+1<argc&&!steam_sdk)steam_sdk=argv[++i];
+        else if(!strcmp(argv[i],"--steam-sdk-sha256")&&i+1<argc&&!steam_sdk_sha)steam_sdk_sha=argv[++i];
         else return usage("unknown or incomplete option");
     }
     if(command==0 || command>=argc || argv[command][0]!='/')return usage("program must be an absolute executable path after --");
     if(server && (server[0]!='/' || !prefix || prefix[0]!='/'))return usage("wine-server requires an absolute server path and explicit absolute prefix");
     if(prefix && prefix[0]!='/')return usage("prefix must be absolute");
     if(installation_root && !installation)return usage("installation-lock-root requires installation");
+    int image_arguments=(steam_executable_sha!=NULL)+(steam_sdk!=NULL)+(steam_sdk_sha!=NULL);
+    if(image_arguments&&(!steam_bootstrap||image_arguments!=3||!installation||!ready_steam_digest_valid(steam_executable_sha)||!ready_steam_digest_valid(steam_sdk_sha)||steam_sdk[0]!='/'))return usage("Steam image bindings require native bootstrap, installation and all three canonical bindings");
+    int steam_health=-1,steam_control=-1;
+    if(steam_bootstrap){
+        if(server)return usage("Steam bootstrap is native-only; Wine is not verified");
+        if(ready_steam_receive_leases(&steam_health,&steam_control)){fprintf(stderr,"ReadySessionHost: invalid Steam lease bootstrap\n");return 65;}
+    }
     struct stat lease;
     if(fstat(STDIN_FILENO,&lease)!=0 || !S_ISREG(lease.st_mode) || lease.st_uid!=geteuid())return usage("stdin must be a regular lock file owned by this user");
     if(flock(STDIN_FILENO,LOCK_EX|LOCK_NB)!=0){perror("ReadySessionHost: prefix lease");return 73;}
@@ -202,12 +271,25 @@ int main(int argc,char **argv) {
         int lease_result=ready_installation_read_lease(installation,installation_root,&installation_fds,&installation_fd_count);
         if(lease_result){fprintf(stderr,"ReadySessionHost: installation lease %s\n",lease_result==73?"busy (download/update active)":"invalid or unsafe");return lease_result;}
     }
+    if(steam_bootstrap){
+        // Re-hash only AFTER the actual installation read lease is admitted.
+        // This closes a cooperating downloader's selection/admission window.
+        if(image_arguments&&!ready_steam_validate_game_images(installation,argv[command],steam_executable_sha,steam_sdk,steam_sdk_sha)){
+            fprintf(stderr,"ReadySessionHost: Steam game image binding changed before admission\n");return 76;
+        }
+        if(!steam_adapters_valid(getenv("READY_STEAM_ADAPTER_LIBRARIES"))||ready_steam_health_alive(steam_health)!=1||ready_steam_acknowledge(steam_control)){
+            fprintf(stderr,"ReadySessionHost: Steam dependency unavailable before launch\n");return 75;
+        }
+        close(steam_control);steam_control=-1;
+        // An EOF racing this check is handled by the anchored post-spawn loop.
+        if(ready_steam_health_alive(steam_health)!=1)return 75;
+    }
     pid_t child=spawn_program(&argv[command],1,&oldmask);
     if(child<0){sigprocmask(SIG_SETMASK,&oldmask,NULL);return spawn_error==ENOENT?127:spawn_error==EACCES?126:71;}
     child_group=(sig_atomic_t)child;
     sigprocmask(SIG_SETMASK,&oldmask,NULL);
     if(pending_signal)kill(-child,(int)pending_signal);
-    int result=wait_for_game(child,server==NULL,&blocked);
+    int result=steam_bootstrap?wait_for_steam_game(child,steam_health,&blocked):wait_for_game(child,server==NULL,&blocked);
     if(server){
         char *server_args[]={(char *)server,"-w",NULL};
         sigprocmask(SIG_BLOCK,&blocked,&oldmask);
@@ -220,6 +302,7 @@ int main(int argc,char **argv) {
     // No LOCK_UN: closing the last inherited reference releases the flock.
     for(size_t i=0;i<installation_fd_count;i++)close(installation_fds[i]);
     free(installation_fds);
+    if(steam_health>=0)close(steam_health);
     close(STDIN_FILENO);
     return result;
 }

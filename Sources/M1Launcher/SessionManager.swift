@@ -3,11 +3,31 @@ import AppKit
 import Foundation
 import LauncherCore
 
+/// An internal capability created by an authenticated backend, never decoded
+/// from store JSON or launch environment variables. A fixture is not a licence.
+struct SteamKeeperHandoff {
+  let input: FileHandle
+  let didSpawn: () throws -> Void
+}
+protocol SteamGameSessionLease: AnyObject {
+  var sessionID: UUID { get }
+  var profile: UUID { get }
+  var gameID: UInt32 { get }
+  var platform: GamePlatform { get }
+  var isReady: Bool { get }
+  var keeperArguments: [String] { get }
+  var onInvalidated: (() -> Void)? { get set }
+  func validatedEnvironment(game: Game, variant: GameVariant, profile: UUID) throws -> [String: String]
+  func keeperInput(prefixLease: FileHandle) throws -> SteamKeeperHandoff
+  func takeGameHealthReadFD() throws -> Int32
+  func stop()
+}
+
 /// Main-queue lifecycle + a worker for prefix initialization. Every Wine process is supervised.
 final class SessionManager {
   private enum Phase { case idle, initializing, playing, stopping }
   private final class Context {
-    let id = UUID()
+    let id: UUID
     let game: Game
     let variant: GameVariant
     let profile: UUID
@@ -17,6 +37,8 @@ final class SessionManager {
     let host: URL
     let extraArguments: [String]
     let extraEnvironment: [String: String]
+    let steamSession: SteamGameSessionLease?
+    var steamHandoff: SteamKeeperHandoff?
     var completion: ((Result<Void, Error>) -> Void)?  // Accessed on the main queue only.
     var reportedStart = false
     var pendingExit: Int32?
@@ -32,8 +54,10 @@ final class SessionManager {
     init(
       game: Game, variant: GameVariant, profile: UUID, runtime: RuntimeConfiguration,
       paths: LauncherPaths, host: URL, arguments: [String], environment: [String: String],
+      steamSession: SteamGameSessionLease?,
       completion: @escaping (Result<Void, Error>) -> Void
     ) {
+      id = steamSession?.sessionID ?? UUID()
       self.game = game
       self.variant = variant
       self.profile = profile
@@ -43,6 +67,7 @@ final class SessionManager {
       self.host = host
       extraArguments = arguments
       extraEnvironment = environment
+      self.steamSession = steamSession
       self.completion = completion
     }
     var isCancelled: Bool {
@@ -148,29 +173,43 @@ final class SessionManager {
       || key == "WINESERVER" || key == "WINEDLLPATH" || key == "VK_DRIVER_FILES"
       || key == "VK_ICD_FILENAMES" || key.hasPrefix("READY_") || key.hasPrefix("M1L_")
       || key.hasPrefix("DYLD_")
+      || key.hasPrefix("Steam") || key.hasPrefix("STEAM") || key.hasPrefix("steam_")
   }
   func start(
     game: Game, variant: GameVariant, profile: UUID, launchArguments: [String] = [],
-    launchEnvironment: [String: String] = [:], completion: @escaping (Result<Void, Error>) -> Void
+    launchEnvironment: [String: String] = [:], steamSession: SteamGameSessionLease? = nil,
+    completion: @escaping (Result<Void, Error>) -> Void
   ) {
     onMain { [self] in
+      let complete: (Result<Void, Error>) -> Void = { result in
+        if case .failure = result { steamSession?.stop() }
+        completion(result)
+      }
       guard !running else {
-        completion(.failure(LauncherError.busy))
+        complete(.failure(LauncherError.busy))
         return
       }
       // Direct execution can invoke SteamAPI_RestartAppIfNecessary and launch
       // Steam.app. Do not offer that path as the requested headless backend.
-      // Replace this gate only with an owned, authenticated host-session lease.
-      guard game.store != .steam else {
-        completion(
+      // Only a typed ready host lease can replace the former blanket gate.
+      // Windows remains gated until its own host/lifetime path is verified.
+      if game.store == .steam {
+        guard let steamSession, steamSession.isReady, steamSession.profile == profile,
+          steamSession.platform == variant.platform, variant.platform == .macOS,
+          UInt32(game.storeID) == steamSession.gameID else {
+        complete(
           .failure(
             LauncherError.unavailable(
               "Il backend Steam senza client completo è in preparazione. L’avvio è sospeso finché autenticazione, licenza e collegamento del gioco non sono verificati."
             )))
         return
+        }
+      } else if steamSession != nil {
+        complete(.failure(LauncherError.invalid("Sessione Steam associata allo store errato.")))
+        return
       }
       if let key = launchEnvironment.keys.first(where: Self.reservedEnvironment) {
-        completion(
+        complete(
           .failure(
             LauncherError.invalid("Lo store non può sovrascrivere la variabile riservata \(key).")))
         return
@@ -178,7 +217,7 @@ final class SessionManager {
       let host = project.appendingPathComponent("Build/ReadySessionHost")
       // Fail before any prefix, DLL, registry, or personal-data mutation.
       guard FileManager.default.isExecutableFile(atPath: host.path) else {
-        completion(
+        complete(
           .failure(
             LauncherError.unavailable("Compila il supervisore con Scripts/build_session_host.sh.")))
         return
@@ -187,7 +226,15 @@ final class SessionManager {
         FrontendSupportPaths.configuration(paths: paths, runtimeRoot: runtimeRoot))
       let ctx = Context(
         game: game, variant: variant, profile: profile, runtime: runtime, paths: paths, host: host,
-        arguments: launchArguments, environment: launchEnvironment, completion: completion)
+        arguments: launchArguments, environment: launchEnvironment, steamSession: steamSession,
+        completion: complete)
+      steamSession?.onInvalidated = { [weak self, weak ctx] in
+        guard let self, let ctx else { return }
+        self.onMain {
+          guard self.isCurrent(ctx) else { return }
+          ctx.cancel(); self.setPhase(.stopping); self.stopCurrent(ctx)
+        }
+      }
       stateLock.lock()
       context = ctx
       phase = .initializing
@@ -240,13 +287,18 @@ final class SessionManager {
         "--installation-lock-root", paths.root.appendingPathComponent("InstallLocks").path,
       ]
     }
+    if let steam = ctx.steamSession { hostArguments += ["--steam-bootstrap"] + steam.keeperArguments }
     task.arguments = hostArguments + ["--", program] + arguments
     task.currentDirectoryURL = directory
     var env = environment
     env.removeValue(forKey: "DYLD_INSERT_LIBRARIES")
     task.environment = env
     let input = try lease.handleForSessionHost()
-    task.standardInput = input
+    if let steam = ctx.steamSession {
+      let handoff = try steam.keeperInput(prefixLease: input)
+      ctx.steamHandoff = handoff
+      task.standardInput = handoff.input
+    } else { task.standardInput = input }
     task.standardOutput = ctx.log ?? FileHandle.nullDevice
     task.standardError = ctx.log ?? FileHandle.nullDevice
     return (task, input)
@@ -343,6 +395,10 @@ final class SessionManager {
       new
     }
     gameEnvironment.merge(ctx.extraEnvironment) { _, new in new }
+    if let steam = ctx.steamSession {
+      gameEnvironment.merge(try steam.validatedEnvironment(
+        game: ctx.game, variant: ctx.variant, profile: ctx.profile)) { _, trusted in trusted }
+    }
     // Initialization diagnostics must not poison classification of a later DRM/game failure.
     ctx.gameLogOffset = (try? ctx.log?.seekToEnd()) ?? 0
     let (task, input) = try configureHost(
@@ -357,9 +413,15 @@ final class SessionManager {
     }
     try checkCancellation(ctx)
     try task.run()
-    ctx.lease?.markTransferredToSessionHost()
-    try? input.close()
     ctx.setProcess(task)
+    // Before SCM_RIGHTS can duplicate the lock into the keeper, relinquish the
+    // parent's right to explicitly unlock that shared open-file-description.
+    ctx.lease?.markTransferredToSessionHost()
+    if let handoff = ctx.steamHandoff {
+      do { try handoff.didSpawn(); ctx.steamHandoff = nil }
+      catch { ctx.cancel(); stopCurrent(ctx); throw error }
+    }
+    try? input.close()
     if ctx.isCancelled {
       stopCurrent(ctx)
       throw LauncherError.failed("Avvio annullato.")
@@ -420,7 +482,9 @@ final class SessionManager {
         }
       }
       let message =
-        status == 73 && diagnostic.contains("ReadySessionHost: installation lease busy")
+        status == 75 && ctx.steamSession != nil
+        ? "La sessione Steam non è più disponibile. Il gioco è stato chiuso."
+        : status == 73 && diagnostic.contains("ReadySessionHost: installation lease busy")
         ? "Installazione in aggiornamento. Attendi il termine del download o aggiornamento e riprova."
         : "Sessione terminata · codice \(status)"
       onMain { [self, ctx] in finish(ctx, message) }
@@ -438,6 +502,9 @@ final class SessionManager {
     monitor = nil
     try? ctx.log?.close()
     ctx.log = nil
+    ctx.steamSession?.onInvalidated = nil
+    ctx.steamSession?.stop()
+    ctx.steamHandoff = nil
     // Break Context -> Process -> terminationHandler -> Context retention after exit.
     // A timed-out native keeper is independent and continues holding its own fd0.
     if let task = ctx.currentProcess(), !task.isRunning { task.terminationHandler = nil }

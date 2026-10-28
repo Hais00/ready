@@ -18,6 +18,14 @@ import LauncherCore
     defer{session.stop()}
     session.start();try spin{session.state.online && session.state.accountName=="fixture_account"}
     checks["savedProfileCredentialConnectsWithoutQR"]=session.state.accountName=="fixture_account"
+    checks["currentPersonaAndSavedAccountReadyForGame"]=session.accountReadyForGame()
+    vault[profile]=try JSONSerialization.data(withJSONObject:["username":"fixture_other","refresh_token":"fixture_only_other"])
+    var onlineReply=false
+    session.request("fixture_online_before_new_persona"){_ in onlineReply=true};try spin{onlineReply}
+    checks["onlineBeforeNewPersonaCannotResumeOldAccount"] = !session.accountReadyForGame() && session.state.accountName=="fixture_account"
+    session.request("fixture_new_persona"){_ in};try spin{session.state.accountName=="fixture_other"}
+    checks["newPersonaMatchingSavedAccountCanResumeGame"]=session.accountReadyForGame()
+    vault[profile]=initial;session.request("fixture_recovered"){_ in};try spin{session.state.accountName=="fixture_account"}
     try spin{session.state.friends.count==1}
     checks["friendsAndActivitySnapshot"]=session.state.friends[0].gameName=="Fixture game"
     session.request("fixture_normalization"){_ in};try spin{session.state.friends.first?.presence=="offline"}
