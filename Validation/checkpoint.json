@@ -1,5 +1,5 @@
 {
-  "createdAt": "2026-10-28T02:49:18.715319+01:00",
+  "createdAt": "2026-10-28T03:07:00.186750+01:00",
   "goalComplete": false,
   "core": {
     "checks": 24,
@@ -229,6 +229,23 @@
     "gpuAllocatedBytesAfter": 737280,
     "gpuAllocatedBytesBefore": 47038464,
     "pass": true
+  },
+  "frontendLifecycle": {
+    "passed": true,
+    "checks": {
+      "errorDoesNotCreateModal": true,
+      "errorDoesNotRestoreGPUTexture": true,
+      "errorDoesNotShowLauncher": true,
+      "errorIsDeferred": true,
+      "initialCanvasAllocated": true,
+      "notificationRemainsAccessible": true,
+      "realSessionStarted": true,
+      "returnRestoresCanvas": true,
+      "returnRestoresWindowContent": true
+    },
+    "scope": "actual AppDelegate + MetalCanvas + SessionManager + native keeper; logical resource/window state, no visual input or real game",
+    "visualVerificationPerformed": false,
+    "directToDisplayVerified": false
   },
   "overlay": {
     "gpuPaths": 6,

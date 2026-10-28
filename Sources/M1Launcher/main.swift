@@ -9,7 +9,7 @@ final class ReadyWindow: NSWindow {
   override var canBecomeKey: Bool { true }
   override var canBecomeMain: Bool { true }
 }
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
   let paths: LauncherPaths
   let project: URL
   var repository: LibraryRepository!
@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   var authenticationRequest: UUID?
   var pendingLaunch: UUID?
   var maintenanceInProgress = false
+  var backgroundNotices = [String]()
   init(project: URL, paths: LauncherPaths = LauncherPaths()) {
     self.project = project
     self.paths = paths
@@ -73,15 +74,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     setupMenu()
     setupControllers()
     session.onFinish = { [weak self] message in
-      guard let self else { return }
-      self.canvas.resumeGraphics()
-      self.canvas.message = message
-      self.window.contentView = self.canvas
-      self.window.makeKeyAndOrderFront(nil)
-      NSApp.activate(ignoringOtherApps: true)
-      self.canvas.refresh()
+      self?.restoreLauncher(message)
     }
     let args = CommandLine.arguments
+    if args.contains("--background-error-self-test") {
+      runBackgroundErrorProbe()
+      return
+    }
     if args.contains("--graphics-self-test") {
       window.makeKeyAndOrderFront(nil)
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [self] in
@@ -178,6 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       ("Importa gioco…", "o", #selector(importGame)), ("Cerca…", "f", #selector(search)),
       ("Profili…", "u", #selector(profiles)), ("Account e runtime…", ",", #selector(settings)),
       ("Dati e ripristino…", "", #selector(dataMaintenance)),
+      ("Notifiche…", "", #selector(showNotifications)),
     ] {
       let item = library.submenu!.addItem(withTitle: name, action: selector, keyEquivalent: key)
       item.target = self
@@ -190,6 +190,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     f.keyEquivalentModifierMask = [.command, .control]
     f.target = self
     NSApp.mainMenu = menu
+  }
+  func validateMenuItem(_ item: NSMenuItem) -> Bool {
+    let busy = session?.running == true || maintenanceInProgress || pendingLaunch != nil
+    let interfaceActions: [Selector] = [
+      #selector(importGame), #selector(search), #selector(profiles),
+      #selector(settings), #selector(dataMaintenance), #selector(showNotifications),
+      #selector(toggleFullscreen),
+    ]
+    if let action = item.action, interfaceActions.contains(action) {
+      if action == #selector(profiles), authenticationSession != nil { return false }
+      return !busy
+    }
+    return true
   }
   func action(_ action: CanvasAction) {
     guard !maintenanceInProgress else { return }
@@ -807,11 +820,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     ) { n in if let c = n.object as? GCController { install(c) } }
   }
   func showError(_ error: Error) {
+    // A background store callback must not recreate a composited dialog or steal
+    // focus while the game owns presentation and the launcher has released its GPU work.
+    if session?.running == true {
+      let message = error.localizedDescription
+      if !backgroundNotices.contains(message) {
+        backgroundNotices.append(message)
+        if backgroundNotices.count > 8 { backgroundNotices.removeFirst() }
+      }
+      return
+    }
     let a = NSAlert()
     a.messageText = "ready"
     a.informativeText = error.localizedDescription
     a.alertStyle = .warning
     a.runModal()
+  }
+  @objc func showNotifications() {
+    guard session?.running != true, !maintenanceInProgress, pendingLaunch == nil else { return }
+    let prompt = NSAlert()
+    prompt.messageText = "Notifiche"
+    prompt.informativeText =
+      backgroundNotices.isEmpty
+      ? "Nessuna notifica in attesa." : backgroundNotices.joined(separator: "\n\n")
+    prompt.addButton(withTitle: "Chiudi")
+    prompt.runModal()
+    backgroundNotices.removeAll()
   }
 }
 

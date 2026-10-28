@@ -21,12 +21,14 @@ apple_gpu=read('runtime-winecx-probes.json')
 apple_overlay=read('overlay-apple-d3d12.json')
 provider_switch=read('provider-switch.json')
 controller=read('controller-navigation.json')
+frontend_lifecycle=read('frontend-lifecycle.json')
 store_log=(ROOT/'Evidence/stores-parent-tests.log').read_text()
 match=re.search(r'Ran (\d+) tests',store_log)
 assert core['pass'] and host['passed'] and manager['passed']
 assert wine_sessions['passed'] and wow64['verified']
 assert store_client['passed'] and migration_crash['passed']
 assert apple_gpu['dx12Verified'] and apple_overlay['passed'] and provider_switch['passed'] and controller['passed']
+assert frontend_lifecycle['passed']
 assert apple_gpu['evaluationOnly'] and not apple_gpu['enabledForConsumerPlay']
 assert prefix['verified'] and canonical['verified'] and wine_overlay['passed'] and frontend['pass']
 gpu_paths=[path for path in overlay if 'architecture' in path]
@@ -57,6 +59,8 @@ report={
  'winePrefixAPIs':{'verified':True,'steps':len(prefix['steps']),'canonicalWindowsPaths':True,
   'scope':'Synthetic games, real Wine Windows registry and folder APIs, independent profile/game prefixes, recreation retains data'},
  'frontendMemory':frontend,
+ 'frontendLifecycle':{'passed':True,'checks':frontend_lifecycle['checks'],'scope':frontend_lifecycle['scope'],
+  'visualVerificationPerformed':False,'directToDisplayVerified':False},
  'overlay':{'gpuPaths':len(gpu_paths),
   'wineVulkanMetalVerified':True,'shownTrackedTextureBytes':835584,'hiddenTrackedTextureBytes':0,
   'directToDisplayVerified':False,'observedHUDMode':'Composited in both native baseline and overlay samples'},
