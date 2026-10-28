@@ -63,10 +63,14 @@ def normalize_wine(root):
         obsolete=sorted({value for part in header.get('slices',[]) for value in part.get('rpaths',[]) if value.startswith('/') and ('/Runtime/wine-deps/' in value or '/Runtime/vulkan-sdk-' in value)})
         if not obsolete:continue
         before=sha(path);commands=[]
+        originally_signed=subprocess.run(['/usr/bin/codesign','-d',str(path)],capture_output=True).returncode==0
         for value in obsolete:
             command=['/usr/bin/install_name_tool','-delete_rpath',value,str(path)];subprocess.run(command,check=True,capture_output=True);commands.append(command)
-        subprocess.run(['/usr/bin/codesign','--force','--sign','-','--timestamp=none',str(path)],check=True,capture_output=True)
-        records.append({'path':str(path.relative_to(root)),'originalSHA256':before,'finalSHA256':sha(path),'commands':commands,'sourceCodeModified':False})
+        if originally_signed:
+            subprocess.run(['/usr/bin/codesign','--force','--sign','-','--timestamp=none','--preserve-metadata=identifier,entitlements,flags',str(path)],check=True,capture_output=True)
+        elif subprocess.run(['/usr/bin/codesign','-d',str(path)],capture_output=True).returncode==0:
+            subprocess.run(['/usr/bin/codesign','--remove-signature',str(path)],check=True,capture_output=True)
+        records.append({'path':str(path.relative_to(root)),'originalSHA256':before,'finalSHA256':sha(path),'commands':commands,'sourceCodeModified':False,'originallySigned':originally_signed,'originalSigningStatePreserved':True})
     return records
 
 def wrapper(wine,base,evaluation=False):
@@ -82,6 +86,10 @@ export P11_MODULE_PATH="$READY_DEPS/lib/pkcs11"
 export P11_PACKAGE_CONFIG_MODULES="$READY_DEPS/share/p11-kit/modules"
 export P11_SYSTEM_CONFIG_MODULES="$READY_DEPS/etc/pkcs11/modules"
 if [ "${READY_DYLD_DIAGNOSTICS:-0}" = 1 ]; then export DYLD_PRINT_LIBRARIES=1; fi
+if [ "${READY_DYLD_DIAGNOSTICS:-0}" = 1 ] && [ -n "${READY_NATIVE_AUDIT_LIBRARY:-}" ] && [ -f "$READY_NATIVE_AUDIT_LIBRARY" ]; then
+  unset DYLD_PRINT_LIBRARIES
+  export DYLD_INSERT_LIBRARIES="$READY_NATIVE_AUDIT_LIBRARY"
+fi
 '''
     if evaluation:text+='''# Explicit local synthetic development/evaluation only; Apple's license applies.
 export CX_APPLEGPTK_LIBD3DSHARED_PATH="$READY_WINE_ROOT/lib/external/libd3dshared.dylib"

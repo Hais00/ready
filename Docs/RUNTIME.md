@@ -119,12 +119,62 @@ not override that directory. Configuration selects both the engine's Wine wrappe
 and its wineserver, records a combined runtime identity, and exposes only verified
 API capabilities. Updating an engine takes effect on a subsequent launch.
 
-The current base is `ready-runtime-b4a90f0d97ce75cdd949`. The selected DXMT
+The current base is `ready-source-runtime-68c00b7d3878699829eb`. The selected DXMT
 provider and combined identity are recorded in `Runtime/runtime.json` and
-`Evidence/runtime-dxmt-frozen.json`. IDs include build/patch manifests, not just
+`Evidence/runtime-source-activation.json`. IDs include build/patch manifests, not just
 the upstream Wine version string. The freeze gate compares every unchanged Wine
 core file with the tested base; unrelated core binaries cannot inherit stale
 successful DXMT probes.
+
+## Source-built dependency generation
+
+The active runtime uses the reviewed **25 shared libraries/modules** built from
+17 pinned source archives. GnuTLS 3.8.13, FreeType 2.15.0, libpcap 1.11.0 and
+their selected transitive libraries have retained source, build recipes, notices,
+normalization commands and exact output hashes. No community dependency binary
+or MacPorts Legacy Support library is selected by this generation. FreeType's
+optional system HVF API remains weak-linked with the upstream availability guard;
+the operating-system library is not redistributed.
+
+The developer dependency prefix records 54 code inputs. The runtime payload
+copies only the 25 reviewed shared objects and required aliases/data, excluding
+29 CLI/static code inputs. `selected-runtime-files.json` binds that subset to the
+unchanged original manifest and runtime-validation receipt under
+`share/ready/origin/`. All 297 source/provenance files remain at their original
+relative paths. This gate approves the dependency subset only; app binaries,
+fonts/assets, store helpers and optional proprietary components have separate
+distribution requirements.
+
+Actual tests passed on Wine 11.20 and WineCX 11.19 in PE32 and PE64: public HTTPS
+200/content, rejection of a self-signed local certificate without validation
+bypass, GDI glyph bitmap alpha, and DirectWrite glyph-run alpha. Wine maps the
+certificate error to generic 12157; the test additionally requires the explicit
+certificate-verification failure 12045 in its trace. The old Wine 11.20
+DirectWrite module had an otool annotation embedded in its FreeType SONAME; its
+source was rebuilt with `libfreetype.6.dylib` in the new generation. No old module
+was overwritten. GDI and DirectWrite raster results match the corrected baseline.
+
+The new wrappers/RPATH generation separately passed 26 end-to-end cases covering
+those APIs, DX9, both Vulkan drivers, DXMT PE32/PE64 and local Apple D3D12 shader
+readback/presentation. The real SessionManager then passed its eight-check
+provider round trip, including registry/save preservation and an unchanged other
+game prefix. Native library auditing confirms the selected source libraries on
+the open paths. Apple's evaluation test uses standard dyld diagnostics rather
+than an injected add-image observer.
+
+Normalization preserves each Wine binary's original signing state. Adding an
+ad-hoc signature to a previously unsigned Wine executable caused an Apple
+MetalFX/ANE prewarm stall with injection; an isolated control and the corrected
+full pipeline passed after preserving unsigned status. Apple payload bytes were
+never modified.
+
+Activation replaced only the two project configuration pointers after all gates
+and wrapper/Core tests passed. Before-images are retained under
+`Runtime/ActivationBackups/`; `Evidence/runtime-source-activation.json` records
+their SHA256 values, the committed generation and the rollback boundary. Old
+runtime trees and all user configuration/prefixes remain unchanged. Per-user
+runtime overrides retain priority over the project fallback. Apple evaluation
+mode and consumer use remain disabled.
 
 ## 32-bit Windows applications
 
@@ -304,12 +354,16 @@ removed while keeping source, installed runtimes, immutable providers and report
 No Apple download, license-dialog acceptance, public distribution, or consumer
 selection is performed by this recipe.
 
-Dependency headers currently come from locally fetched, uninstalled Homebrew
-bottles (GnuTLS 3.8.13_2 and FreeType 2.15.0). Runtime dependency dylibs are
-bootstrapped from an open-source Wine community bundle; before shipping any
-binary bundle, corresponding-source/license inventory must be completed. The
-default public fetch path does not download Apple's proprietary compatibility
-bundle; that experiment requires an explicit `--include-apple-compat` argument.
+The earlier development bootstrap used uninstalled Homebrew header bottles and
+community dependency binaries. Those old sets remain private development inputs.
+The active source-built dependency generation is produced by
+`Scripts/runtime_build_dependencies.py` (`fetch`, `build`, `finalize`, `verify`),
+tested by the platform/GPU recipes, and promoted through
+`runtime_freeze_source_stack.py`, `runtime_candidate_e2e.py`,
+`runtime_candidate_core.py` and the guarded activation script. See
+`Docs/LICENSES.md` and `THIRD_PARTY_NOTICES.md` for the component/source gate. The default public
+fetch path does not download Apple's proprietary compatibility bundle; that
+earlier experiment requires explicit `--include-apple-compat`.
 
 Build caches may be removed after installed binaries and probes are verified.
 Do not remove source trees, active per-user prefixes, or unrelated workspace data.

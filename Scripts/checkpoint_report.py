@@ -24,6 +24,10 @@ controller=read('controller-navigation.json')
 frontend_lifecycle=read('frontend-lifecycle.json')
 rollback_crash=read('rollback-crash.json')
 custom_saves=read('custom-saves.json')
+source_activation=read('runtime-source-activation.json')
+source_e2e=read('runtime-source-candidate-e2e.json')
+source_core=read('runtime-source-core-switch.json')
+source_gate=read('runtime-source-activation-dependency-gate.json')
 store_log=(ROOT/'Evidence/stores-parent-tests.log').read_text()
 match=re.search(r'Ran (\d+) tests',store_log)
 assert core['pass'] and host['passed'] and manager['passed']
@@ -33,6 +37,8 @@ assert apple_gpu['dx12Verified'] and apple_overlay['passed'] and provider_switch
 assert frontend_lifecycle['passed']
 assert rollback_crash['passed']
 assert custom_saves['passed']
+assert source_activation['state']=='committed' and source_e2e['passed'] and source_core['passed']
+assert source_gate['binaryRedistributionReady'] and not source_gate['runtimeValidationPending']
 assert apple_gpu['evaluationOnly'] and not apple_gpu['enabledForConsumerPlay']
 assert prefix['verified'] and canonical['verified'] and wine_overlay['passed'] and frontend['pass']
 gpu_paths=[path for path in overlay if 'architecture' in path]
@@ -56,6 +62,11 @@ report={
   'appleEndToEndPixelReadbackVerified':False,'directToDisplayVerified':False},
  'providerRoundTrip':{'passed':True,'checks':provider_switch['checks'],'scope':provider_switch['scope']},
  'runtimeBinaryRedistributionReady':False,
+ 'sourceBuiltRuntimeActivation':{'committed':True,'runtimeID':source_activation['newRuntimeID'],
+  'wrapperChecks':len(source_e2e['tests']),'coreChecks':len(source_core['checks']),
+  'dependencyDistributionScope':source_activation['approvedDistributionScope'],
+  'dependencyBinaryRedistributionReady':True,'wholeApplicationBinaryDistributionApproved':False,
+  'consumerAppleEnabled':False,'oldRuntimeTreesModified':False,'userConfigurationsOrPrefixesModified':False},
  'sessionHost':{'passed':host['passed'],'checks':host['checks'],'scope':'real processes, file locks, crash handoff and exact-prefix waiter'},
  'sessionManager':{'passed':manager['passed'],'checks':manager['checks'],'scope':manager['testType']},
  'realWineSessions':{'passed':wine_sessions['passed'],'checks':wine_sessions['checks'],
@@ -78,7 +89,7 @@ report={
   'Guided migration UI visual verification (Mac locked during current attempt)',
   'Real legacy user-data/game migration beyond synthetic copy and rollback crash fixtures',
   'External updaters that do not participate in the installation lease protocol',
-  'Corresponding source, build provenance and license notices for bootstrapped runtime dependency binaries']
+  'Whole-application packaging and remaining third-party distribution inventory beyond the approved 25-library dependency payload']
 }
 out=ROOT/'Validation';out.mkdir(exist_ok=True)
 (out/'checkpoint.json').write_text(json.dumps(report,indent=2)+'\n')

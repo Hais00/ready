@@ -16,7 +16,7 @@ Started 2026-10-27. Repository: `https://github.com/Hais00/ready` (private). Loc
 - Latest beta releases requested explicitly; fetched Wine 11.20, Mesa/KosmicKrisp 26.3.0-rc2, SteamKit 3.5.1-Alpha.1, plus latest available DXVK/VKD3D/MoltenVK source artifacts.
 - Single-prefix design superseded by **game/profile prefixes**. See REQUIREMENTS and PREFIXES.
 - Native Swift/Metal frontend compiles and visually checked text orientation/icons. It renders only on change and tears down its canvas at actual game launch, after asynchronous Wine initialization.
-- Twenty-four domain checks pass, including independent DLL copy-on-write projections, registry paths, persistent folders, runtime selection and migration preflight. XCTest is absent on this CLT-only host; ReadyCoreProbe runs the same shared checks.
+- Twenty-six domain checks pass, including independent DLL copy-on-write projections, registry paths, persistent folders, runtime selection and migration preflight. XCTest is absent on this CLT-only host; ReadyCoreProbe runs the same shared checks.
 - Real Windows API probes under Wine verify game/profile registry and account marker separation, Documents redirection, and saved-data survival after prefix recreation. Original prefixes and rollback copies are preserved. Guided migration/recovery UI is implemented and compiled; visual verification awaits Mac unlock. An actual copy process was killed mid-copy, archived by recovery and successfully retried with unchanged original hashes.
 - Native session keeper checks verify exact-prefix coordination, independent process groups, parent-crash lock handoff, literal arguments and overlay handoff. SessionManager has asynchronous initialization/cancellation/timeout and main-thread lifecycle probes.
 - Overlay passes six native GPU paths and Windows Vulkan → Wine → KosmicKrisp → Metal injection. Texture allocation is 835,584 bytes shown and zero hidden. The actual fullscreen HUD reports Composited with and without overlay; direct display remains unverified.
@@ -32,3 +32,7 @@ Started 2026-10-27. Repository: `https://github.com/Hais00/ready` (private). Loc
 - See Docs/DISTRIBUTION.md: dependency provenance blocks binary-runtime redistribution. Source rebuilds are in progress; active runtime binaries remain unchanged.
 
 - Settings now offers explicit local evaluation activation and byte-exact runtime restoration with private history. It accepts no vendor terms, grants no rights and includes no Apple binaries. GUI visual verification remains pending; configuration policy/restore checks pass.
+
+- Source generation `68c00b7d3878699829eb` is active after 26 real-wrapper checks and an 8-check Core provider round-trip. Before-images and old immutable providers are retained; user overrides/prefixes were not changed.
+- The 17-component source dependency build and selected 25-library/module payload pass the source/runtime gate. Whole-app distribution is a separate gate, and Apple remains external/evaluation-only.
+- Game-specific extra save directories are now applied and persisted across recreation. Five real Windows API checks prove normal C:\ProgramData access, game/profile separation and recreation survival; the Core domain suite has 26 checks.

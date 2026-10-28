@@ -1,5 +1,5 @@
 {
-  "createdAt": "2026-10-28T03:42:36.310628+01:00",
+  "createdAt": "2026-10-28T03:46:18.080837+01:00",
   "goalComplete": false,
   "core": {
     "checks": 26,
@@ -168,6 +168,18 @@
     "scope": "real SessionManager + keeper + Wine 11.20 \u2192 WineCX 11.19/Apple GPTK4b3 DX12 \u2192 Wine 11.20, same synthetic game/profile and combined runtime ID"
   },
   "runtimeBinaryRedistributionReady": false,
+  "sourceBuiltRuntimeActivation": {
+    "committed": true,
+    "runtimeID": "ready-source-runtime-68c00b7d3878699829eb+ready-source-dxmt-68c00b7d3878699829eb",
+    "wrapperChecks": 26,
+    "coreChecks": 8,
+    "dependencyDistributionScope": "25 dependency shared libraries/modules only",
+    "dependencyBinaryRedistributionReady": true,
+    "wholeApplicationBinaryDistributionApproved": false,
+    "consumerAppleEnabled": false,
+    "oldRuntimeTreesModified": false,
+    "userConfigurationsOrPrefixesModified": false
+  },
   "sessionHost": {
     "passed": true,
     "checks": {
@@ -297,6 +309,6 @@
     "Guided migration UI visual verification (Mac locked during current attempt)",
     "Real legacy user-data/game migration beyond synthetic copy and rollback crash fixtures",
     "External updaters that do not participate in the installation lease protocol",
-    "Corresponding source, build provenance and license notices for bootstrapped runtime dependency binaries"
+    "Whole-application packaging and remaining third-party distribution inventory beyond the approved 25-library dependency payload"
   ]
 }
