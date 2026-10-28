@@ -27,12 +27,13 @@ extension AppDelegate {
     steamPreparationID = launchID
     canvas.message = "Preparazione del backend Steam…"; canvas.refresh()
     let selectedRuntime = runtimeRoot
+    let selectedStateRoot = paths.root
     // Only immutable identifiers cross the worker queue. The continuation stays
     // on the main actor, including every profile and pending-launch check.
     let appID = game.storeID
     Task { @MainActor [weak self] in
       let selection = await Task.detached(priority: .userInitiated) {
-        Result { try SteamNativeHostSelection.load(runtimeRoot: selectedRuntime, gameID: appID) }
+        Result { try SteamNativeHostSelection.load(runtimeRoot: selectedRuntime, gameID: appID, stateRoot: selectedStateRoot) }
       }.value
           guard let self, self.pendingLaunch == launchID, self.steamPreparationID == launchID,
             self.state.activeProfile == profile else { return }
@@ -77,9 +78,7 @@ extension AppDelegate {
         }
       case .success(let grant):
         do {
-          let root = self.paths.profile(profile)
-            .appendingPathComponent("Steam/Native/" + String(grant.gameID))
-          try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+          let root = try SteamNativeStateDirectory.prepare(paths: self.paths, profile: profile, gameID: grant.gameID)
           let host = try SteamNativeGameSession.start(binding: binding, grant: grant, game: game,
             variant: variant, profileStateRoot: root) { [weak self] result in
               guard let self, self.pendingLaunch == launchID, self.state.activeProfile == profile else {

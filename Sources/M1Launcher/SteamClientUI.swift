@@ -18,7 +18,7 @@ extension AppDelegate {
     downloads.onError = {[weak self] message in self?.showError(LauncherError.failed(message))}
     downloads.onInstalled = {[weak self] job in self?.acceptSteamInstallation(job,profile:profile)}
     downloads.restore()
-    guard let command = SteamClientSession.installedCommand(project: project, runtimeRoot: runtimeRoot) else { return }
+    guard let command = SteamClientSession.installedCommand(project: project, runtimeRoot: runtimeRoot, stateRoot: paths.root) else { return }
     let network = SteamClientSession(profile: profile, command: command, credentialAccess: .keychain(stateRoot: paths.root))
     steamNetwork = network
     network.onChange = { [weak self, weak network] status in

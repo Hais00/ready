@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Offline normal SteamBridge build + versioned local central-tools publication.
 
-No account operations, provider/runtime-config activation or user pointer writes.
+No account operations or provider/runtime-config activation. User selection is
+an explicit, separately requested private pointer write; tools are never copied.
 The fixed project SteamBridge path can select a verified version by atomic link;
 old versions and the historical development build remain recoverable.
 """
-import argparse,base64,ctypes,hashlib,json,os,pathlib,shutil,stat,subprocess,tempfile,uuid
+import argparse,base64,ctypes,fcntl,hashlib,json,os,pathlib,shutil,stat,subprocess,tempfile,uuid
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 
 def sha(path,kind='sha256'):
@@ -104,6 +105,123 @@ def verify_version(version):
     if actual!=m['files'] or identity(actual)!=m['payloadFingerprintSHA256']:raise ValueError('Central tools content/membership/modes changed')
     if m.get('binaryDistributionApproved') is not False:raise ValueError('Local version cannot imply distribution approval')
     return m
+
+def verify_user_version(version):
+    """Verify the complete local payload AND every declared external alias now."""
+    version=canonical(version);manifest=verify_version(version)
+    if manifest.get('localOnly') is not True or manifest.get('binaryDistributionApproved') is not False:raise ValueError('Only explicitly local tools may be selected')
+    dependencies=manifest.get('externalReadOnlyDependencies')
+    if not isinstance(dependencies,dict):raise ValueError('Explicit external dependency inventory required')
+    for name,entry in dependencies.items():
+        if not isinstance(name,str) or not name or name in ('.','..') or '/' in name or not isinstance(entry,dict):raise ValueError('Invalid external alias declaration')
+        target=canonical(entry.get('path',''));owned(target,True)
+        alias=version/name
+        if target.is_relative_to(version) or not alias.is_symlink() or alias.lstat().st_uid!=os.getuid() or os.readlink(alias)!=str(target) or alias.resolve(strict=True)!=target:raise ValueError('External alias target changed')
+        if entry.get('readOnlyUseContract') is not True or entry.get('portable') is not False or identity(inventory(target))!=entry.get('inventorySHA256'):raise ValueError('External dependency inventory changed')
+    for relative,entry in manifest['files'].items():
+        if entry.get('kind')=='symlink':
+            resolved=(version/relative).resolve(strict=True)
+            if (pathlib.Path(entry['target']).is_absolute() or not resolved.is_relative_to(version)) and relative not in dependencies:raise ValueError('Undeclared external tool alias')
+    return manifest
+
+def private_directory(path):
+    path=canonical(path);info=owned(path,True)
+    if stat.S_IMODE(info.st_mode)!=0o700:raise ValueError('Owned private directory mode 0700 required')
+    return path
+
+def private_record(path):
+    """Read a small, owned, unaliased single-link mode-0600 JSON record."""
+    path=canonical(path)
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    with os.fdopen(fd,'rb') as stream:
+        info=os.fstat(stream.fileno())
+        if info.st_uid!=os.getuid() or not stat.S_ISREG(info.st_mode) or info.st_nlink!=1 or stat.S_IMODE(info.st_mode)!=0o600 or not 0<info.st_size<=16384:raise ValueError('Unsafe private selection record')
+        raw=stream.read(16385)
+    value=json.loads(raw)
+    if not isinstance(value,dict):raise ValueError('Invalid selection record')
+    return value,hashlib.sha256(raw).hexdigest()
+
+def user_selector(value):
+    if set(value)!={'schema','kind','toolsRoot','manifestSHA256'} or type(value.get('schema'))is not int or value['schema']!=1 or value.get('kind')!='ready-store-tools-location-v1':raise ValueError('Unknown user tools selection')
+    version=canonical(value.get('toolsRoot',''));digest=value.get('manifestSHA256')
+    if not isinstance(digest,str) or len(digest)!=64 or any(c not in '0123456789abcdef'for c in digest):raise ValueError('Invalid pinned tools manifest hash')
+    verify_user_version(version)
+    if sha(version/'manifest.json')!=digest:raise ValueError('Pinned selected manifest changed')
+    return value
+
+def user_layout(state_root):
+    state=private_directory(state_root);components=state/'Components';parent=components/'StoreBridge';history=parent/'SelectionHistory'
+    for path in (components,parent,history):
+        if path.exists() or path.is_symlink():private_directory(path)
+    selector=parent/'selected.json';previous=None
+    if selector.exists() or selector.is_symlink():previous=user_selector(private_record(selector)[0])
+    lock=parent/'.selection.lock'
+    if lock.exists() or lock.is_symlink():
+        info=owned(canonical(lock))
+        if info.st_nlink!=1 or stat.S_IMODE(info.st_mode)!=0o600:raise ValueError('Unsafe selector lock')
+    return state,components,parent,history,selector,lock,previous
+
+def atomic_private_record(path,value):
+    temporary=path.parent/('.selected-'+uuid.uuid4().hex)
+    try:
+        write_new(temporary,value);os.replace(temporary,path)
+        sync_directory(path.parent)
+    finally:
+        if temporary.exists():temporary.unlink()
+
+def sync_directory(path):
+    fd=os.open(path,os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC)
+    try:os.fsync(fd)
+    finally:os.close(fd)
+
+def selection_lock(path):
+    fd=os.open(path,os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
+    try:
+        info=os.fstat(fd)
+        if info.st_uid!=os.getuid() or not stat.S_ISREG(info.st_mode) or info.st_nlink!=1 or stat.S_IMODE(info.st_mode)!=0o600:raise ValueError('Unsafe selector lock')
+        fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    except BaseException:os.close(fd);raise
+    return fd
+
+def select_user(version_root,state_root):
+    """Explicitly select verified existing tools for one existing private data root."""
+    version=canonical(version_root);verify_user_version(version)
+    selected={'schema':1,'kind':'ready-store-tools-location-v1','toolsRoot':str(version),'manifestSHA256':sha(version/'manifest.json')}
+    state,components,parent,history,selector,lock,_=user_layout(state_root)
+    for path in (components,parent,history):path.mkdir(mode=0o700,exist_ok=True);private_directory(path)
+    fd=selection_lock(lock)
+    try:
+        *_,previous=user_layout(state)
+        user_selector(selected) # Recheck external payloads immediately before publication.
+        record={'schema':1,'kind':'ready-store-tools-user-selection-v1','stateRoot':str(state),'selected':selected,'previousSelector':previous,'codeDeleted':False}
+        record_path=history/(uuid.uuid4().hex+'.selection.json');write_new(record_path,record);sync_directory(history)
+        atomic_private_record(selector,selected)
+        return {**record,'historyRecord':str(record_path),'selectorPath':str(selector)}
+    finally:os.close(fd)
+
+def rollback_user(record_path,state_root):
+    """Restore only the previous pointer from an owned, reviewed selection record."""
+    state,components,parent,history,selector,lock,current=user_layout(state_root)
+    record_path=canonical(record_path)
+    if record_path.parent!=history:raise ValueError('Only this data root selection history may be restored')
+    record,record_digest=private_record(record_path)
+    if record.get('schema')!=1 or record.get('kind')!='ready-store-tools-user-selection-v1' or record.get('stateRoot')!=str(state) or current!=record.get('selected'):raise ValueError('Current user selection differs from reviewed history')
+    user_selector(record['selected'])
+    previous=record.get('previousSelector')
+    if previous is not None:user_selector(previous)
+    fd=selection_lock(lock)
+    try:
+        *_,latest=user_layout(state)
+        if latest!=current:raise ValueError('User selection changed during rollback')
+        if previous is None:
+            archived=history/(uuid.uuid4().hex+'.retired-selector.json');os.rename(selector,archived)
+            sync_directory(parent);sync_directory(history)
+        else:
+            user_selector(previous);atomic_private_record(selector,previous);archived=None
+        marker={'schema':1,'kind':'ready-store-tools-user-rollback-v1','stateRoot':str(state),'selectionRecord':str(record_path),'selectionRecordSHA256':record_digest,'restoredSelector':previous,'archivedSelector':str(archived)if archived else None,'codeDeleted':False}
+        marker_path=history/(uuid.uuid4().hex+'.rollback.json');write_new(marker_path,marker);sync_directory(history)
+        return {**marker,'rollbackRecord':str(marker_path)}
+    finally:os.close(fd)
 
 def readonly_tree(root):
     for p in pathlib.Path(root).rglob('*'):
@@ -217,13 +335,20 @@ def rollback_project(record_path):
     write_new(history/(uuid.uuid4().hex+'.json'),result);return result
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);commands=parser.add_subparsers(dest='operation',required=True)
+    parser=argparse.ArgumentParser(description=__doc__)
+    user_actions=parser.add_mutually_exclusive_group();user_actions.add_argument('--select-user',action='store_true');user_actions.add_argument('--rollback-user',type=pathlib.Path)
+    parser.add_argument('--state-root',type=pathlib.Path);parser.add_argument('--version-root',type=pathlib.Path)
+    commands=parser.add_subparsers(dest='operation')
     command=commands.add_parser('build');command.add_argument('--workspace',type=pathlib.Path,required=True);command.add_argument('--sdk-root',type=pathlib.Path,required=True);command.add_argument('--tools-store',type=pathlib.Path,required=True);command.add_argument('--select-project-helper',action='store_true')
     command=commands.add_parser('verify');command.add_argument('version',type=pathlib.Path)
     command=commands.add_parser('select-project');command.add_argument('version',type=pathlib.Path)
     command=commands.add_parser('rollback-project');command.add_argument('history_record',type=pathlib.Path)
     args=parser.parse_args()
-    if args.operation=='build':
+    if args.select_user or args.rollback_user:
+        if args.operation is not None or args.state_root is None or (args.select_user and args.version_root is None) or (args.rollback_user and args.version_root is not None):parser.error('User selection requires --select-user --state-root PATH --version-root PATH, or --rollback-user RECORD --state-root PATH')
+        result=select_user(args.version_root,args.state_root)if args.select_user else rollback_user(args.rollback_user,args.state_root)
+    elif args.state_root is not None or args.version_root is not None or args.operation is None:parser.error('Choose one explicit tools operation')
+    elif args.operation=='build':
         result=build(workspace=args.workspace,sdk_root=args.sdk_root,tools_store=args.tools_store)
         if args.select_project_helper:result['selection']=select_project(pathlib.Path(result['versionRoot']))
     elif args.operation=='verify':result=verify_version(args.version)

@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "kind": "live-ready-steam-account-observations",
+  "loginOnlineObserved": true,
+  "accountPersonaAndFriendsReceived": true,
+  "manualOfflineWithoutAuthorizationLossObserved": true,
+  "manualReconnectWithoutNewQRObserved": true,
+  "applicationRestartAutomaticallyReconnected": true,
+  "credentialSaveWarningObserved": false,
+  "observedThroughCUA": true,
+  "friendNamesOrAccountIdentifiersPublished": false,
+  "commercialGameExecutionVerified": true,
+  "fullSteamClientProcessCount": 0,
+  "frontendSHA256": "01aaca27580f9348176cfaf63a2622183b04237032ef23f055ebb58bb2c75871",
+  "commercialGameVerificationScope": "Native title reached settings UI; injected overlay and owned shutdown verified; gameplay unverified",
+  "storedSessionReusedAfterCaseFixFrontendUpdate": true,
+  "subsequentFrontendSHA256": "09436d6d5ff7cc0462ae69a2bc439ad703c26b73400a8de1b524278c321e98fe"
+}

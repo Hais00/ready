@@ -4,8 +4,10 @@
  * isolated authenticated host context and independent child sandbox are ready.
  * dlopen itself executes external library initializers, even in exports mode.
  *
- * No game launch, Steam launch, account login, ownership replacement or file
- * creation is implemented. RestartAppIfNecessary is looked up, NEVER called.
+ * No game executable, account login or ownership replacement is implemented.
+ * Default modes NEVER call RestartAppIfNecessary. Explicit restart-flat mode
+ * requires a separately attested sandbox denying client/game launch, because
+ * the genuine SDK function may request that launch. Never use it unconfined.
  * SteamAppId/SteamGameId are supplied by the caller; HOME is never changed.
  * Root/parent must supervise this own child and audit actual loaded images/IPC.
  */
@@ -28,6 +30,7 @@
 typedef int32_t (*init_flat_fn)(char *); /* optional fixed-size diagnostic buffer; not emitted */
 typedef bool (*init_fn)(void);
 typedef bool (*running_fn)(void);
+typedef bool (*restart_fn)(uint32_t);
 typedef void (*void_fn)(void);
 typedef void *(*interface_fn)(void);
 typedef bool (*logged_on_fn)(void *);
@@ -35,10 +38,14 @@ typedef uint64_t (*steam_id_fn)(void *);
 typedef bool (*subscribed_fn)(void *,uint32_t);
 typedef size_t (*redirect_stats_fn)(char *,size_t);
 static int report_fd=STDOUT_FILENO;
+static volatile sig_atomic_t restart_called;
 static void timed_out(int sig) {
     (void)sig;
     static const char message[]="{\"probeTimedOut\":true,\"restartCalled\":false,\"gameLaunchRequested\":false}\n";
-    (void)write(report_fd,message,sizeof message-1);_exit(124);
+    static const char restart_message[]="{\"probeTimedOut\":true,\"restartCalled\":true,\"gameLaunchRequested\":true,\"gameExecutableExecutedByProbe\":false}\n";
+    if(restart_called)(void)write(report_fd,restart_message,sizeof restart_message-1);
+    else (void)write(report_fd,message,sizeof message-1);
+    _exit(124);
 }
 static int refused(const char *code) {
     dprintf(report_fd,"{\"refused\":true,\"code\":\"%s\",\"restartCalled\":false,\"gameLaunchRequested\":false}\n",code);
@@ -94,9 +101,10 @@ static void report_redirect_stats(void) {
     dprintf(report_fd,"{\"redirectStatsGetterFound\":true,\"redirectStatsParsed\":true,\"redirectStats\":{\"redirectLoaded\":%s,\"fixedLookups\":%llu,\"privateRedirects\":%llu,\"otherLookupsForwarded\":%llu,\"missingConfiguration\":%llu,\"invalidConfiguration\":%llu,\"privateLookupSucceeded\":%llu,\"privateLookupFailed\":%llu,\"lastLookupStatus\":%d}}\n",loaded,fixed,redirected,forwarded,missing,invalid,succeeded,failed,status);
 }
 int main(int argc,char **argv) {
-    const char *library=NULL,*code_root=NULL,*expected=NULL,*mode="exports";unsigned callback_ms=250;bool allowed=false,fixture=false;
+    const char *library=NULL,*code_root=NULL,*expected=NULL,*mode="exports";unsigned callback_ms=250;bool allowed=false,fixture=false,allow_restart=false;
     for(int i=1;i<argc;i++){
         if(!strcmp(argv[i],"--allow-sdk-execution"))allowed=true;
+        else if(!strcmp(argv[i],"--allow-restart-query"))allow_restart=true;
         else if(!strcmp(argv[i],"--fixture-only"))fixture=true;
         else if(i+1<argc&&!strcmp(argv[i],"--library"))library=argv[++i];
         else if(i+1<argc&&!strcmp(argv[i],"--code-root"))code_root=argv[++i];
@@ -106,7 +114,11 @@ int main(int argc,char **argv) {
         else return refused("invalid_arguments");
     }
     if(!allowed||!library||!code_root||!hex(expected,64))return refused("explicit_execution_scope_required");
-    if(strcmp(mode,"exports")&&strcmp(mode,"init-flat")&&strcmp(mode,"init-legacy"))return refused("invalid_mode");
+    bool restart_mode=!strcmp(mode,"restart-flat");
+    if(strcmp(mode,"exports")&&strcmp(mode,"init-flat")&&strcmp(mode,"init-legacy")&&!restart_mode)return refused("invalid_mode");
+    const char *sandbox_scope=getenv("READY_STEAM_RESTART_PROBE_SANDBOX");
+    if(restart_mode&&(!allow_restart||!sandbox_scope||strcmp(sandbox_scope,"client-launch-denied-v1")))return refused("explicit_restart_sandbox_required");
+    if(allow_restart&&!restart_mode)return refused("invalid_restart_mode");
     const char *app=getenv("SteamAppId"),*game=getenv("SteamGameId"),*scope=getenv("READY_STEAM_GAME_API_PROBE");
     if(!scope||strcmp(scope,"1")||!app||!game||strcmp(app,"1091500")||strcmp(game,"1091500"))return refused("explicit_app_context_required");
     if(!hex(getenv("READY_STEAM_IPC_NAMESPACE"),32))return refused("explicit_namespace_required");
@@ -128,13 +140,15 @@ int main(int argc,char **argv) {
     if(!from_image(get_user,image)||!from_image(logged_on,image)||!from_image(get_id,image)||!from_image(get_apps,image)||!from_image(subscribed,image))return refused("flat_query_image_binding_failed");
     bool attempted=strcmp(mode,"exports")!=0,initialized=false,before=false,after=false,shutdown_called=false;
     bool queries_available=get_user&&logged_on&&get_id&&get_apps&&subscribed;
-    bool queried=false,user_logged_on=false,identity_matches=false,owned_subscription=false;
+    bool queried=false,user_logged_on=false,identity_matches=false,owned_subscription=false,restart_requested=false;
     uint64_t expected_id=expected_identity();
     int result=-1;unsigned pumped=0;char error_buffer[1024]={0};
     if(attempted){
-        if(!running||!callbacks||!shutdown||(!strcmp(mode,"init-flat")&&!flat)||(!strcmp(mode,"init-legacy")&&!legacy))return refused("required_api_missing");
+        if(!running||!callbacks||!shutdown||((!strcmp(mode,"init-flat")||restart_mode)&&!flat)||(!strcmp(mode,"init-legacy")&&!legacy)||(restart_mode&&!restart))return refused("required_api_missing");
         before=((running_fn)running)();
-        if(!strcmp(mode,"init-flat")){result=((init_flat_fn)flat)(error_buffer);initialized=result==0;}
+        if(restart_mode){restart_called=1;restart_requested=((restart_fn)restart)(1091500);}
+        if(restart_requested){result=-1;} /* Respect the SDK's request to quit. */
+        else if(!strcmp(mode,"init-flat")||restart_mode){result=((init_flat_fn)flat)(error_buffer);initialized=result==0;}
         else{initialized=((init_fn)legacy)();result=initialized?0:1;}
         /* Do not expose the SDK's free-form error buffer: it can contain private
          * paths/account information. Volatile stores retain the clear. */
@@ -153,8 +167,8 @@ int main(int argc,char **argv) {
     /* dlclose is intentionally omitted: the library may have asynchronous work.
      * This bounded, own probe exits instead of unloading live library code. */
     bool authenticated=queried&&user_logged_on&&identity_matches&&owned_subscription;
-    dprintf(report_fd,"{\"schema\":1,\"fixtureOnly\":%s,\"sdkSHA256\":\"%s\",\"sdkUnchanged\":%s,\"exports\":{\"SteamAPI_InitFlat\":%s,\"SteamAPI_Init\":%s,\"SteamAPI_IsSteamRunning\":%s,\"SteamAPI_RestartAppIfNecessary\":%s,\"SteamAPI_RunCallbacks\":%s,\"SteamAPI_Shutdown\":%s},\"initializationAttempted\":%s,\"apiInitialized\":%s,\"initResult\":%d,\"steamRunningBefore\":%s,\"steamRunningAfter\":%s,\"callbackCalls\":%u,\"shutdownCalled\":%s,\"externalLibraryConsoleSuppressed\":true,\"restartCalled\":false,\"gameLaunchRequested\":false}\n",fixture?"true":"false",before_hash,unchanged?"true":"false",flat?"true":"false",legacy?"true":"false",running?"true":"false",restart?"true":"false",callbacks?"true":"false",shutdown?"true":"false",attempted?"true":"false",initialized?"true":"false",result>=0&&result<=3?result:-1,before?"true":"false",after?"true":"false",pumped,shutdown_called?"true":"false");
-    dprintf(report_fd,"{\"flatQueriesAvailable\":%s,\"flatQueriesPerformed\":%s,\"identityExpectationProvided\":%s,\"genuineUserLoggedOn\":%s,\"identityMatches\":%s,\"ownedSubscriptionObserved\":%s,\"gameAPIContextAuthenticated\":%s,\"fixtureOnly\":%s,\"gameLaunchRequested\":false}\n",queries_available?"true":"false",queried?"true":"false",expected_id?"true":"false",user_logged_on?"true":"false",identity_matches?"true":"false",owned_subscription?"true":"false",authenticated?"true":"false",fixture?"true":"false");
+    dprintf(report_fd,"{\"schema\":1,\"fixtureOnly\":%s,\"sdkSHA256\":\"%s\",\"sdkUnchanged\":%s,\"exports\":{\"SteamAPI_InitFlat\":%s,\"SteamAPI_Init\":%s,\"SteamAPI_IsSteamRunning\":%s,\"SteamAPI_RestartAppIfNecessary\":%s,\"SteamAPI_RunCallbacks\":%s,\"SteamAPI_Shutdown\":%s},\"initializationAttempted\":%s,\"apiInitialized\":%s,\"initResult\":%d,\"steamRunningBefore\":%s,\"steamRunningAfter\":%s,\"callbackCalls\":%u,\"shutdownCalled\":%s,\"externalLibraryConsoleSuppressed\":true,\"restartCalled\":%s,\"restartReturned\":%s,\"gameLaunchRequested\":%s,\"gameExecutableExecutedByProbe\":false}\n",fixture?"true":"false",before_hash,unchanged?"true":"false",flat?"true":"false",legacy?"true":"false",running?"true":"false",restart?"true":"false",callbacks?"true":"false",shutdown?"true":"false",attempted&&!restart_requested?"true":"false",initialized?"true":"false",result>=0&&result<=3?result:-1,before?"true":"false",after?"true":"false",pumped,shutdown_called?"true":"false",restart_called?"true":"false",restart_called?(restart_requested?"true":"false"):"null",restart_requested?"true":"false");
+    dprintf(report_fd,"{\"flatQueriesAvailable\":%s,\"flatQueriesPerformed\":%s,\"identityExpectationProvided\":%s,\"genuineUserLoggedOn\":%s,\"identityMatches\":%s,\"ownedSubscriptionObserved\":%s,\"gameAPIContextAuthenticated\":%s,\"fixtureOnly\":%s,\"gameLaunchRequested\":%s}\n",queries_available?"true":"false",queried?"true":"false",expected_id?"true":"false",user_logged_on?"true":"false",identity_matches?"true":"false",owned_subscription?"true":"false",authenticated?"true":"false",fixture?"true":"false",restart_requested?"true":"false");
     report_redirect_stats();alarm(0);
-    return !unchanged?66:attempted&&!initialized?3:queried&&expected_id&&!authenticated?4:0;
+    return !unchanged?66:restart_requested?5:attempted&&!initialized?3:queried&&expected_id&&!authenticated?4:0;
 }

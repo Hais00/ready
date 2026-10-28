@@ -128,7 +128,7 @@ escape the original group are not claimed to be contained.
 ## Central selection and remaining deployment
 
 The local versioned selection is
-`Tools/StoreBridge/NativeSteamHost/<AppID>/selected.json`:
+`<application-data>/Components/SteamNativeHost/<AppID>/selected.json`:
 
 ```json
 {
@@ -140,11 +140,16 @@ The local versioned selection is
 ```
 
 The selector is an owned private regular file; manifest paths stay relative below
-that game's central selection. `READY_STORE_TOOLS_ROOT` selects the central tools
-store. Explicit developer overrides `READY_STEAM_NATIVE_BINDING` and its companion
+that game's central selection. This component is independent of the selected
+engine and StoreBridge versions. The old `Tools/StoreBridge/NativeSteamHost` lookup
+remains a fallback only when no user selection exists. Explicit developer
+overrides `READY_STEAM_NATIVE_BINDING` and its companion
 `READY_STEAM_NATIVE_BINDING_SHA256` use the same checked interface. Missing
-selection/assets fail before starting a game. No installer currently activates
-a game binding automatically; deployment, commercial-game validation and Windows
+selection/assets fail before starting a game. The [local component installer](STEAM_NATIVE_COMPONENT.md)
+now prepares versioned Ready code and publishes a reversible game binding. This
+machine's native component and central StoreBridge selections have been installed
+and checked through the packaged frontend without development environment
+overrides. Commercial-game validation, general first-run distribution and Windows
 integration remain open. Valve assets are external inputs, not GPL payloads.
 
 ## Genuine Swift-supervised SDK evidence
@@ -164,3 +169,45 @@ private cache is unchanged and no full Steam process appears. Report SHA-256:
 It reuses the approved private cached logon, with no new QR or fresh SteamKit
 preflight. No commercial game was executed. This does not verify the entire
 GUI → persistent-service grant → game path against a real account.
+
+The later component test also calls the genuine
+[`SteamAPI_RestartAppIfNecessary`](https://partner.steamgames.com/doc/api/steam_api#SteamAPI_RestartAppIfNecessary)
+before initialization. Valve documents this as a potential relaunch operation,
+so the explicit probe runs under independently checked execution/Mach denials.
+Both immediate and 41-second checks return false, then successfully initialize
+and verify the genuine account/subscription. There is no `steam_appid.txt` override
+and no full Steam process appears. The component's six prepared artifacts match
+the tested bytes exactly. See [the sanitized checkpoint](../Validation/steam-native-component-checkpoint.json).
+This is still an SDK test, not a commercial-game execution.
+
+## Later live GUI and native game checkpoint
+
+The subsequent human-approved login was performed in the real packaged Ready
+interface using its normal user data and selected central tools. Account name,
+public persona and friends were received. Manual offline/reconnect and closing
+and reopening Ready both recovered the account without another QR or credential
+storage warning. No friend/account identifiers are published in the checkpoint.
+
+The first game preparation exposed an APFS path-spelling issue: an existing
+profile UUID directory had different case from the generated URL. The canonical
+path guard correctly rejected it. `SteamNativeStateDirectory` now opens/creates
+the private hierarchy with descriptor-relative NOFOLLOW operations and obtains
+its real spelling using F_GETPATH. Thirty filesystem checks cover case aliases,
+ownership, permissions, symlink escapes and descriptor cleanup; the existing
+backend guards were not weakened.
+
+After that fix, Ready's actual persistent-service grant → native host → keeper
+→ Cyberpunk 2077 executable path succeeded. The real game reached its settings
+interface with the full Steam client absent. The injected Ready overlay was
+observed in the game's window and responded to keyboard input. Selecting its
+close action returned to the Ready library; game, native host and keeper exited,
+and both session and installation writer leases could be acquired again. The
+persistent Steam service stayed connected without another QR.
+
+The retained overlay counters report 21,312 completed overlay submissions, zero
+failed submissions and zero separate overlay windows/layers. These are application
+counters, not a driver capture. Gameplay, performance, native profile save
+isolation, physical controllers and direct scanout remain unverified. The separate
+logical-window proxy experiment was **not** used in this commercial-game run.
+See [live account evidence](../Validation/steam-live-account-checkpoint.json) and
+[native game evidence](../Validation/steam-live-native-game-checkpoint.json).

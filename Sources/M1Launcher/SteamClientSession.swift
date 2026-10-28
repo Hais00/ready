@@ -64,19 +64,14 @@ final class SteamClientSession {
       let account = value["username"] as? String else { return false }
     return account.caseInsensitiveCompare(state.accountName) == .orderedSame
   }
-  static func installedCommand(project: URL, runtimeRoot: URL) -> [String]? {
-    let env = ProcessInfo.processInfo.environment
-    let tools = env["READY_STORE_TOOLS_ROOT"].map { URL(fileURLWithPath: $0) }
-      ?? runtimeRoot.appendingPathComponent("Tools/StoreBridge")
-    let dotnet = tools.appendingPathComponent("dotnet/dotnet")
-    var helper = tools.appendingPathComponent("SteamBridge/ReadySteamBridge.dll")
-    if !FileManager.default.fileExists(atPath: helper.path), env["READY_STORE_TOOLS_ROOT"] == nil,
-      runtimeRoot.standardizedFileURL == project.appendingPathComponent("Runtime").standardizedFileURL {
-      helper = project.appendingPathComponent("StoreBridge/SteamBridge/bin/Release/net10.0/ReadySteamBridge.dll")
-    }
-    guard FileManager.default.isExecutableFile(atPath: dotnet.path),
-      FileManager.default.fileExists(atPath: helper.path) else { return nil }
-    return [dotnet.resolvingSymlinksInPath().path, helper.resolvingSymlinksInPath().path, "--service"]
+  static func installedCommand(project: URL, runtimeRoot: URL, stateRoot:URL?=nil) -> [String]? {
+    guard let tools=try? StoreToolsLocation.resolve(stateRoot:stateRoot,runtimeRoot:runtimeRoot) else{return nil}
+    let dotnet=tools.appendingPathComponent("dotnet/dotnet").resolvingSymlinksInPath()
+    let helper=tools.appendingPathComponent("SteamBridge/ReadySteamBridge.dll").resolvingSymlinksInPath()
+    var executable=stat(),assembly=stat()
+    guard lstat(dotnet.path,&executable)==0,executable.st_mode&S_IFMT==S_IFREG,
+      FileManager.default.isExecutableFile(atPath:dotnet.path),lstat(helper.path,&assembly)==0,assembly.st_mode&S_IFMT==S_IFREG else{return nil}
+    return [dotnet.path,helper.path,"--service"]
   }
   func start() {
     guard process == nil else { return }

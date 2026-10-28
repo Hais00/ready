@@ -39,7 +39,30 @@ Complete auth state must be kept in memory by the native app and passed back unm
 - **GOG:** browser OAuth, refresh, owned game lookup, per-game available installer platforms. Downloads invoke heroic-gogdl 1.3.1 built from source (including its exact Apache-licensed xdelta submodule). Its macOS backend extracts installer game payloads; the resulting executable must still be inspected.
 - **Amazon:** device-auth PKCE, registration, refresh, paginated/deduplicated entitlements. Downloads invoke Nile 1.2.0 built from source with an ephemeral credential config. The API advertises Windows game builds; the bridge does not invent macOS variants. Downloading does **not** silently fetch Amazon's proprietary SDK. SDK-dependent game launch integration remains a separate requirement.
 
-No account sign-in has been performed by the agent and no owned commercial game has been downloaded to validate end-to-end entitlement/download/launch. The code is implemented and compile/transport-tested; this is not a claim of complete store compatibility. Steamworks/DRM games may still require a genuine Steam client. No Steamworks emulator, closed launcher helper, DRM bypass, or anti-cheat workaround is supplied.
+Human-approved Steam research runs have authenticated an account, verified its
+licence and initialized a genuine native game SDK without the full Steam UI.
+The later persistent GUI login survives reconnect and app restart; native
+Cyberpunk 2077 reaches its settings interface and closes through Ready's injected
+overlay without the full Steam client. Gameplay and real CDN downloads still
+need validation. No real account/download result is established
+for Epic, GOG or Amazon. This is not a claim of complete store compatibility.
+Steam uses genuine external client assets; no Steamworks emulator, closed
+launcher helper, DRM bypass or anti-cheat workaround is supplied.
+
+## Central tools independent of engines
+
+`StoreToolsLocation` resolves the explicit `READY_STORE_TOOLS_ROOT` override,
+then the private application-data `Components/StoreBridge/selected.json`, then
+the legacy engine `Tools/StoreBridge` directory if no selection exists. A present
+invalid selector fails closed. It verifies the selected manifest's digest/header;
+the installer verifies the complete payload and declared external aliases before
+publication. Selecting a different Wine engine no longer loses the store service.
+
+`Scripts/store_steam_tools.py --select-user --state-root PATH --version-root PATH`
+publishes this small pointer with private permissions and a recoverable history.
+`--rollback-user RECORD --state-root PATH` restores a revalidated predecessor.
+This copies neither engines nor credentials. The native Steam host has its own
+[component installer](STEAM_NATIVE_COMPONENT.md) and per-game binding selection.
 
 ## Native builds
 

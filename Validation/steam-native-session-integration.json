@@ -172,6 +172,6 @@
   "WindowsAuthenticatedGameVerified": false,
   "nativeSaveIsolationVerified": false,
   "wholeDistributionApproved": false,
-  "persistentSessionChecks": 18,
+  "persistentSessionChecks": 17,
   "sessionManagerRegressionChecks": 21
 }

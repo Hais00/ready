@@ -33,6 +33,9 @@ final class SteamAccountView: NSView, ReadyDialogContentSizing {
   private var lastState = SteamClientState()
   private var armedFriendAction:(String,String,Date)?
   private var actionNotice:(String,Date)?
+  private var measuringContent=false
+  private var layoutScheduled=false
+  private weak var layoutFocus:NSView?
 
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -85,8 +88,35 @@ final class SteamAccountView: NSView, ReadyDialogContentSizing {
     qrHost.heightAnchor.constraint(equalToConstant: 260).isActive = true
     qr.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([qr.centerXAnchor.constraint(equalTo: qrHost.centerXAnchor), qr.topAnchor.constraint(equalTo: qrHost.topAnchor), qr.widthAnchor.constraint(equalToConstant: 250), qr.heightAnchor.constraint(equalToConstant: 250)])
+    resizeDialogContent()
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+  override func setFrameSize(_ newSize:NSSize) {
+    let changed=abs(newSize.width-frame.width)>0.5
+    super.setFrameSize(newSize)
+    if changed{resizeDialogContent()}
+  }
+  private func resizeDialogContent(focus:NSView?=nil) {
+    if let focus{layoutFocus=focus}
+    guard !layoutScheduled else{return};layoutScheduled=true
+    DispatchQueue.main.async{[weak self] in
+      guard let self else{return}
+      self.layoutScheduled=false
+      let focus=self.layoutFocus;self.layoutFocus=nil
+      self.measureDialogContent(focus:focus)
+    }
+  }
+  private func measureDialogContent(focus:NSView?) {
+    guard !measuringContent,form.superview===self,bounds.width>0 else{return}
+    measuringContent=true
+    status.preferredMaxLayoutWidth=bounds.width
+    layoutSubtreeIfNeeded()
+    let height=ceil(form.fittingSize.height)
+    if height>0,abs(height-frame.height)>0.5{super.setFrameSize(NSSize(width:frame.width,height:height))}
+    layoutSubtreeIfNeeded()
+    measuringContent=false
+    NotificationCenter.default.post(name:.readyDialogContentLayoutChanged,object:self,userInfo:focus.map{["focus":$0]})
+  }
   private func button(_ title: String, _ action: Selector) -> NSButton { NSButton(title:title,target:self,action:action) }
   private func row(_ views: [NSView]) -> NSStackView {
     let view = NSStackView(views: views); view.orientation = .horizontal; view.spacing = 8
@@ -95,21 +125,21 @@ final class SteamAccountView: NSView, ReadyDialogContentSizing {
   @objc private func qrLogin() { password.stringValue = ""; onQRLogin?() }
   @objc private func passwordLogin() {
     let secret = password.stringValue; password.stringValue = ""
-    guard !account.stringValue.isEmpty, !secret.isEmpty else { status.stringValue = "Inserisci nome account e password, oppure usa il QR."; return }
+    guard !account.stringValue.isEmpty, !secret.isEmpty else { status.stringValue = "Inserisci nome account e password, oppure usa il QR."; resizeDialogContent(focus:status);return }
     onPasswordLogin?(account.stringValue, secret)
   }
   @objc private func sendGuard() { let code = guardCode.stringValue; guardCode.stringValue = ""; if !code.isEmpty { onGuard?(code) } }
   @objc private func presenceChanged() { if choices.indices.contains(presence.indexOfSelectedItem) { onPresence?(choices[presence.indexOfSelectedItem]) } }
   @objc private func reconnect() { onReconnect?() }
   @objc private func offline() { onOffline?() }
-  @objc private func logout() { qr.image = nil; qrHost.isHidden = true; password.stringValue = ""; guardCode.stringValue = ""; onLogout?() }
+  @objc private func logout() { qr.image = nil; qrHost.isHidden = true; password.stringValue = ""; guardCode.stringValue = "";resizeDialogContent();onLogout?() }
   @objc private func rename(){let name=publicName.stringValue.trimmingCharacters(in:.whitespacesAndNewlines);if !name.isEmpty{onDisplayName?(name)}}
   @objc private func addFriend(){onFriendAction?("add_friend",friendID.stringValue)}
   @objc private func selectFriend(){let index=friendPicker.indexOfSelectedItem;if lastState.friends.indices.contains(index){friendID.stringValue=lastState.friends[index].id}}
   private func confirmFriend(_ action:String) {
     let id=friendID.stringValue
     if let armed=armedFriendAction,armed.0==action,armed.1==id,Date().timeIntervalSince(armed.2)<8 {armedFriendAction=nil;onFriendAction?(action,id)}
-    else {armedFriendAction=(action,id,Date());status.stringValue=action=="block_friend" ? "Premi di nuovo Blocca entro 8 secondi per confermare." : "Premi di nuovo Rimuovi entro 8 secondi per confermare."}
+    else {armedFriendAction=(action,id,Date());status.stringValue=action=="block_friend" ? "Premi di nuovo Blocca entro 8 secondi per confermare." : "Premi di nuovo Rimuovi entro 8 secondi per confermare.";resizeDialogContent(focus:status)}
   }
   @objc private func removeFriend(){confirmFriend("remove_friend")}
   @objc private func blockFriend(){confirmFriend("block_friend")}
@@ -142,6 +172,7 @@ final class SteamAccountView: NSView, ReadyDialogContentSizing {
     }.joined(separator:"\n")
     if !state.online && !state.friends.isEmpty {friendText.string="Ultimo stato noto · connessione Steam non attiva\n\n"+friendText.string}
     if state.friends.isEmpty { friendText.string = state.online ? "Nessun amico disponibile." : "Gli amici saranno aggiornati quando Steam sarà connesso." }
+    resizeDialogContent()
   }
   func authenticationEvent(_ event: [String: Any]) {
     switch event["type"] as? String {
@@ -151,13 +182,17 @@ final class SteamAccountView: NSView, ReadyDialogContentSizing {
       filter.setValue(Data(value.utf8), forKey:"inputMessage")
       guard let image = filter.outputImage?.transformed(by:CGAffineTransform(scaleX:8,y:8)), let cg = CIContext(options:[.useSoftwareRenderer:true]).createCGImage(image,from:image.extent) else { return }
       qr.image = NSImage(cgImage:cg,size:NSSize(width:250,height:250)); qrHost.isHidden = false
+      form.arrangedSubviews.first(where:{$0.identifier?.rawValue=="steam.guard"})?.isHidden=true
       status.stringValue = "Scansiona questo QR con l’app Steam. L’accesso verrà salvato solo nel profilo selezionato."
+      resizeDialogContent(focus:qrHost)
     case "guard":
       qr.image = nil; qrHost.isHidden = true
       let method=event["method"]as?String ?? "device_code"
       status.stringValue = method=="device_confirmation" ? "Approva l’accesso nell’app Steam del telefono." : method=="email" ? "Inserisci il codice Steam Guard ricevuto per email." : "Inserisci il codice dell’autenticatore Steam Guard."
-      form.arrangedSubviews.first(where: { $0.identifier?.rawValue == "steam.guard" })?.isHidden = event["challengeID"]==nil
-    case "error": status.stringValue = "Accesso non riuscito: " + (event["code"] as? String ?? "steam_error")
+      let row=form.arrangedSubviews.first(where: { $0.identifier?.rawValue == "steam.guard" })
+      row?.isHidden = event["challengeID"]==nil
+      resizeDialogContent(focus:event["challengeID"]==nil ? status:row)
+    case "error": status.stringValue = "Accesso non riuscito: " + (event["code"] as? String ?? "steam_error");resizeDialogContent(focus:status)
     default: break
     }
   }

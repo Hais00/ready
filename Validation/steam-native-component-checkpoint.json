@@ -1,0 +1,174 @@
+{
+  "schema": 1,
+  "kind": "steam-native-component-sdk-restart-checkpoint",
+  "passed": true,
+  "genuineProbe": {
+    "schema": 1,
+    "kind": "genuine-native-swift-supervisor-cached-sdk",
+    "passed": true,
+    "fixtureOnly": false,
+    "newQRRequired": false,
+    "freshSteamKitPreflight": false,
+    "sourceCachePreserved": true,
+    "fullSteamProcessesUnchanged": true,
+    "gameExecuted": false,
+    "genuineSDKChecks": [
+      {
+        "passed": true,
+        "secondsAfterReady": 0.937,
+        "exitCode": 0,
+        "startupAdaptersObserved": true,
+        "events": [
+          {
+            "schema": 1,
+            "fixtureOnly": false,
+            "sdkSHA256": "2cbe2533e09d1561051f417d7b8c784481a2efdc4fc9d1274704ee8a7ef50cb1",
+            "sdkUnchanged": true,
+            "exports": {
+              "SteamAPI_InitFlat": true,
+              "SteamAPI_Init": false,
+              "SteamAPI_IsSteamRunning": true,
+              "SteamAPI_RestartAppIfNecessary": true,
+              "SteamAPI_RunCallbacks": true,
+              "SteamAPI_Shutdown": true
+            },
+            "initializationAttempted": true,
+            "apiInitialized": true,
+            "initResult": 0,
+            "steamRunningBefore": true,
+            "steamRunningAfter": true,
+            "callbackCalls": 21,
+            "shutdownCalled": true,
+            "externalLibraryConsoleSuppressed": true,
+            "restartCalled": true,
+            "restartReturned": false,
+            "gameLaunchRequested": false,
+            "gameExecutableExecutedByProbe": false
+          },
+          {
+            "flatQueriesAvailable": true,
+            "flatQueriesPerformed": true,
+            "identityExpectationProvided": true,
+            "genuineUserLoggedOn": true,
+            "identityMatches": true,
+            "ownedSubscriptionObserved": true,
+            "gameAPIContextAuthenticated": true,
+            "fixtureOnly": false,
+            "gameLaunchRequested": false
+          },
+          {
+            "redirectStatsGetterFound": true,
+            "redirectStatsParsed": true,
+            "redirectStats": {
+              "redirectLoaded": true,
+              "fixedLookups": 4,
+              "privateRedirects": 4,
+              "otherLookupsForwarded": 1,
+              "missingConfiguration": 0,
+              "invalidConfiguration": 0,
+              "privateLookupSucceeded": 4,
+              "privateLookupFailed": 0,
+              "lastLookupStatus": 0
+            }
+          }
+        ]
+      },
+      {
+        "passed": true,
+        "secondsAfterReady": 41.407,
+        "exitCode": 0,
+        "startupAdaptersObserved": true,
+        "events": [
+          {
+            "schema": 1,
+            "fixtureOnly": false,
+            "sdkSHA256": "2cbe2533e09d1561051f417d7b8c784481a2efdc4fc9d1274704ee8a7ef50cb1",
+            "sdkUnchanged": true,
+            "exports": {
+              "SteamAPI_InitFlat": true,
+              "SteamAPI_Init": false,
+              "SteamAPI_IsSteamRunning": true,
+              "SteamAPI_RestartAppIfNecessary": true,
+              "SteamAPI_RunCallbacks": true,
+              "SteamAPI_Shutdown": true
+            },
+            "initializationAttempted": true,
+            "apiInitialized": true,
+            "initResult": 0,
+            "steamRunningBefore": true,
+            "steamRunningAfter": true,
+            "callbackCalls": 21,
+            "shutdownCalled": true,
+            "externalLibraryConsoleSuppressed": true,
+            "restartCalled": true,
+            "restartReturned": false,
+            "gameLaunchRequested": false,
+            "gameExecutableExecutedByProbe": false
+          },
+          {
+            "flatQueriesAvailable": true,
+            "flatQueriesPerformed": true,
+            "identityExpectationProvided": true,
+            "genuineUserLoggedOn": true,
+            "identityMatches": true,
+            "ownedSubscriptionObserved": true,
+            "gameAPIContextAuthenticated": true,
+            "fixtureOnly": false,
+            "gameLaunchRequested": false
+          },
+          {
+            "redirectStatsGetterFound": true,
+            "redirectStatsParsed": true,
+            "redirectStats": {
+              "redirectLoaded": true,
+              "fixedLookups": 4,
+              "privateRedirects": 4,
+              "otherLookupsForwarded": 1,
+              "missingConfiguration": 0,
+              "invalidConfiguration": 0,
+              "privateLookupSucceeded": 4,
+              "privateLookupFailed": 0,
+              "lastLookupStatus": 0
+            }
+          }
+        ]
+      }
+    ],
+    "wrapperExitCode": 0,
+    "supervisedHostExit": {
+      "cancelled": true,
+      "hostCode": 42,
+      "invalidEvents": false,
+      "signal": null,
+      "type": "wrapper_exit"
+    },
+    "sourceHashes": {
+      "Sources/M1Launcher/SteamNativeHostProcess.swift": "cf9d568bafd56042b18923e81dea30aea6d7dc0b309dd3abff6417329cb0ebda",
+      "Synthetic/ReadySteamNativeGenuineHostProbe.swift": "f56d9b2bb37c50f5c89be75ee75114532e723044537046ca8d675ea7c40d13c5",
+      "Scripts/test_steam_native_swift_host_cached_sdk.py": "78b7b6bd574b6a90e6df545736f8f18c03af8cddf644798d8c1259cf49b2dfa2",
+      "Scripts/test_steam_native_host_session_cached_sdk.py": "e8516e4d0dfb7fdc5abe42dbc62bf2ab1aa0e02fa708e1a54223b6288fb2c967",
+      "Scripts/steam_native_game_api_probe.c": "624dff54672d06ddde0b37b78bead315a18a2267ba93ed4f9524b55c02789849"
+    },
+    "sourcesUnchanged": true,
+    "hostSHA256": "0f538e1b60ed712bdd2744d333f588adb7c7d498b51133c90a596bcfe38efa82",
+    "clientSHA256": "b9d62be2ac64b77dc77e1d19eefcf3880df99495c7db85b30623095310b6a6bd",
+    "sdkSHA256": "2cbe2533e09d1561051f417d7b8c784481a2efdc4fc9d1274704ee8a7ef50cb1",
+    "bindingSHA256": "b9f55201af7db3f1de8e1db2e987c0e202ac9567b59c1683c230fb44d56465db",
+    "wrapperSHA256": "8f7f7a0913956528c41327ee5453ed16f027f198da7553ff2a2f59d1ea6b3f51",
+    "sandboxControls": {
+      "unlistedExecDenied": true,
+      "launchServicesDenied": true,
+      "globalSteamServiceDenied": true
+    },
+    "restartQueryRequested": true,
+    "developmentAppIDOverridePresent": false,
+    "selectedComponentBinding": true,
+    "ownedSDKProbeSHA256": "0beb6077d77e9962ab1cec86389288a71769ab84b71f30acbe8fd8219f711aca"
+  },
+  "genuineProbeReportSHA256": "6c937f304d20756e8208862bd04b0835c14358f6900401907a51dd9c68ffb3bf",
+  "centralPayloadAssetsMatchTestedPayload": true,
+  "centralComponentManifestSHA256": "588bc7cfa468c94a369bf232c3426f86e55c781a3f77c3d471573858ba22acee",
+  "commercialGameExecuted": false,
+  "GUIAccountFlowVerified": false,
+  "consumerRedistributionApproved": false
+}

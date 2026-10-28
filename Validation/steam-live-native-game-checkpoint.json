@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "kind": "live-native-steam-game-through-ready",
+  "gameAppID": 1091500,
+  "realPersistentServiceAuthorizationSucceeded": true,
+  "realNativeBackendAndKeeperObserved": true,
+  "commercialGameProcessAndUIObserved": true,
+  "gameUIReached": "settings",
+  "overlayVisibleViaKeyboardObserved": true,
+  "overlayFrames": 39222,
+  "overlayScreenshotSHA256": "47671aa2e83582960dcc05e6e52aa23c3f43e34ad810aefbc91b95eb67d923e3",
+  "fullSteamClientProcessPresent": false,
+  "ownedShutdownVerified": true,
+  "gameplayVerified": false,
+  "nativeProfileSaveIsolationVerified": false,
+  "physicalControllerVerified": false,
+  "directScanoutVerified": false,
+  "researchWindowProxyUsedInGame": false,
+  "readyLibraryRestoredObservedThroughCUA": true,
+  "remainingProcessCounts": {
+    "/Cyberpunk2077.app/Contents/MacOS/Cyberpunk2077": 0,
+    "/bin/ready-steam-native-host-session": 0,
+    "/Build/ReadySessionHost": 0,
+    "steam_osx": 0
+  },
+  "overlayCounters": {
+    "injectionSupported": true,
+    "metal3Hooked": true,
+    "metal4Hooked": true,
+    "completedGPUOverlaySubmissions": 21312,
+    "failedGPUOverlaySubmissions": 0,
+    "overlayFrameCount": 21312,
+    "separateWindowCount": 0,
+    "separateLayerCount": 0,
+    "trackedTextureBytes": 0,
+    "directToDisplayVerified": false
+  },
+  "frontendSHA256": "09436d6d5ff7cc0462ae69a2bc439ad703c26b73400a8de1b524278c321e98fe",
+  "sessionLockReacquiredAfterShutdown": true,
+  "installationWriterLeaseReacquiredAfterShutdown": true,
+  "persistentSteamServiceStillConnectedAfterGameShutdown": true
+}

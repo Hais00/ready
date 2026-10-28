@@ -36,7 +36,7 @@ final class StoreClient {
     }
   }
   private enum Failure: Error {
-    case request, launch, pipe, response, incomplete, exited
+    case request, launch, pipe, response, incomplete, exited, tools
     var message: String {
       switch self {
       case .request: return "Richiesta dello store non valida."
@@ -45,6 +45,7 @@ final class StoreClient {
       case .response: return "Risposta dello store non valida o troppo grande."
       case .incomplete: return "Il servizio dello store è terminato senza una risposta conclusiva."
       case .exited: return "Il servizio dello store è terminato con un errore."
+      case .tools: return "La selezione dei componenti dello store non è valida."
       }
     }
   }
@@ -238,6 +239,8 @@ final class StoreClient {
       task.standardError = FileHandle.nullDevice
       task.currentDirectoryURL = project
       var environment = ProcessInfo.processInfo.environment
+      do { environment["READY_STORE_TOOLS_ROOT"] = try StoreToolsLocation.resolve(stateRoot:stateRoot,runtimeRoot:runtimeRoot,environment:environment).path }
+      catch { throw Failure.tools }
       environment["READY_RUNTIME_ROOT"] = runtimeRoot.path
       environment["PYTHONDONTWRITEBYTECODE"] = "1"
       if let stateRoot { environment["READY_DATA_ROOT"] = stateRoot.path }

@@ -16,6 +16,11 @@ struct ReadyDialogAction {
 protocol ReadyDialogContentSizing {
   var maximumViewportHeight: CGFloat { get }
 }
+extension Notification.Name {
+  /// Responsive content resized itself; optional focus is revealed only within
+  /// that active dialog's existing scroll view.
+  static let readyDialogContentLayoutChanged=Notification.Name("ready.dialog.content-layout-changed")
+}
 private func dialogColor(_ hex: Int, alpha: CGFloat = 1) -> NSColor {
   NSColor(
     srgbRed: CGFloat((hex >> 16) & 255) / 255, green: CGFloat((hex >> 8) & 255) / 255,
@@ -116,6 +121,7 @@ final class ReadyDialogPresenter: NSObject {
   private var active: Request?
   private var shade: NSView?
   private var monitor: Any?
+  private var contentLayoutObserver: NSObjectProtocol?
   private var buttons = [NSButton]()
   private weak var previousResponder: NSResponder?
   private var previousDefault: NSButtonCell?
@@ -229,6 +235,9 @@ final class ReadyDialogPresenter: NSObject {
       with: NSSize(width: width - 16, height: 4000),
       options: [.usesLineFragmentOrigin, .usesFontLeading]
     ).height
+    if let content=request.content,content is ReadyDialogContentSizing {
+      content.setFrameSize(NSSize(width:width-16,height:content.frame.height))
+    }
     let contentHeight = request.content?.frame.height ?? 0
     let textHeight = request.message.isEmpty ? 0 : ceil(measured) + 8
     let totalHeight = textHeight + (contentHeight > 0 ? contentHeight + 12 : 0)
@@ -257,14 +266,43 @@ final class ReadyDialogPresenter: NSObject {
       scroll.widthAnchor.constraint(equalToConstant: width).isActive = true
       let maximumHeight =
         (request.content as? ReadyDialogContentSizing)?.maximumViewportHeight ?? 340
-      scroll.heightAnchor.constraint(
+      let viewportHeight=scroll.heightAnchor.constraint(
         equalToConstant: min(
           totalHeight,
           max(
             60,
             min(maximumHeight, host.bounds.height - 64 - 128 - CGFloat(request.actions.count) * 52))
         )
-      ).isActive = true
+      )
+      viewportHeight.isActive = true
+      if let content=request.content,content is ReadyDialogContentSizing {
+        let requestID=request.id,actionCount=request.actions.count
+        var refreshScheduled=false
+        weak var pendingFocus:NSView?
+        contentLayoutObserver=NotificationCenter.default.addObserver(forName:.readyDialogContentLayoutChanged,object:content,queue:.main) {
+          [weak self,weak content,weak document,weak scroll,weak host,weak viewportHeight] notification in
+          guard self?.active?.id==requestID else{return}
+          if let focus=notification.userInfo?["focus"]as?NSView{pendingFocus=focus}
+          guard !refreshScheduled else{return};refreshScheduled=true
+          DispatchQueue.main.async{[weak self,weak content,weak document,weak scroll,weak host,weak viewportHeight] in
+            refreshScheduled=false
+            guard let self,self.active?.id==requestID,let content,let document,let scroll,let host,let viewportHeight else{return}
+            let focus=pendingFocus;pendingFocus=nil
+            content.setFrameSize(NSSize(width:width-16,height:content.frame.height))
+            let height=max(0,content.frame.height),total=textHeight+(height>0 ? height+12:0)
+            content.frame.origin=NSPoint(x:0,y:textHeight+12)
+            document.setFrameSize(NSSize(width:width-16,height:total))
+            viewportHeight.constant=min(total,max(60,min(maximumHeight,host.bounds.height-64-128-CGFloat(actionCount)*52)))
+            host.layoutSubtreeIfNeeded()
+            let constrained=scroll.contentView.constrainBoundsRect(scroll.contentView.bounds)
+            scroll.contentView.scroll(to:constrained.origin)
+            if let focus,focus===content||focus.isDescendant(of:content),!focus.isHiddenOrHasHiddenAncestor {
+              _=document.scrollToVisible(document.convert(focus.bounds,from:focus).insetBy(dx:-8,dy:-8))
+            }
+            scroll.reflectScrolledClipView(scroll.contentView)
+          }
+        }
+      }
     }
     buttons = request.actions.enumerated().map { index, action in
       let button = DialogButton(title: action.title, target: self, action: #selector(clicked(_:)))
@@ -375,6 +413,8 @@ final class ReadyDialogPresenter: NSObject {
     guard let request = active else { return }
     if let monitor { NSEvent.removeMonitor(monitor) }
     monitor = nil
+    if let contentLayoutObserver{NotificationCenter.default.removeObserver(contentLayoutObserver)}
+    contentLayoutObserver=nil
     shade?.removeFromSuperview()
     shade = nil
     buttons = []

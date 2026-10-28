@@ -25,7 +25,7 @@ static bool initialized;
 __attribute__((constructor)) static void loaded(void){(void)write(STDERR_FILENO,"synthetic-private-library-console",33);const char *p=getenv("READY_FAKE_SDK_MARKER");if(p){int f=open(p,O_CREAT|O_EXCL|O_WRONLY,0600);if(f>=0)close(f);}}
 int32_t SteamAPI_InitFlat(char *error){strcpy(error,"synthetic-private-diagnostic-never-log");initialized=true;return 0;}
 bool SteamAPI_IsSteamRunning(void){return initialized;}
-bool SteamAPI_RestartAppIfNecessary(uint32_t id){(void)id;_exit(77);}
+bool SteamAPI_RestartAppIfNecessary(uint32_t id){if(id!=1091500)_exit(78);const char*mode=getenv("READY_FAKE_RESTART_RESULT");if(mode&&!strcmp(mode,"false"))return false;if(mode&&!strcmp(mode,"true"))return true;if(mode&&!strcmp(mode,"hang")){for(;;)pause();}_exit(77);}
 void SteamAPI_RunCallbacks(void){}
 void SteamAPI_Shutdown(void){initialized=false;}
 static int user_object,apps_object;
@@ -82,6 +82,20 @@ def main():
    assert p.returncode==4 and not p.stderr
    status=next(value for value in map(json.loads,p.stdout.splitlines()) if 'gameAPIContextAuthenticated' in value);assert not status['gameAPIContextAuthenticated']
    checks[arch+'-'+name+'-does-not-authenticate']=True
+  for label,permission_flags,extra in [('missing-restart-permission',[],{'READY_STEAM_RESTART_PROBE_SANDBOX':'client-launch-denied-v1'}),('missing-restart-sandbox',['--allow-restart-query'],{})]:
+   untouched=work/('must-not-load-'+arch+'-'+label)
+   p=subprocess.run(['/usr/bin/arch','-'+arch,*base,'--allow-sdk-execution','--mode','restart-flat',*permission_flags],env={**context,**extra,'READY_FAKE_SDK_MARKER':str(untouched)},text=True,capture_output=True,timeout=15)
+   assert p.returncode==65 and not untouched.exists();checks[arch+'-'+label+'-refuses-before-load']=True
+  for value in ['false','true']:
+   p=subprocess.run(['/usr/bin/arch','-'+arch,*base,'--allow-sdk-execution','--allow-restart-query','--mode','restart-flat','--callback-ms','0'],env={**context,'READY_STEAM_RESTART_PROBE_SANDBOX':'client-launch-denied-v1','READY_FAKE_RESTART_RESULT':value},text=True,capture_output=True,timeout=15)
+   output=[json.loads(line)for line in p.stdout.splitlines()];summary=output[0]
+   assert not p.stderr and summary['restartCalled'] and summary['restartReturned']==(value=='true') and not summary['gameExecutableExecutedByProbe']
+   if value=='false':assert p.returncode==0 and summary['apiInitialized'] and output[1]['gameAPIContextAuthenticated'] and not summary['gameLaunchRequested']
+   else:assert p.returncode==5 and not summary['initializationAttempted'] and not summary['apiInitialized'] and not summary['shutdownCalled'] and summary['callbackCalls']==0 and summary['gameLaunchRequested']
+   checks[arch+'-restart-'+value+'-respected-without-spoofing']=True
+  if arch=='arm64':
+   p=subprocess.run(['/usr/bin/arch','-'+arch,*base,'--allow-sdk-execution','--allow-restart-query','--mode','restart-flat'],env={**context,'READY_STEAM_RESTART_PROBE_SANDBOX':'client-launch-denied-v1','READY_FAKE_RESTART_RESULT':'hang'},text=True,capture_output=True,timeout=13)
+   assert p.returncode==124 and json.loads(p.stdout)['restartCalled'] is True and json.loads(p.stdout)['gameLaunchRequested'] is True;checks['restart-timeout-reports-call-conservatively']=True
   stats_source=work/'own-stats.c';stats_library=work/'libOwnStats.dylib'
   if not stats_library.exists():
    stats_source.write_text(STATS);cmd=[*flags,'-dynamiclib',str(stats_source),'-o',str(stats_library)];subprocess.run(cmd,env=env,check=True,capture_output=True);commands.append(cmd)

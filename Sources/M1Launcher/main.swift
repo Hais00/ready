@@ -1186,6 +1186,31 @@ if runtimeLocationActions.contains(where: args.contains) || args.contains("--dia
     "sessionHost": support.sessionHost.path, "overlay": support.overlay.path,
     "storeBridge": support.storeBridge.path,
   ]
+  do {
+    let tools = try StoreToolsLocation.resolve(stateRoot: dataPaths.root, runtimeRoot: support.runtimeRoot)
+    record["storeToolsRoot"] = tools.path
+    record["storeToolsSelectionValid"] = true
+    record["steamServiceAvailable"] = MainActor.assumeIsolated {
+      SteamClientSession.installedCommand(project: project, runtimeRoot: support.runtimeRoot, stateRoot: dataPaths.root) != nil
+    }
+  } catch {
+    record["storeToolsSelectionValid"] = false
+    record["steamServiceAvailable"] = false
+    record["storeToolsIssue"] = "invalid-component-selection"
+  }
+  if let index = args.firstIndex(of: "--native-steam-app") {
+    var available = false
+    if args.indices.contains(index + 1) {
+      do {
+        let binding = try SteamNativeHostSelection.load(runtimeRoot: support.runtimeRoot,
+          gameID: args[index + 1], stateRoot: dataPaths.root)
+        _ = try binding.verifiedGameAssets()
+        available = true
+      } catch { record["nativeSteamBindingIssue"] = "missing-or-invalid-component" }
+    }
+    record["nativeSteamBindingAvailable"] = available
+    record["nativeSteamComponentCheckExecutedCode"] = false
+  }
   if args.contains("--diagnostics") {
     let device = MTLCreateSystemDefaultDevice()
     record["device"] = device?.name ?? "none"
@@ -1198,6 +1223,7 @@ if runtimeLocationActions.contains(where: args.contains) || args.contains("--dia
       data: try JSONSerialization.data(
         withJSONObject: record, options: [.prettyPrinted, .sortedKeys]), encoding: .utf8)!)
   if args.contains("--frontend-self-test") && !complete { exit(1) }
+  if args.contains("--native-steam-app") && (record["nativeSteamBindingAvailable"] as? Bool != true) { exit(1) }
 } else {
   let app = NSApplication.shared
   app.setActivationPolicy(.regular)
