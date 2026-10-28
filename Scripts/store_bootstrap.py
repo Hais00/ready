@@ -70,6 +70,11 @@ def dotnet():
         if h.hexdigest()!=f['hash']:raise RuntimeError('Microsoft SDK hash mismatch')
         with tarfile.open(archive) as t:t.extractall(target,filter='data')
         archive.unlink();(target.parent/'source.json').write_text(json.dumps({'version':sdk['version'],'url':f['url'],'sha512':f['hash']},indent=2))
+    # Runtime-only helpers keep using host/shared. A build explicitly restores
+    # the verified project SDK cache instead of silently fetching another SDK.
+    from store_sdk_cache import SDKCache, NAMES
+    if not all((target/name).is_dir() and not (target/name).is_symlink() for name in NAMES):
+        SDKCache(target).restore()
     return target/'dotnet'
 def build_steam():
     exe=dotnet();patch_depot()

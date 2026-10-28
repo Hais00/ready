@@ -13,6 +13,8 @@ jobs:
           swift run --jobs 2 ReadyCoreProbe
       - name: Store protocol tests
         run: python3 -m unittest discover -s Tests/StoreBridgeTests -v
+      - name: Reversible project SDK cache fixtures
+        run: python3 Scripts/test_store_sdk_cache.py
       - name: Store client lifecycle without real accounts
         run: python3 Scripts/test_store_client.py
       - name: Controller navigation policy
