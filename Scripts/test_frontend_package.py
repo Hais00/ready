@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shlex
 import shutil
 import stat
 import subprocess
@@ -159,6 +160,30 @@ def check(app, installed_runtime=None):
         snapshots = [json.loads(p.read_text()) for p in (corrupt_data / 'Runtimes/RuntimeLocationHistory').glob('*.json')]
         assert any(snapshot.get('originalBytes') for snapshot in snapshots)
         checks.append('reset recovers a corrupt owned pointer while retaining its original bytes')
+        portable = temporary / 'Portable Runtime A'
+        (portable / 'bin').mkdir(parents=True)
+        never_run = temporary / 'validation-must-not-execute-wine'
+        wine = portable / 'bin/wine'
+        wine.write_text('#!/bin/sh\ntouch ' + shlex.quote(str(never_run)) + '\n')
+        wine.chmod(0o700)
+        portable_bytes = json.dumps({'pathFormat': 'runtime-relative-v1', 'wine': 'bin/wine', 'engineDLLs': {}}).encode()
+        (portable / 'runtime.json').write_bytes(portable_bytes)
+        portable_data = temporary / 'portable-selection-data'
+        report = location_action('--set-runtime-root', portable, target=portable_data)
+        assert pathlib.Path(report['runtimeRoot']) == portable and not never_run.exists()
+        moved_portable = temporary / 'Portable Runtime B moved with spaces'
+        portable.rename(moved_portable)
+        report = location_action('--set-runtime-root', moved_portable, target=portable_data)
+        assert pathlib.Path(report['runtimeRoot']) == moved_portable
+        assert (moved_portable / 'runtime.json').read_bytes() == portable_bytes and not never_run.exists()
+        portable_pointer = portable_data / 'Runtimes/external-runtime-location.json'
+        previous_pointer = portable_pointer.read_bytes()
+        unknown_format = temporary / 'unknown-path-format-runtime'
+        unknown_format.mkdir()
+        (unknown_format / 'runtime.json').write_text(json.dumps({'pathFormat': 'unknown-future-format', 'engineDLLs': {}}))
+        location_action('--set-runtime-root', unknown_format, target=portable_data, succeeds=False)
+        assert portable_pointer.read_bytes() == previous_pointer
+        checks.append('versioned relative runtime remains selectable after a real move without rewriting it or executing Wine; unknown format preserves pointer')
         user_config = data / 'Runtimes/runtime.json'
         user_config.write_text('{"engineDLLs":{},"runtimeID":"owned-user-config-sentinel"}\n')
         original_config = user_config.read_bytes()

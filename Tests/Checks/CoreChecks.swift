@@ -41,6 +41,7 @@ public final class CoreChecks {
       ),
       ("Dependencies and registry remain isolated between games", testDependencyIsolation),
       ("Interrupted renderer projection recovers both DLL manifests", EngineTransactionChecks.validate),
+      ("Portable runtime paths resolve at the config without rewriting provenance", RuntimeConfigurationPathChecks.validate),
       ("Non-destructive legacy migration and rollback source", testLegacyMigration),
       (
         "Interrupted rollback restores copies and preserves conflicts",

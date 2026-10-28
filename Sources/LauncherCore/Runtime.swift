@@ -47,7 +47,7 @@ public struct RuntimeConfiguration: Codable {
     self.engineDLLs = engineDLLs
   }
   public static func load(_ url: URL) -> RuntimeConfiguration {
-    (try? JSONDecoder().decode(Self.self, from: Data(contentsOf: url))) ?? .init()
+    (try? read(url)) ?? .init()
   }
 }
 /// Wine must resolve to a regular executable; searchable directories also pass

@@ -42,9 +42,7 @@ public enum RuntimeLocationStore {
       (try? fm.attributesOfItem(atPath: config.path)[.type] as? FileAttributeType) == .typeRegular,
       resolvedPath(config.path) == config.path
     else { throw LauncherError.unavailable("La cartella deve contenere un runtime.json leggibile e regolare.") }
-    let bytes = try Data(contentsOf: config)
-    guard bytes.count <= 4 * 1024 * 1024,
-      let runtime = try? JSONDecoder().decode(RuntimeConfiguration.self, from: bytes)
+    guard let runtime = try? RuntimeConfiguration.read(config)
     else { throw LauncherError.invalid("runtime.json non è una configurazione ready valida.") }
     let wines = [runtime.wine].compactMap { $0 } + Array((runtime.engineWineBinaries ?? [:]).values)
     for wine in wines {

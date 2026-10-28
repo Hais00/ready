@@ -47,7 +47,7 @@ public enum EvaluationMode {
       throw LauncherError.invalid(
         "Ripristina la precedente configurazione di valutazione prima di attivarne un’altra.")
     }
-    var object = try readObject(Data(contentsOf: fragment))
+    var object = try RuntimeConfigurationPaths.readDocument(fragment)
     guard let policy = object["appleOptional"] as? [String: Any],
       policy["evaluationOnly"] as? Bool == true,
       policy["enabledForConsumerPlay"] as? Bool == false,

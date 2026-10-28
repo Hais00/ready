@@ -29,7 +29,7 @@ def stage(destination):
     sources.extend((ROOT / 'StoreBridge/SteamBridge').glob('*.cs'))
     sources.extend((ROOT / 'StoreBridge/SteamBridge').glob('*.csproj'))
     sources.extend(ROOT / name for name in (
-        'LICENSE', 'THIRD_PARTY_NOTICES.md', 'README.md', 'Package.swift', 'sources.lock.json',
+        'LICENSE', 'LICENSES/LGPL-2.1.txt', 'THIRD_PARTY_NOTICES.md', 'README.md', 'Package.swift', 'sources.lock.json',
         'StoreBridge/NOTICE', 'StoreBridge/dependencies.lock.json',
         'Scripts/build_app.sh', 'Scripts/build_overlay.sh', 'Scripts/build_session_host.sh',
         'Scripts/package_frontend.py', 'Scripts/test_frontend_package.py',
@@ -48,6 +48,7 @@ def stage(destination):
         'schemaVersion': 1,
         'scope': 'ready-owned frontend support and corresponding original source',
         'license': 'GPL-3.0-only',
+        'licenseScope': 'Original ready code; upstream notices and license texts retain their own terms',
         'externalRuntimeIncluded': False,
         'proprietaryAppleFilesIncluded': False,
         'wholeApplicationRedistributionApproved': False,
