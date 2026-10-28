@@ -107,6 +107,23 @@ import LauncherCore
     ) { if case .failure = $0 { rejected = true } }
     try require(rejected && !blocked.running, "Reserved environment override was accepted")
     checks["reservedEnvironmentRejectedBeforeMutation"] = true
+    // A direct Steam game may restart Steam.app by itself. Until an owned,
+    // authenticated host exists, reject both guest types before any process or
+    // prefix mutation; even a missing keeper must not mask this requirement.
+    for platform in [GamePlatform.macOS, .windows] {
+      let steamPaths = LauncherPaths(root: root.appendingPathComponent("steam-\(platform.rawValue)"))
+      let manager = SessionManager(paths: steamPaths, project: root.appendingPathComponent("missing-steam-host"))
+      let variant = GameVariant(id: "steam", platform: platform, architecture: .arm64,
+        executable: "/usr/bin/true", installed: true)
+      let game = Game(id: "steam:480", store: .steam, storeID: "480", title: "Offline Steam gate fixture", variants: [variant])
+      var steamRejected = false
+      manager.start(game: game, variant: variant, profile: profile) { result in
+        if case .failure(let error) = result { steamRejected = error.localizedDescription.contains("backend Steam") }
+      }
+      try require(steamRejected && !manager.running && !fm.fileExists(atPath: steamPaths.root.path),
+        "Unverified Steam backend allowed direct launch or mutated session data")
+    }
+    checks["steamNativeAndWineRequireAuthenticatedHeadlessHost"] = true
     let missing = SessionManager(
       paths: paths, project: root.appendingPathComponent("missing-project"))
     managers.append(missing)

@@ -13,6 +13,9 @@ struct ReadyDialogAction {
     self.enabled = enabled
   }
 }
+protocol ReadyDialogContentSizing {
+  var maximumViewportHeight: CGFloat { get }
+}
 private func dialogColor(_ hex: Int, alpha: CGFloat = 1) -> NSColor {
   NSColor(
     srgbRed: CGFloat((hex >> 16) & 255) / 255, green: CGFloat((hex >> 8) & 255) / 255,
@@ -41,7 +44,10 @@ private final class DialogButton: NSButton {
     addTrackingArea(
       NSTrackingArea(
         rect: bounds,
-        options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect, .enabledDuringMouseDrag],
+        options: [
+          .mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect,
+          .enabledDuringMouseDrag,
+        ],
         owner: self, userInfo: nil))
     super.updateTrackingAreas()
   }
@@ -129,6 +135,7 @@ final class ReadyDialogPresenter: NSObject {
     return id
   }
   func attach() { showNext() }
+  func isShowing(_ id: UUID) -> Bool { active?.id == id }
   func activatePrimary(_ id: UUID) {
     guard active?.id == id else { return }
     buttons.first(where: { $0.keyEquivalent == "\r" && $0.isEnabled })?.performClick(nil)
@@ -242,10 +249,15 @@ final class ReadyDialogPresenter: NSObject {
       scroll.translatesAutoresizingMaskIntoConstraints = false
       stack.addArrangedSubview(scroll)
       scroll.widthAnchor.constraint(equalToConstant: width).isActive = true
+      let maximumHeight =
+        (request.content as? ReadyDialogContentSizing)?.maximumViewportHeight ?? 340
       scroll.heightAnchor.constraint(
         equalToConstant: min(
           totalHeight,
-          max(60, min(340, host.bounds.height - 64 - 128 - CGFloat(request.actions.count) * 52)))
+          max(
+            60,
+            min(maximumHeight, host.bounds.height - 64 - 128 - CGFloat(request.actions.count) * 52))
+        )
       ).isActive = true
     }
     buttons = request.actions.enumerated().map { index, action in

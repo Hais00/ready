@@ -1,0 +1,500 @@
+{
+  "schemaVersion": 1,
+  "kind": "sanitized-steam-headless-research-checkpoint",
+  "asOfUTC": "2026-10-28T17:06:07.963111+00:00",
+  "scope": "Separate offline IPC, controlled negative authentication, real SteamKit attempt and UI/source checks; no completed authenticated game host or distribution approval.",
+  "windows": {
+    "offlinePE32IPCObserved": true,
+    "offlinePE64IPCObserved": true,
+    "currentSyntheticCandidateBoundToTestedPEBytes": true,
+    "controlledSyntheticNegativeAuthenticationObserved": true,
+    "realAccountAuthenticationAttempted": false,
+    "genuineAuthenticatedHostVerified": false,
+    "gameLaunchVerified": false,
+    "runtimeEnabled": false,
+    "architectures": [
+      {
+        "architectureBits": 64,
+        "controlledNegativeExit": 4,
+        "callbacksFetched": 32,
+        "callbacksFreed": 32,
+        "authenticatedReady": false,
+        "loggedOn": false,
+        "publicOwnershipObserved": false,
+        "privatePrefixAndIPCRemoved": true,
+        "inputsAndExistingSteamUnchanged": true,
+        "probeSHA256": "4c3817e817f2df3f98dbda19de29c2eb7a8e834141c9b1e3a01bfdc6c33e1965",
+        "reportSHA256": "ce1b16e37218722e7de35a591ab9b85e67c9eef482bc5bbe6fcd199ecf9c2d58"
+      },
+      {
+        "architectureBits": 32,
+        "controlledNegativeExit": 4,
+        "callbacksFetched": 31,
+        "callbacksFreed": 31,
+        "authenticatedReady": false,
+        "loggedOn": false,
+        "publicOwnershipObserved": false,
+        "privatePrefixAndIPCRemoved": true,
+        "inputsAndExistingSteamUnchanged": true,
+        "probeSHA256": "3af3af7acaeb51f4b5ff1da015cfd507a6f4ae6ae1f08bb4e1d979d155b8a0b6",
+        "reportSHA256": "a421d174db42377260ea7d4e97d9f4b28ecd6ba54decf69de45c1ba6b01c0d6a"
+      }
+    ],
+    "historicalSharedMemoryAssessment": {
+      "twoProcessStatusVerified": true,
+      "rawAggregatePassed": false,
+      "normalTeardownAllArchitecturesVerified": false,
+      "TCPIPCVerified": false
+    },
+    "evidence": {
+      "currentCandidate": {
+        "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+        "entry": "windowsCurrentCandidate",
+        "sha256": "3315d849ce8027d551f4bf7f8bb7cebe60c009ca26d3e2db911eb35e9906e35e"
+      },
+      "currentRawReport": {
+        "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+        "entry": "windowsCurrentCandidateRaw",
+        "sha256": "9529fe4483ebb3adada42f4f8fc0f7227f45e10edacb671cd68b9d4bb4a05ba8"
+      },
+      "currentSourceBinding": {
+        "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+        "entry": "windowsCurrentSourceBinding",
+        "sha256": "a848ba566d09d7c720c14f94e41d0a8c4bcc5ec46936b759b2eab57367c7f5de"
+      },
+      "currentBuildReceipt": {
+        "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+        "entry": "windowsCurrentBuildReceipt",
+        "sha256": "63213eba2bb6e7d574f07f54dab17e83738e1fbb49756e35f9495eed2f2d964f"
+      },
+      "historicalSharedMemoryAssessment": {
+        "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+        "entry": "windowsHistoricalSharedMemoryAssessment",
+        "sha256": "5ae3b649f8eb9db2ab364482a96dd36128fd58f29451d77c64a90d67ae929f32"
+      },
+      "historicalSharedMemoryRaw": {
+        "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+        "entry": "windowsHistoricalSharedMemoryRaw",
+        "sha256": "e0c6171bfe53b4ee1d602da31765c0d7e8b805d3f9d85ebadca919e9d213d589"
+      }
+    }
+  },
+  "native": {
+    "architecture": "arm64",
+    "offlineGenuineClientHostAndPeerIPCObserved": true,
+    "hostExitCode": 0,
+    "peerExitCode": 0,
+    "callbacksProcessed": {
+      "host": 12,
+      "peer": 3
+    },
+    "normalRelease": {
+      "host": {
+        "releasedUser": true,
+        "releasedPipe": true
+      },
+      "peer": {
+        "releasedUser": true,
+        "releasedPipe": true
+      }
+    },
+    "sandboxNegativeControls": {
+      "count": 7,
+      "passed": true,
+      "checks": {
+        "readDenied": true,
+        "writeDenied": true,
+        "networkDenied": true,
+        "otherExecDenied": true,
+        "unscopedSharedMemoryDenied": true,
+        "unscopedSemaphoreDenied": true,
+        "unapprovedUnixSocketDenied": true
+      }
+    },
+    "composedFilesystemAndIPCShimFixtures": {
+      "count": 8,
+      "passed": true,
+      "architectures": [
+        "arm64",
+        "x86_64"
+      ],
+      "bothLoadOrdersVerified": true,
+      "kernelValidatedCurrentNamespaceSHM": true,
+      "credentialHeaderUsed": false,
+      "measuredSourceSHA256": {
+        "steam_native_state_fs.c": "347c06076f8373df0caf64c22f95b3446f9ba25711ac8964510c327fe31f3b2f",
+        "steam_native_ipc_namespace.c": "18a7665487848085182d7600c98c889b37909e1fc7b11f332bc1b5ad9c33fec6"
+      },
+      "measuredDylibSHA256": {
+        "steam_native_state_fs.c": "0247d1244ff123c694f46edf545585d93af7c746575763006bd08136405ac877",
+        "steam_native_ipc_namespace.c": "bc3a48cdc3daed151a97feb1a9426016950b736f1ffeeda85e989d4e258cf69f"
+      }
+    },
+    "accountAuthenticated": false,
+    "ownershipVerified": false,
+    "gameCompatibilityVerified": false,
+    "fullNativeProfileIsolationVerified": false,
+    "existingSteamProcessesUnchanged": true,
+    "originalStateReadPermitted": false,
+    "originalStateWritePermitted": false,
+    "genuineClientImageSHA256": "b9d62be2ac64b77dc77e1d19eefcf3880df99495c7db85b30623095310b6a6bd",
+    "measuredStateAdapterSHA256": "0247d1244ff123c694f46edf545585d93af7c746575763006bd08136405ac877",
+    "measuredIPCAdapterSHA256": "bc3a48cdc3daed151a97feb1a9426016950b736f1ffeeda85e989d4e258cf69f",
+    "measuredSandboxProfileSHA256": "4636d0542aad602593ca8e32c18611705bdd5f96253a44fd3217efc47bd72b68",
+    "measuredProbeSHA256": "f2cd933a8101577016aee448fca0dcfbbfedacd52b9b2c9cf5665c27ee350b84",
+    "measuredSourceSHA256": {
+      "steam_host_credential.h": "7897c2df936dea65f11e349e9501de19fe4f43d978e4d36b479ed24140c66604",
+      "steam_native_host_probe.c": "558097563de1af3520315fadf296252c2b71593a15725f418e26676c7b287839",
+      "test_steam_native_host.py": "47e8570c59529cc8d3ad42a69bf7d95d048950c484f30b22ebcbc28bbc87ad06"
+    },
+    "currentSourceMatchesMeasuredOfflineRun": {
+      "steam_host_credential.h": true,
+      "steam_native_host_probe.c": false,
+      "test_steam_native_host.py": false
+    },
+    "evidence": {
+      "rawReport": {
+        "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+        "entry": "nativeOfflinePeerRaw",
+        "sha256": "57eb6fb9c4132c38a992223bcb617308c97cedae697629d9056139bb118ffb10"
+      },
+      "sandboxControls": {
+        "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+        "entry": "nativeOfflineSandboxControls",
+        "sha256": "5e0266ed027ba7713affae40078cc5f7f57f143979899aee55095f6b39de8bcc"
+      },
+      "composedShimFixtures": {
+        "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+        "entry": "nativeComposedShimFixtures",
+        "sha256": "5e2eb6cd0ce0deb0ff37109fb35f7e82b887e5a971bec4366d4ce59ebe9f1d0e"
+      }
+    },
+    "scope": "Historical offline unauthenticated host/peer proof. The later native authentication success is scoped separately in latestAuthorizedNativeAttempt."
+  },
+  "steamKitPriorFailedAttempt": {
+    "QRApprovalObserved": true,
+    "authenticatedLoginObserved": true,
+    "ownershipCallbackReceived": true,
+    "ownershipCallbackEResult": "OK",
+    "helperOperationSucceeded": false,
+    "failureCode": "steam_error",
+    "failureStage": "ownership_ticket",
+    "brokerFailurePhase": "authorize_game",
+    "workerHandoffVerified": false,
+    "nativeWorkerStarted": false,
+    "ownershipPreflightVerified": false,
+    "completeAuthenticatedHostFlowVerified": false,
+    "gameLaunchVerified": false,
+    "inferenceBasis": "The broker advanced past QR completion; the helper reached the ownership callback after logon and recorded OK, then failed. No authorized context was returned.",
+    "measuredHelperSHA256": "c7b6bfd4a519881d0e0ac9fc58a24a9822d2db01a0694cd2a170595e3ac94a39",
+    "measuredSourceArtifacts": [
+      {
+        "name": "steam_auth_qr.swift",
+        "SHA256": "11a0defe7101379aac7a574074297bd04e02c55667fb0001daa2a5e5176ba330"
+      },
+      {
+        "name": "steam_headless_auth_broker.py",
+        "SHA256": "556f5983251af14656f6d6baa87a30b708cf11efc0eecb1dc1e5be1aee80c5ba"
+      },
+      {
+        "name": "steam_host_credential.h",
+        "SHA256": "7897c2df936dea65f11e349e9501de19fe4f43d978e4d36b479ed24140c66604"
+      },
+      {
+        "name": "steam_host_credential.py",
+        "SHA256": "802d1666178ee41d5eea67cee8b114a3589ea290b55e5daaf8f7d983bb7e172f"
+      },
+      {
+        "name": "steam_native_host_probe.c",
+        "SHA256": "3b35dc9231b89ca0cab9026aae27a0051840c0e13ceadfb4d53a7a81e982926f"
+      },
+      {
+        "name": "test_steam_native_host.py",
+        "SHA256": "c94eb5eead0133702bf39dddb1b4e00ea3e63e93d096f3062c711da60e0ac3a5"
+      }
+    ],
+    "safeFailureEvidence": {
+      "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+      "entry": "steamKitRealAttemptSafeFailure",
+      "sha256": "8fe9aecd0d3400a2721d2abefcd5d7ee9ddabe8960d638812d9c93573dad8f65"
+    }
+  },
+  "latestOfflineHelperFixtures": {
+    "fixtureOnly": true,
+    "passed": true,
+    "protocolAndBuildChecks": 21,
+    "decisionChecks": 47,
+    "minimalBrokerEnvironmentDecisionChecks": 47,
+    "helperSHA256": "f127cc65ee2aca9703584e21967a6742dacbcd354ed666eae73a402b4cb05698",
+    "programSourceSHA256": "c8667eae54e0404dbf7f752312febe040e7cb998199f5477cb3c78b84495873f",
+    "currentProgramSourceMatchesMeasured": true,
+    "measuredBrokerSourceSHA256": "b9ca914572f88c334870864801a9ca3c75f600f40f90c16a20f3b6c7ba1a7575",
+    "currentBrokerSourceMatchesMeasured": true,
+    "genuineOwnershipVerified": false,
+    "evidence": {
+      "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+      "entry": "latestOfflineOwnershipHelperFixtures",
+      "sha256": "2212354107f7597c16e05bfa0b6e87d5750d6e1b4b31fe4aa24e029e7f72aa1e"
+    }
+  },
+  "frontendLiveStatus": {
+    "currentSignedSnapshotVerified": true,
+    "executableSHA256": "a1c34f229dde665d80e6a98cd59692eae66136a3fcd30ae9791fed10b28c25b4",
+    "sourceFingerprintSHA256": "dd72d021639852ceae5f63d5f09bd5906ce38d0438af468b662acb785b280968",
+    "syntheticStatusAndViewportChecks": 28,
+    "fixtureOnly": true,
+    "fixtureWindowShown": false,
+    "currentBinaryRealAuthRunVerified": false,
+    "finalAppReassemblyPendingDocsFreeze": true,
+    "evidence": {
+      "fixtures": {
+        "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+        "entry": "liveUIDiagnosticFixtures",
+        "sha256": "37c13cc240f183bcc5cfb65dd6ee44958dadaf31b3237dbb92219114df2b45cf"
+      },
+      "buildSnapshotMetadata": {
+        "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+        "entry": "liveUIBuildSnapshotMetadata",
+        "sha256": "9caf090a26f8d7bd1a90deaef4580c93abd5e42a9a2c93dc13dbc61a41c9b41b"
+      }
+    }
+  },
+  "sessionManager": {
+    "checks": 21,
+    "passed": true,
+    "steamLaunchBlockedWithoutAuthenticatedHeadlessHost": true,
+    "testScope": "real-Foundation-Process-and-native-keeper; Wine protocol fixtures, not real game compatibility",
+    "evidence": {
+      "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+      "entry": "sessionManagerGateFixtures",
+      "sha256": "607f5bc4521927008247102a9c4f20babbbb2b0d8aa9e33f0c48b7ec2c4d364c"
+    },
+    "currentSourceSHA256": {
+      "Sources/M1Launcher/SessionManager.swift": "18f6a2494b0b7bf0b6a47e11c7a5ac2cb4c494ea3da6482add73189d49987318",
+      "Synthetic/ReadySessionManagerProbe.swift": "90aaaec181e41645bd24e15ba0f9addbb89a17c4219aaea0076f7a0c733dcfab"
+    },
+    "sourceHashesAreCurrentWorkingTreeObservations": true
+  },
+  "sourceBoundary": {
+    "newAndModifiedCodeFilesChecked": 39,
+    "GPLSPDXHeadersPresent": true,
+    "unexpectedNewNativeBinaryFiles": 0,
+    "genuineValveAssetsRemainExternalProprietary": true,
+    "withheldGameNativeHelpersIncluded": false,
+    "binaryDistributionApproved": false
+  },
+  "remaining": [
+    "Verify genuine authenticated Windows host behavior; no real Windows account authentication followed this native success.",
+    "Verify an actual owned game through native/Wine game IPC and its full supervised lifetime.",
+    "Integrate a persistent authenticated backend with profile-scoped state, shared immutable client assets and verified restart/cache behavior.",
+    "Verify actual game paths, process lifetime and profile state/IPC isolation beyond the scoped fixtures.",
+    "Keep later cached-mode/network/driver research separate from this frozen successful authentication report.",
+    "Assemble the current frontend snapshot after documentation freeze and complete release/source/licence gates separately."
+  ],
+  "steamKitRealAttempt": {
+    "QRApprovalObserved": true,
+    "authenticatedLoginObserved": true,
+    "ownershipPreflightVerified": true,
+    "authorized": true,
+    "ownershipTicketReceived": true,
+    "authorizationHelperExitCode": 0,
+    "authorizationPipelineSucceeded": true,
+    "authorizedContextReturned": true,
+    "privateWorkerHandoffPerformed": true,
+    "nativeWorkerStarted": true,
+    "nativeAccountAuthenticated": true,
+    "genuineNativeSubscriptionObserved": true,
+    "nativeGameIPCVerified": false,
+    "gameLaunchVerified": false,
+    "measuredHelperSHA256": "f127cc65ee2aca9703584e21967a6742dacbcd354ed666eae73a402b4cb05698",
+    "measuredHelperOutputClosureSHA256": "951a2c8a1f7475523a1fff452bc32fe72265e80856a18e575348fdacc1d1db5d",
+    "inferenceBasis": "The genuine positive SteamKit preflight reached the isolated native worker, whose logged-on identity and genuine subscription checks succeeded. This is an authentication/subscription probe, not a game launch.",
+    "evidence": {
+      "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+      "entry": "nativeAuthenticatedSuccess",
+      "sha256": "cc6ff36384d9d6118ceb2db303d9e1f93e461b8aeac3c3e26117fdff20723fd3"
+    }
+  },
+  "latestAuthorizedNativeAttempt": {
+    "architecture": "arm64",
+    "exitCode": 0,
+    "accountAuthenticated": true,
+    "authenticatedIdentityMatches": true,
+    "genuineSubscriptionObserved": true,
+    "publicMethodImageBindingsVerified": true,
+    "loginMethodImageBindingsVerified": true,
+    "logOnDispatchResult": 1,
+    "onlineCallbackCount": 1445,
+    "callbackMalformed": false,
+    "releasedUser": true,
+    "releasedPipe": true,
+    "peerStarted": false,
+    "gameCompatibilityVerified": false,
+    "nativeGameIPCVerified": false,
+    "persistentProductionHostIntegrationVerified": false,
+    "fullGameSessionLifecycleVerified": false,
+    "fullSteamProcessCountBefore": 0,
+    "fullSteamProcessCountAfter": 0,
+    "existingSteamProcessesUnchanged": true,
+    "originalStateReadPermitted": false,
+    "originalStateWritePermitted": false,
+    "genuineClientImageSHA256": "b9d62be2ac64b77dc77e1d19eefcf3880df99495c7db85b30623095310b6a6bd",
+    "measuredSourceSHA256": "4cd2af91f8e0ab21dbf60483e12da25a77a75371f109b8b5cd20125dda157234",
+    "measuredDriverSHA256": "183b2ac6e9bad88cd94aab1a1569e6bc36652b21c375b289fea092b1baafb444",
+    "measuredExecutableSHA256": "99348a9fb903f544e51a2e2c80bcc24197531b126613553e5652e73d151fd2c5",
+    "measuredSourceArtifacts": [
+      {
+        "name": "steam_auth_qr.swift",
+        "SHA256": "11a0defe7101379aac7a574074297bd04e02c55667fb0001daa2a5e5176ba330"
+      },
+      {
+        "name": "steam_headless_auth_broker.py",
+        "SHA256": "b9ca914572f88c334870864801a9ca3c75f600f40f90c16a20f3b6c7ba1a7575"
+      },
+      {
+        "name": "steam_host_credential.h",
+        "SHA256": "7897c2df936dea65f11e349e9501de19fe4f43d978e4d36b479ed24140c66604"
+      },
+      {
+        "name": "steam_host_credential.py",
+        "SHA256": "802d1666178ee41d5eea67cee8b114a3589ea290b55e5daaf8f7d983bb7e172f"
+      },
+      {
+        "name": "steam_native_host_probe.c",
+        "SHA256": "4cd2af91f8e0ab21dbf60483e12da25a77a75371f109b8b5cd20125dda157234"
+      },
+      {
+        "name": "test_steam_native_host.py",
+        "SHA256": "183b2ac6e9bad88cd94aab1a1569e6bc36652b21c375b289fea092b1baafb444"
+      }
+    ],
+    "currentResearchDriverBehaviorPromotedFromThisRun": false,
+    "sourceScope": "Only this frozen report and its recorded source/image hashes are measured. Later cached-mode or other driver changes are not authenticated by this earlier run.",
+    "evidence": {
+      "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+      "entry": "latestNativeAuthenticatedRun",
+      "sha256": "cc6ff36384d9d6118ceb2db303d9e1f93e461b8aeac3c3e26117fdff20723fd3"
+    }
+  },
+  "headlessBrokerMemoryFixtures": {
+    "fixtureOnly": true,
+    "passed": true,
+    "testMethods": 27,
+    "realAccountAuthentication": false,
+    "evidence": {
+      "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+      "entry": "brokerMemoryFixtures",
+      "sha256": "8284730c1cd8f3ee27bcac43ee19b3fedf8390a1f061e0ef32c8b9bbc881ad46"
+    }
+  },
+  "previousAuthorizedNativeFailure": {
+    "steamKitPreflight": {
+      "QRApprovalObserved": true,
+      "authenticatedLoginObserved": true,
+      "ownershipPreflightVerified": true,
+      "authorized": true,
+      "ownershipTicketReceived": true,
+      "authorizationHelperExitCode": 0,
+      "authorizationPipelineSucceeded": true,
+      "authorizedContextReturned": true,
+      "privateWorkerHandoffPerformed": true,
+      "nativeWorkerStarted": true,
+      "nativeAccountAuthenticated": false,
+      "genuineNativeSubscriptionObserved": false,
+      "completeAuthenticatedHostFlowVerified": false,
+      "gameLaunchVerified": false,
+      "measuredHelperSHA256": "8d552562a3ab2f1e96f65c0aad6a525966a5331933462bd89787a58b3c9834dc",
+      "inferenceBasis": "The driver accepted the genuine positive SteamKit result and handed its private context to the worker. The native worker exited without a logged-on account or genuine subscription.",
+      "evidence": {
+        "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+        "entry": "latestAuthorizedPreflightNativeFailure",
+        "sha256": "7485520f23274e48335ca546d9225c3870c3b9a2a741484580cabe13969e11eb"
+      }
+    },
+    "nativeAttempt": {
+      "architecture": "arm64",
+      "exitCode": 5,
+      "factoryReturnedObject": true,
+      "userCreated": true,
+      "pipeCreated": true,
+      "publicMethodImageBindingsVerified": true,
+      "loginMethodImageBindingsVerified": true,
+      "logOnDispatchResult": 1,
+      "onlineCallbackCount": 38,
+      "observedCallbackMetadata": [
+        {
+          "type": 102,
+          "payloadBytes": 8
+        }
+      ],
+      "callbackMalformed": false,
+      "accountAuthenticated": false,
+      "genuineSubscriptionObserved": false,
+      "peerStarted": false,
+      "gameCompatibilityVerified": false,
+      "fullSteamProcessCountBefore": 0,
+      "fullSteamProcessCountAfter": 0,
+      "existingSteamProcessesUnchanged": true,
+      "originalStateReadPermitted": false,
+      "originalStateWritePermitted": false,
+      "measuredSourceSHA256": "3b35dc9231b89ca0cab9026aae27a0051840c0e13ceadfb4d53a7a81e982926f",
+      "measuredDriverSHA256": "590c1f25d34a727374e94c88d1e3b389f476f57f9e89062f9f8a61f06bcd06ba",
+      "measuredExecutableSHA256": "7d09a289ef730d95fbc238eff7ae4edd62081f622d82c45946e06292b577c06d",
+      "measuredSourceArtifacts": [
+        {
+          "name": "steam_auth_qr.swift",
+          "SHA256": "11a0defe7101379aac7a574074297bd04e02c55667fb0001daa2a5e5176ba330"
+        },
+        {
+          "name": "steam_headless_auth_broker.py",
+          "SHA256": "b9ca914572f88c334870864801a9ca3c75f600f40f90c16a20f3b6c7ba1a7575"
+        },
+        {
+          "name": "steam_host_credential.h",
+          "SHA256": "7897c2df936dea65f11e349e9501de19fe4f43d978e4d36b479ed24140c66604"
+        },
+        {
+          "name": "steam_host_credential.py",
+          "SHA256": "802d1666178ee41d5eea67cee8b114a3589ea290b55e5daaf8f7d983bb7e172f"
+        },
+        {
+          "name": "steam_native_host_probe.c",
+          "SHA256": "3b35dc9231b89ca0cab9026aae27a0051840c0e13ceadfb4d53a7a81e982926f"
+        },
+        {
+          "name": "test_steam_native_host.py",
+          "SHA256": "590c1f25d34a727374e94c88d1e3b389f476f57f9e89062f9f8a61f06bcd06ba"
+        }
+      ],
+      "currentResearchDriverBehaviorPromotedFromThisRun": false,
+      "sourceScope": "Only the hashes recorded for this run are measured. Later or pending research-driver behavior is not verified by this report.",
+      "evidence": {
+        "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+        "entry": "latestAuthorizedNativeRun",
+        "sha256": "7485520f23274e48335ca546d9225c3870c3b9a2a741484580cabe13969e11eb"
+      }
+    }
+  },
+  "steamKitSourceCleanupPatch": {
+    "license": "LGPL-2.1-only",
+    "upstreamRevision": "21dd4d579713763ef2401b6e8d618490eb32db3c",
+    "sourcePath": "SteamKit2/SteamKit2/Networking/Steam3/WebSocketContext.cs",
+    "baseSHA256": "2f1a1a7783c9c27baa4c75da67bf1708217dc76e952ae88ebb62f35e2ac3dd70",
+    "patchedSHA256": "75310a0732b54b06a1acd3791f891645a921aacd1f171f51b24f997adb34491b",
+    "patchSHA256": "b429f0d81aa2d4c5339d3081bf4754ddb765c658b87136ad25cae69f136cc926",
+    "appliedOnlyToOwnedExternalCopy": true,
+    "outputClosureSHA256": "951a2c8a1f7475523a1fff452bc32fe72265e80856a18e575348fdacc1d1db5d",
+    "purpose": "Correct asynchronous WebSocket cleanup in the LGPL dependency without changing the ownership decision or replacing genuine client assets.",
+    "sourceLockEvidence": {
+      "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+      "entry": "steamKitCleanupSourceLock",
+      "sha256": "5ea9a6d91fdb841bee20f923f9dce03f0b14751b590540bd3ae6160e6e79cb6b"
+    },
+    "patchEvidence": {
+      "privateEvidenceIndex": "Evidence/steam-headless-checkpoint-inputs.json",
+      "entry": "steamKitCleanupPatch",
+      "sha256": "b429f0d81aa2d4c5339d3081bf4754ddb765c658b87136ad25cae69f136cc926"
+    }
+  },
+  "privateEvidenceIndexSHA256": "fd87c8d6de89e47a9a6c1d86efb0f45074edbea0b721fdca48a14c8295c91531"
+}

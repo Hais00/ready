@@ -24,3 +24,26 @@ Prefix/profile isolation concerns launcher profiles inside one macOS login. Nati
 The user's later instruction supersedes only the original single-prefix requirement. All other original requirements remain. Central Wine/renderers are shared and versioned; Windows prefixes are keyed by game AND profile; native macOS games do not create a Wine prefix. Documents and Saved Games point to persistent profile directories; AppData points to persistent game/profile directories. Automatic rendering uses available verified paths and exact game/runtime compatibility rules, advanced overrides, and fallback between launches. Never hot-swap a running prefix's DLLs. Preserve legacy data and a rollback source until actual game validation. Prefix separation is NOT claimed to save VRAM.
 
 Required new tests: dependencies A vs B; profile account/registry/save isolation; Documents links; available/verified renderer selection; save survival on recreation; independent session termination. Synthetic success alone does not close these integration gates.
+
+## Steam backend correction, 2026-10-28
+
+The user requires Steam-backed native macOS and Windows/Wine game launch without
+starting Steam.app or the full Windows client. Merely hiding its window or
+invoking steam://run does not satisfy this requirement. SteamKit is the preferred
+authenticated network backend. Independent analysis of GameNative's closed
+component is authorized; copying it into the project's open payload is not.
+
+SteamKit account, library, CDN and auth-ticket support does not itself implement
+the local Steamworks ABI/IPC expected by a native game. Ready currently has no
+validated SteamKit-to-Steamworks bridge or persistent game-session service.
+Production Steam launch is therefore blocked in SessionManager before session
+mutation: direct execution could otherwise request a Steam-client restart.
+Unauthenticated native ARM64 and Wine PE32/PE64 client IPC proofs now exist;
+they are not successful real authentication or game launch. A new bridge must preserve real account/ownership
+semantics and be validated per API/version/game; a normal client fallback must
+not be silently substituted for the requested architecture. The project's free
+source boundary remains unchanged; loading a proprietary Valve library is a
+separate architecture, not evidence that SteamKit alone supplies Steamworks.
+
+Primary references: [SteamKit auth-ticket handler](https://github.com/SteamRE/SteamKit/blob/master/SteamKit2/SteamKit2/Steam/Handlers/SteamAuthTicket/SteamAuthTicket.cs)
+and [Valve local Steamworks architecture](https://partner.steamgames.com/doc/sdk/api#technical_details).

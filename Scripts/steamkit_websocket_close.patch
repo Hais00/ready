@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: LGPL-2.1-only
+# Independent fix against the pinned SteamKit source; apply only to an owned build copy.
+--- a/SteamKit2/SteamKit2/Networking/Steam3/WebSocketContext.cs
++++ b/SteamKit2/SteamKit2/Networking/Steam3/WebSocketContext.cs
+@@ -113,18 +113,25 @@
+                 cts.Dispose();
+                 runloopTask = null;
+ 
+-                if (socket.State == WebSocketState.Open)
+-                {
+-                    try
+-                    {
+-                        socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None).RunSynchronously();
+-                    }
+-                    catch ( WebSocketException )
+-                    {
+-                    }
+-                }
+-
+-                socket.Dispose();
++                try
++                {
++                    if (socket.State == WebSocketState.Open)
++                    {
++                        using var closeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
++                        try
++                        {
++                            socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, closeTimeout.Token)
++                                .WaitAsync(closeTimeout.Token).GetAwaiter().GetResult();
++                        }
++                        catch ( WebSocketException )
++                        {
++                        }
++                    }
++                }
++                finally
++                {
++                    socket.Dispose();
++                }
+             }
+ 
+             async Task<byte[]?> ReadMessageAsync( CancellationToken cancellationToken )

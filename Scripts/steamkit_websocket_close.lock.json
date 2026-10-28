@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "license": "LGPL-2.1-only",
+  "upstream": "https://github.com/SteamRE/SteamKit",
+  "revision": "21dd4d579713763ef2401b6e8d618490eb32db3c",
+  "path": "SteamKit2/SteamKit2/Networking/Steam3/WebSocketContext.cs",
+  "baseSHA256": "2f1a1a7783c9c27baa4c75da67bf1708217dc76e952ae88ebb62f35e2ac3dd70",
+  "patchedSHA256": "75310a0732b54b06a1acd3791f891645a921aacd1f171f51b24f997adb34491b",
+  "patchSHA256": "b429f0d81aa2d4c5339d3081bf4754ddb765c658b87136ad25cae69f136cc926",
+  "targetFramework": "net10.0",
+  "closeDeadlineSeconds": 3,
+  "appliedOnlyToOwnedExternalCopy": true
+}

@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   lazy var dialogs = ReadyDialogPresenter(window: { [weak self] in self?.window })
   var qrDialog: UUID?
   var qrImage: NSImageView?
+  var steamAuthDiagnostics: SteamAuthDiagnostics?
   var authenticationSession: UUID?
   var authenticationRequest: UUID?
   var pendingLaunch: UUID?
@@ -71,6 +72,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     setupMenu()
     setupControllers()
     let args = CommandLine.arguments
+    if let index = args.firstIndex(of: "--steam-auth-status") {
+      do {
+        guard args.indices.contains(index + 1), args[index + 1].hasPrefix("/") else {
+          throw LauncherError.invalid("Percorso diagnostico dell’accesso non valido.")
+        }
+        let diagnostics = try SteamAuthDiagnostics(
+          delegate: self, status: URL(fileURLWithPath: args[index + 1]))
+        steamAuthDiagnostics = diagnostics
+        try diagnostics.start()
+      } catch { showError(error) }
+      window.makeKeyAndOrderFront(nil)
+      NSApp.activate(ignoringOtherApps: true)
+      return
+    }
     if args.contains("--background-error-self-test") {
       runBackgroundErrorProbe()
       return

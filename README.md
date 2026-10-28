@@ -8,7 +8,8 @@ Repository: https://github.com/Hais00/ready (currently private). Our code is **G
 
 - Native AppKit window with one opaque Metal canvas, rendered only when the UI changes. Visible hover/pressed/focus feedback, proportionate icons, controller/keyboard navigation and fullscreen. Search, profiles, options, errors, authentication and maintenance use asynchronous panels inside the launcher; file/folder browsing is also internal.
 - Explicit teardown of launcher textures/drawables during play. In-process overlay draws in the game's existing drawable rather than creating another window. **Fullscreen/direct-display eligibility is not proof of actual direct-to-display.**
-- Steam, Epic, GOG and Amazon integration through open protocols and open-source helpers. Login/library/download code exists; real account/entitlement end-to-end validation remains pending.
+- Steam, Epic, GOG and Amazon integration through open protocols and open-source helpers. Login/library/download code exists; complete account/entitlement/download/game validation remains pending. The isolated Steam prototype has completed QR approval, login and a genuine owned-title preflight. The native ARM64 backend now authenticates and observes the genuine subscription without Steam.app; game launch and real Windows authentication remain unverified.
+- Steam game launch targets a separate, authenticated backend without Steam.app or the full Windows client. Independent prototypes demonstrate offline genuine Valve client IPC on native ARM64 macOS and Wine PE32/PE64. An actual SteamKit QR/login and ownership preflight now succeed. The native ARM64 worker now reaches a logged-on identity and genuine subscription with no full Steam client process, then releases its user/pipe and exits normally. Persistent production integration, actual game IPC/launch and real Windows authentication remain unverified. Production Steam launch is temporarily blocked before session mutation, so direct execution cannot silently restart the full client. See [headless design](Docs/STEAM_HEADLESS.md), [native research](Docs/STEAM_NATIVE_HEADLESS_RESEARCH.md), [Wine research](Docs/STEAM_WINDOWS_HEADLESS_RESEARCH.md) and [ownership preflight](Docs/STEAM_OWNERSHIP_PREFLIGHT.md).
 - macOS and Windows builds are distinguished. A macOS store flag is not labelled Apple Silicon native until its installed Mach-O executable is inspected.
 - **One Windows prefix per game/profile**, with shared centrally versioned engines and game files. Native macOS apps do not use Wine.
 - Persistent profile Documents/Saved Games; isolated game/profile AppData and registry. Prefix recreation preserves personal data and retains a rollback copy. Legacy single-prefix migration never deletes its source automatically.
@@ -43,6 +44,12 @@ Versioned [relative runtime paths](Docs/PORTABLE_RUNTIME_PATHS.md) resolve again
 
 ## Sources and runtimes
 
+Ready's new Steam host, adapters and account orchestration are independently
+authored GPL code. Genuine Valve client assets are external proprietary inputs;
+GameNative's withheld bootstrap/host implementation is not included. Static
+analysis and local probes do not establish permission to redistribute either
+party's binaries or make them open source.
+
 ```sh
 python3 Scripts/fetch_sources.py
 ```
@@ -54,6 +61,18 @@ Additional source-only packets retain the complete recursive [renderer sources](
 Apple D3DMetal/GPTK evaluation libraries are **proprietary optional local inputs**, excluded from the open-source distribution. Their beta license permits certain non-commercial distribution; that does not make them open source or license them under our GPL. The working open DX11 path tested here is Wine + [DXMT](Docs/DXMT.md). Wine + Vulkan + KosmicKrisp/MoltenVK also passes Vulkan presentation probes. Current DXVK/VKD3D device-creation failures are documented in [runtime validation](Docs/RUNTIME.md); those paths are not enabled automatically as verified DX11/DX12 engines.
 
 ## Verified so far / still open
+
+The [Steam headless checkpoint](Validation/steam-headless-checkpoint.json) separates
+these scopes: Windows PE32/PE64 offline IPC and controlled negative authentication;
+native offline host/peer IPC with seven sandbox controls and composed-shim
+fixtures; and the latest real SteamKit attempt that passed QR/login and genuine ownership
+preflight. A later native ARM64 run also reached logged-on/subscribed state
+without Steam.app and tore down normally; no game was started. Earlier helper
+and native-login failures remain separate history, and Windows authentication
+is not inferred from the native result. The current live-status UI passes 28 synthetic checks;
+21 SessionManager checks include blocking Steam launch without a verified host.
+Private report/source/artifact hashes are bound without publishing account data.
+
 
 The [sanitized checkpoint](Validation/checkpoint.json) records 30 domain checks, 64 store protocol/concurrency tests, real process/session coordination, and real Wine registry/folder API checks across game/profile prefixes. Two actual Windows sessions also verify that terminating A leaves B running with its lease intact. Game readers and store writers now protect shared installation files with an interoperable lease. Twenty-eight keeper checks include native wrappers that exit before their child, isolated termination, crash survival and actual Metal overlay handoff. Sixteen real-process StoreClient checks cover cancellation and private credential transport without accessing real Keychain accounts. Actual Metal overlay rendering passes six ARM64/x64 paths and a Windows Vulkan → Wine → KosmicKrisp path. The launcher releases its canvas texture during play; a local Metal allocation measurement falls from about 47 MB to 0.74 MB.
 

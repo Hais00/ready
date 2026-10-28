@@ -158,6 +158,17 @@ final class SessionManager {
         completion(.failure(LauncherError.busy))
         return
       }
+      // Direct execution can invoke SteamAPI_RestartAppIfNecessary and launch
+      // Steam.app. Do not offer that path as the requested headless backend.
+      // Replace this gate only with an owned, authenticated host-session lease.
+      guard game.store != .steam else {
+        completion(
+          .failure(
+            LauncherError.unavailable(
+              "Il backend Steam senza client completo è in preparazione. L’avvio è sospeso finché autenticazione, licenza e collegamento del gioco non sono verificati."
+            )))
+        return
+      }
       if let key = launchEnvironment.keys.first(where: Self.reservedEnvironment) {
         completion(
           .failure(

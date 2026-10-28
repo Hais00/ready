@@ -23,7 +23,7 @@ Started 2026-10-27. Repository: `https://github.com/Hais00/ready` (private). Loc
 - Frontend allocation probe measures about 47 MB → 0.74 MB after graphics release, canvas texture 15,078,400 → 0 bytes. This is a local probe, not a commercial-game VRAM guarantee.
 - Wine 11.20 is built from source. Vulkan native/Wine presentation works. The centrally frozen DXMT provider passes DX11 feature-level 11_0, SM5 shaders/readback and swapchain presentation. Latest DXVK/VKD3D do not pass device initialization on tested drivers; no capabilities are spoofed.
 - Apple GPTK4 beta3 is a proprietary optional local input. The isolated WineCX 11.19 evaluation provider now passes DX12 buffer/clear/SM5 shader readback and 600 presentations plus Metal4 overlay GPU completion. It stays disabled by default; consumers do not inherit evaluation or redistribution rights. The same-prefix provider round-trip preserves state and another game's DLL/registry bytes. PE32/WoW64 passes Win32, DXMT DX11 device/buffer readback and 600-frame presentation. A separate real i386 shader proof now adds SM5/FL11_0 triangle rasterization and exact 4096-pixel readback; the historical three-step report remains unchanged. See WOW64.md.
-- Store bridge has real protocols, manifest executable resolution and source-built helpers; 64 Python and 16 real-process Swift client checks pass. Downloads and launched games coordinate via installation lease v2. Cancellation supervises only that job and retains its lease until descendants and temporary credential cleanup finish; real account login/download/entitlement validation is pending.
+- Store bridge has real protocols, manifest executable resolution and source-built helpers; 64 Python and 16 real-process Swift client checks pass. Downloads and launched games coordinate via installation lease v2. Cancellation supervises only that job and retains its lease until descendants and temporary credential cleanup finish; complete account/download/entitlement validation is pending; the later isolated Steam QR/login result and remaining ownership failure are scoped below.
 - See Validation/checkpoint.json for a sanitized summary. Raw evidence stays ignored. The goal is active; no completion or automatic legacy-data deletion is claimed.
 
 - Standalone Swift probes explicitly build the static LauncherCore product before linking. This prevents a newer Swift module from being linked with an older archive after model-layout changes.
@@ -60,7 +60,57 @@ Started 2026-10-27. Repository: `https://github.com/Hais00/ready` (private). Loc
 - Installer fixtures pass 40 checks with eight actual SIGKILL/resume boundaries; source/layout fixtures pass nine static checks. They use tiny synthetic inputs, never execute Wine or a GPU, and cannot authorize a real runtime publication. CI runs only these fixture suites on macOS 15 and makes no GPU claim.
 - Actual staged runtime proof passes 18 checks: source-root/Homebrew/raw-object access is denied, loaded native images are audited, real Windows 32/64 save separation and Vulkan/DXMT/native graphics work, and all five production controller-policy cases pass. The stage's fingerprints remain unchanged. Local transaction `f791932f-1c82-4f03-bbf4-05a197d77b91` is published diagnostically with fingerprint `ab6715945f4fb823c65961ea6e7a647f8a49bc65536d098e72fb5f8e79cad5c5`. The normal user's runtime-location pointer was not changed: only an isolated GUI location was tested and restored. **The real rerun after the final publication move remains pending.** Staged proof is not reported as final-location verification, a clean-machine result or distribution approval.
 - Separate source-built MoltenVK 1.4.2 is unactivated: seven actual native/Wine Vulkan checks and six integrity/corruption controls pass. Its source receipts do not approve the inherited Wine/DXMT/static/data payload or change the currently installed transaction's pinned component bytes.
-- Current UI uses internal, same-window dialogs rather than NSAlert/NSPanel/open-panel flows across six dialog groups. Actual Cua checks cover search Return/Escape, profile creation/error, game options, runtime folder choice (invalid/valid/restore), stable-ID native import/reimport, canvas hover, and visibly corrected icon proportions/colors. These checks use isolated data and no store account. Auth QR refresh/cancel/profile UUID safeguards exist in source; actual QR/account login is not claimed. A final full primary/hover pass is still being checked separately.
+- Current UI uses internal, same-window dialogs rather than NSAlert/NSPanel/open-panel flows across six dialog groups. Actual Cua checks cover search Return/Escape, profile creation/error, game options, runtime folder choice (invalid/valid/restore), stable-ID native import/reimport, canvas hover, and visibly corrected icon proportions/colors. These checks use isolated data and no store account. That earlier UI checkpoint did not verify store login. The later live-status UI and isolated Steam QR/login attempt are scoped separately below; complete game authorization is still unverified. A final full primary/hover pass is still being checked separately.
 - The latest real frontend lifecycle probe passes 13 checks, including active and queued internal dialogs being detached when a game starts, graphics released, background errors deferred without focus theft, and the launcher restored on return. Canvas probes perform a real Metal BGRA round-trip, preserve five icon aspect ratios and cover 12 distinct own-window hit targets; their programmatic event proof remains separate from manual Cua hover and does not establish physical-controller behavior or direct display.
 - Generated app backups now use a non-launchable `.ready-backup` extension and private inventory; scoped LaunchServices registration targets only the current app. Twelve existing generated backups were renamed byte-identically without deletion. This prevents an old launchable backup from being reopened under the same bundle identifier; it does not remove user applications or data.
 - The user is unlocked and current GUI scopes above are verified. Remaining gates include final-move installer retesting, real store account/entitlement/download/game validation, physical input APIs, direct display, native per-profile save/account behavior, real legacy-user migration, and complete binary/source/license distribution closure. The goal remains incomplete.
+
+
+## Steam headless research checkpoint
+
+The sanitized [Steam checkpoint](../Validation/steam-headless-checkpoint.json)
+binds private reports and measured source/artifact hashes without account
+identifiers, credentials, raw tickets, client binaries or disassembly.
+
+- Windows PE32 and PE64 demonstrate offline client IPC. The current candidate's
+  synthetic authentication cases terminate with the expected negative result;
+  no real Windows account authentication or game launch is verified. Historical
+  aggregate/teardown failures remain false in their original reports.
+- The native ARM64 offline host/peer run exits normally, processes 12/3 callbacks,
+  releases both users/pipes and passes seven sandbox controls. Separate composed
+  filesystem/IPC fixtures pass eight groups on ARM64/x86_64 and both load orders,
+  including kernel-validated namespace SHM and descriptor reuse rejection. This
+  is not native account authentication or complete game/profile isolation.
+- The latest real native ARM64 run now passes genuine account authentication
+  and the owned-title subscription check after a successful SteamKit preflight.
+  It releases the genuine client user/pipe and exits zero; full Steam client
+  process counts are zero before and after. The same user-approved authorization
+  context was reused without another QR scan. This verifies the isolated native
+  authentication/subscription path, not actual game IPC/launch or a persistent
+  production backend. Real Windows authentication remains unverified.
+- The successful helper closure retains the separately licensed LGPL SteamKit
+  source patch for asynchronous WebSocket cleanup. Its 21 protocol/build and
+  47 offline decision checks are bound independently from the real native run.
+  The previously successful preflight/native-failure attempt remains recorded:
+  native login dispatched, 38 online callbacks, a captured type-102/eight-byte
+  callback, account/subscription false and exit 5. No report was rewritten.
+- The earlier real attempt that passed QR/login but failed after the ownership
+  callback (`steam_error`, ownership stage, result OK) remains preserved history;
+  it handed no authorized context to a worker. The new positive preflight does
+  not rewrite that failure or promote its report into game compatibility.
+- The current signed live-status frontend snapshot passes 28 synthetic status,
+  rotation, viewport and cancellation checks. Its fixtures never showed a test
+  window. The earlier actual live run used the preserved preceding snapshot;
+  the latest binary is not retroactively assigned that run. SessionManager's
+  21 checks include the authenticated-host requirement before Steam session
+  mutation. Final app assembly from the current snapshot awaits documentation
+  freeze; no unchanged UI suite was rerun for this checkpoint.
+
+The native offline report's measured probe/driver sources precede later auth
+research edits. Their original hashes and the differences from current sources
+are retained explicitly. The latest successful authentication run is likewise limited to its recorded
+source/driver hashes; later cached-mode, network or other research behavior is
+not promoted by it. No historical failure is rewritten as a success; authentication is claimed only
+for the new measured native run. Actual game validation remains pending. Genuine Valve assets remain external proprietary
+inputs, and GameNative's withheld host/bootstrap is not included in Ready's
+free implementation. Distribution and actual owned-game validation remain open.
