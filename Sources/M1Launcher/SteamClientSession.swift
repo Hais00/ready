@@ -84,6 +84,7 @@ final class SteamClientSession {
     environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1"
     task.environment = environment; task.standardInput = input; task.standardOutput = output
     task.standardError = FileHandle.nullDevice
+    _=fcntl(input.fileHandleForWriting.fileDescriptor,F_SETNOSIGPIPE,1)
     do { try task.run() } catch { transition("offline", reason: "service_unavailable"); return }
     process = task; writer = input.fileHandleForWriting
     try? input.fileHandleForReading.close(); try? output.fileHandleForWriting.close()

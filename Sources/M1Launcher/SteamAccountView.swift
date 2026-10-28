@@ -37,6 +37,7 @@ final class SteamAccountView: NSView, ReadyDialogContentSizing {
   override init(frame: NSRect) {
     super.init(frame: frame)
     identity.font = .systemFont(ofSize: 20, weight: .semibold)
+    identity.cell?.lineBreakMode = .byTruncatingTail
     status.font = .systemFont(ofSize: 13)
     account.placeholderString = "Nome account Steam (diverso dal nome pubblico)"
     password.placeholderString = "Password · usata solo per questo accesso"
@@ -49,10 +50,14 @@ final class SteamAccountView: NSView, ReadyDialogContentSizing {
     presence.target = self; presence.action = #selector(presenceChanged)
     friendPicker.target=self;friendPicker.action = #selector(selectFriend)
     let login = row([button("Accedi con QR", #selector(qrLogin)), button("Accedi con password", #selector(passwordLogin))])
-    let connection = row([presence, button("Riconnetti", #selector(reconnect)), button("Modalità offline", #selector(offline)), button("Esci dall’account", #selector(logout))])
+    let presenceRow = row([presence, button("Riconnetti", #selector(reconnect))])
+    let sessionRow = row([button("Modalità offline", #selector(offline)), button("Esci dall’account", #selector(logout))])
+    let connection = NSStackView(views: [presenceRow, sessionRow])
+    connection.orientation = .vertical; connection.alignment = .leading; connection.spacing = 8
     let guardRow = row([guardCode, button("Conferma codice", #selector(sendGuard))])
-    let nameRow = row([publicName,button("Aggiorna nome pubblico",#selector(rename))])
-    let friendRow = row([friendID,button("Aggiungi",#selector(addFriend)),button("Rimuovi",#selector(removeFriend)),button("Blocca",#selector(blockFriend)),button("Sblocca",#selector(unblockFriend))])
+    let nameAction = button("Aggiorna nome pubblico",#selector(rename))
+    let friendActions = row([button("Aggiungi",#selector(addFriend)),button("Rimuovi",#selector(removeFriend)),button("Blocca",#selector(blockFriend)),button("Sblocca",#selector(unblockFriend))])
+    friendActions.distribution = .fillEqually
     guardRow.identifier = NSUserInterfaceItemIdentifier("steam.guard"); guardRow.isHidden = true
     friendText.isEditable = false; friendText.isSelectable = true
     friendText.frame = NSRect(x:0,y:0,width:660,height:150)
@@ -64,13 +69,17 @@ final class SteamAccountView: NSView, ReadyDialogContentSizing {
     friendScroll.documentView = friendText; friendScroll.hasVerticalScroller = true
     friendScroll.drawsBackground = false
     form.orientation = .vertical; form.alignment = .leading; form.spacing = 9
-    for view in [identity, status, connection, nameRow, account, password, login, guardRow, qrHost, NSTextField(labelWithString: "Amici e attività"), friendPicker, friendRow, friendScroll] { form.addArrangedSubview(view) }
+    for view in [identity, status, connection, publicName, nameAction, account, password, login, guardRow, qrHost, NSTextField(labelWithString: "Amici e attività"), friendPicker, friendID, friendActions, friendScroll] { form.addArrangedSubview(view) }
     addSubview(form)
     form.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([form.leadingAnchor.constraint(equalTo: leadingAnchor), form.trailingAnchor.constraint(equalTo: trailingAnchor), form.topAnchor.constraint(equalTo: topAnchor), form.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor)])
-    for view in [status, account, password, login, connection, nameRow, friendPicker, friendRow, guardRow, friendScroll, qrHost] {
+    for view in [identity, status, account, password, login, connection, publicName, nameAction, friendPicker, friendID, friendActions, guardRow, friendScroll, qrHost] {
       view.translatesAutoresizingMaskIntoConstraints = false
       view.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
+    }
+    for view in [presenceRow, sessionRow] {
+      view.translatesAutoresizingMaskIntoConstraints = false
+      view.widthAnchor.constraint(equalTo: connection.widthAnchor).isActive = true
     }
     friendScroll.heightAnchor.constraint(equalToConstant: 150).isActive = true
     qrHost.heightAnchor.constraint(equalToConstant: 260).isActive = true

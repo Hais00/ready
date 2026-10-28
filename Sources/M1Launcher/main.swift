@@ -694,6 +694,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       }
       if choice == 3 {
         self.cancelAuthentication()
+        MainActor.assumeIsolated { self.steamDownloads?.stop() }
         MainActor.assumeIsolated { self.steamNetwork?.logout() }
         MainActor.assumeIsolated { self.steamAccounts.signOut(profile: profile) }
         self.canvas.message = "Steam scollegato da questo profilo."

@@ -13,21 +13,32 @@ private final class DownloadControl:NSButton {
   var onControl:((String,String)->Void)?
   var titleForGame:((String)->String)?
   private let scroll=NSScrollView(), rows=DownloadRows()
+  private var lastJobs=[SteamDownloadJob]()
+  private var renderedWidth:CGFloat = -1
   override init(frame:NSRect){
     super.init(frame:frame);scroll.frame=bounds;scroll.autoresizingMask=[.width,.height]
     scroll.hasVerticalScroller=true;scroll.drawsBackground=false;scroll.documentView=rows;addSubview(scroll)
   }
   required init?(coder:NSCoder){fatalError("init(coder:) is not used")}
+  override func layout() {
+    super.layout()
+    if abs(renderedWidth-bounds.width)>0.5 { render(lastJobs) }
+  }
   func update(_ jobs:[SteamDownloadJob]) {
+    lastJobs=jobs;render(jobs)
+  }
+  private func render(_ jobs:[SteamDownloadJob]) {
+    renderedWidth=bounds.width
     rows.subviews.forEach{$0.removeFromSuperview()}
-    let width=max(600,bounds.width-20);rows.frame=NSRect(x:0,y:0,width:width,height:max(bounds.height,CGFloat(max(1,jobs.count))*115))
+    let width=max(200,bounds.width-20)
+    rows.frame=NSRect(x:0,y:0,width:width,height:bounds.height)
     if jobs.isEmpty {
       let label=NSTextField(wrappingLabelWithString:"Nessun download. Seleziona un gioco e scegli la versione macOS o Windows da installare.")
       label.frame=NSRect(x:4,y:15,width:width-15,height:60);rows.addSubview(label);return
     }
-    let states=["queued":"In coda","running":"Download in corso","paused":"In pausa","completed":"Installato e verificato","failed":"Errore","cancelled":"Annullato · file conservati","retry_wait":"Attesa rete","authorization_required":"Accesso Steam richiesto","interrupted":"Download interrotto"]
-    for(index,job)in jobs.enumerated(){
-      let top=CGFloat(index)*115
+    let states=["queued":"In coda","running":"Download in corso","preparing":"Preparazione","downloading":"Download in corso","verifying":"Verifica dei file","paused":"In pausa","completed":"Installato e verificato","failed":"Errore","cancelled":"Annullato · file conservati","retry_wait":"Attesa rete","authorization_required":"Accesso Steam richiesto","interrupted":"Download interrotto"]
+    var top:CGFloat=0
+    for job in jobs {
       let title=NSTextField(labelWithString:(titleForGame?(job.gameID) ?? job.gameID)+" · "+job.platform)
       title.font = .systemFont(ofSize:14,weight:.semibold);title.frame=NSRect(x:4,y:top,width:width-10,height:22);rows.addSubview(title)
       var text=states[job.state] ?? job.state
@@ -37,14 +48,17 @@ private final class DownloadControl:NSButton {
       let status=NSTextField(labelWithString:text);status.frame=NSRect(x:4,y:top+23,width:width-10,height:20);rows.addSubview(status)
       let progress=NSProgressIndicator(frame:NSRect(x:4,y:top+49,width:width-12,height:10))
       progress.style = .bar;progress.isIndeterminate=job.fraction==nil;progress.minValue=0;progress.maxValue=1
-      if let fraction=job.fraction {progress.doubleValue=fraction}else if job.state=="running"{progress.startAnimation(nil)}
+      if let fraction=job.fraction {progress.doubleValue=fraction}else if ["running","preparing","downloading","verifying"].contains(job.state){progress.startAnimation(nil)}
       rows.addSubview(progress)
       var controls=[(String,String)]()
-      if ["running","queued","retry_wait"].contains(job.state){controls.append(("Metti in pausa","pause"))}
+      if ["running","preparing","downloading","verifying","queued","retry_wait"].contains(job.state){controls.append(("Metti in pausa","pause"))}
       if ["paused","interrupted"].contains(job.state){controls.append(("Riprendi","resume"))}
-      if job.state=="failed"{controls.append(("Riprova","retry"))}
+      if ["failed","retry_wait"].contains(job.state){controls.append(("Riprova","retry"))}
       if !["completed","cancelled"].contains(job.state){controls.append(("Annulla download","cancel"))}
-      for(i,control)in controls.enumerated(){let button=DownloadControl(control.0){[weak self]in self?.onControl?(job.id,control.1)};button.frame=NSRect(x:4+CGFloat(i)*160,y:top+69,width:150,height:30);rows.addSubview(button)}
+      let columns=max(1,Int((width-4)/160))
+      for(i,control)in controls.enumerated(){let button=DownloadControl(control.0){[weak self]in self?.onControl?(job.id,control.1)};button.frame=NSRect(x:4+CGFloat(i%columns)*160,y:top+69+CGFloat(i/columns)*34,width:150,height:30);rows.addSubview(button)}
+      top += max(115,81+CGFloat((controls.count+columns-1)/columns)*34)
     }
+    rows.setFrameSize(NSSize(width:width,height:max(bounds.height,top)))
   }
 }

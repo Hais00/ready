@@ -6,7 +6,7 @@ from swift_probe_support import prepare_core
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 WORK=pathlib.Path('/Volumes/Dati APFS/Codex-ready-01a17e79')
 FAKE=r'''
-import json,sys
+import json,sys,os,time
 sequence=0;profile=None;generation=None;auth=None;current_state='offline';current_friends=[]
 def send(kind,id=None,**values):
  global sequence,current_state,current_friends
@@ -45,6 +45,8 @@ for line in sys.stdin:
  elif op=='logout':
   if auth:send('credentials',auth,credentials={'username':'fixture_account','refresh_token':'late_dummy_secret'})
   send('state',state='logged_out',reason='manual_logout');send('result',id)
+ elif op=='fixture_close_input':
+  os.close(0);send('result',id);time.sleep(.5);break
  else:send('result',id)
 '''
 def main():

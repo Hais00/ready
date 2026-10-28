@@ -39,6 +39,7 @@ final class SteamDownloads {
   private var generation=UUID()
   private var poll:Timer?
   private var attempts=[String:Int]()
+  private var retriesScheduled=Set<String>()
   private var delivered=Set<String>()
   private var stopped=false
   private var authorizationPaused=false
@@ -50,6 +51,7 @@ final class SteamDownloads {
       MainActor.assumeIsolated {
         guard let self,self.generation==epoch,!self.stopped else{return}
         if let values=event["jobs"]as?[[String:Any]] {for value in values{self.accept(value)}}
+        for job in self.snapshot where job.state=="retry_wait"&&job.retryable{self.retry(job)}
         self.changed();self.next()
       }
     }
@@ -118,11 +120,14 @@ final class SteamDownloads {
     active=(job.id,request)
   }
   private func retry(_ job:SteamDownloadJob) {
+    guard retriesScheduled.insert(job.id).inserted else{return}
     let count=(attempts[job.id] ?? 0)+1;attempts[job.id]=count
-    guard count<=5 else{return}
+    guard count<=5 else{retriesScheduled.remove(job.id);return}
     let epoch=generation
     DispatchQueue.main.asyncAfter(deadline:.now()+min(60,pow(2,Double(count)))){[weak self]in
-      guard let self,self.generation==epoch,!self.stopped,
+      guard let self else{return}
+      self.retriesScheduled.remove(job.id)
+      guard self.generation==epoch,!self.stopped,
         let current=self.jobs[job.id],["failed","retry_wait"].contains(current.state),current.retryable else{return}
       self.control(job.id,action:"retry",resetRetryBudget:false)
     }
@@ -143,5 +148,6 @@ final class SteamDownloads {
       client.cancel(current.1)
     }
     active=nil
+    retriesScheduled.removeAll()
   }
 }

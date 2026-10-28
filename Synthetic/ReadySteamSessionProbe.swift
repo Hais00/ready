@@ -60,6 +60,11 @@ import LauncherCore
     checks["lateCredentialAfterLogoutCannotResave"]=vault[profile]==nil&&saves==0
     let empty=SteamClientSession(profile:UUID(),command:[CommandLine.arguments[1],CommandLine.arguments[2]],credentialAccess:access)
     empty.start();try spin{empty.state.connection=="offline"};checks["realSnapshotShapeShowsOfflineWithoutCredential"]=true;empty.stop()
+    let broken=SteamClientSession(profile:other,command:[CommandLine.arguments[1],CommandLine.arguments[2]],credentialAccess:access)
+    broken.start();try spin{broken.state.online}
+    var inputClosed=false;broken.request("fixture_close_input"){_ in inputClosed=true};try spin{inputClosed}
+    var pipeFailure=false;broken.request("snapshot"){event in if event["type"]as?String=="error"{pipeFailure=true}}
+    try spin{pipeFailure};checks["closedServicePipeCannotSIGPIPELauncher"]=true;broken.stop()
     checks["allPassed"]=checks.values.allSatisfy{$0}
     print(String(data:try JSONSerialization.data(withJSONObject:checks,options:[.sortedKeys]),encoding:.utf8)!)
     if checks["allPassed"] != true{exit(1)}

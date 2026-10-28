@@ -242,6 +242,12 @@ final class ReadyDialogPresenter: NSObject {
       message.frame = NSRect(x: 0, y: 0, width: width - 16, height: textHeight)
       document.addSubview(message)
       if let content = request.content {
+        if content is ReadyDialogContentSizing {
+          // Responsive content must use the visible document width, rather
+          // than retain the larger frame supplied before the card was sized.
+          content.setFrameSize(NSSize(width: width - 16, height: content.frame.height))
+          content.autoresizingMask.insert(.width)
+        }
         content.frame.origin = NSPoint(x: 0, y: textHeight + 12)
         document.addSubview(content)
       }
