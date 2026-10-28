@@ -33,12 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     do {
       repository = LibraryRepository(paths: paths)
       state = try repository.load()
-      if let plan = LegacyMigration.loadPlan(paths: paths),
-        plan.status == "copied-awaiting-real-validation-original-retained"
-      {
-        state = try LegacyMigration.bindLibrary(state, plan: plan, paths: paths)
-        try repository.save(state)
-      }
+      state = try LegacyMigration.reconcileLibrary(state, paths: paths)
+      try repository.save(state)
     } catch { showError(error) }
     guard let device = MTLCreateSystemDefaultDevice() else {
       showError(LauncherError.unavailable("Questo Mac non dispone di Metal."))
@@ -67,6 +63,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     canvas = MetalCanvas(frame: NSRect(x: 0, y: 0, width: 1240, height: 760), device: device)
     canvas.autoresizingMask = [.width, .height]
     canvas.state = state
+    if LegacyMigration.requiresRecovery(paths: paths) {
+      canvas.message = "Operazione sui dati interrotta · Apri Libreria → Dati e ripristino"
+    }
     canvas.evaluationMode = activeRuntime().evaluationModeEnabled == true
     canvas.onAction = { [weak self] in self?.action($0) }
     window.contentView = canvas

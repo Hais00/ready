@@ -36,6 +36,8 @@ extension AppDelegate {
       checks["returnRestoresCanvas"] = self.canvas.allocatedTextureBytes > 0
       checks["returnRestoresWindowContent"] = self.window.contentView === self.canvas
       checks["notificationRemainsAccessible"] = self.backgroundNotices.count == 1
+      checks["interfaceCommandsRestoredAfterGame"] = self.validateMenuItem(
+        NSMenuItem(title: "Settings", action: #selector(AppDelegate.settings), keyEquivalent: ""))
       let report: [String: Any] = [
         "passed": checks.values.allSatisfy { $0 }, "checks": checks,
         "scope":
@@ -66,6 +68,8 @@ extension AppDelegate {
         checks["errorDoesNotShowLauncher"] = !self.window.isVisible
         checks["errorDoesNotRestoreGPUTexture"] = self.canvas.allocatedTextureBytes == 0
         checks["errorIsDeferred"] = self.backgroundNotices.count == 1
+        checks["interfaceCommandsDisabledDuringGame"] = !self.validateMenuItem(
+          NSMenuItem(title: "Settings", action: #selector(AppDelegate.settings), keyEquivalent: ""))
       case .failure:
         FileHandle.standardError.write(Data("Synthetic session startup failed.\n".utf8))
         NSApp.terminate(nil)

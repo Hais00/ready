@@ -1,7 +1,55 @@
 // SPDX-License-Identifier: GPL-3.0-only
+import Darwin
 import Foundation
 import LauncherChecks
 import LauncherCore
+
+for operation in ["--rollback-migration-fixture", "--recover-rollback-fixture", "--migration-status-fixture", "--reconcile-migration-fixture"] {
+  if let index = CommandLine.arguments.firstIndex(of: operation), CommandLine.arguments.indices.contains(index + 1) {
+    let paths = LauncherPaths(root: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+    guard FileManager.default.fileExists(atPath: paths.root.appendingPathComponent(".ready-synthetic-migration").path) else {
+      throw LauncherError.invalid("Rollback probe accepts only marked synthetic migration fixtures.")
+    }
+    func argument(_ name: String) -> String? {
+      guard let position = CommandLine.arguments.firstIndex(of: name), CommandLine.arguments.indices.contains(position + 1) else { return nil }
+      return CommandLine.arguments[position + 1]
+    }
+    if operation == "--reconcile-migration-fixture" {
+      let library = try LibraryRepository(paths: paths).load()
+      let updated = try LegacyMigration.reconcileLibrary(library, paths: paths)
+      try LibraryRepository(paths: paths).save(updated)
+      print("{\"reconciled\":true}"); exit(0)
+    }
+    if operation == "--migration-status-fixture" {
+      let plan = LegacyMigration.loadPlan(paths: paths)
+      var blocked = [String: Bool]()
+      if let plan { for id in plan.destinations.keys { blocked[id] = LegacyMigration.blocksSession(paths: paths, profile: plan.ownerProfile, gameID: id) } }
+      let value: [String: Any] = ["recoveryRequired": LegacyMigration.requiresRecovery(paths: paths), "kind": LegacyMigration.recoveryKind(paths: paths) ?? "none", "blocked": blocked]
+      print(String(decoding: try JSONSerialization.data(withJSONObject: value), as: UTF8.self)); exit(0)
+    }
+    let phase = argument("--pause-phase"), count = Int(argument("--pause-count") ?? "-1") ?? -1
+    let checkpoint: (String, Int) throws -> Void = { actual, moved in
+      if phase == actual && moved == count {
+        let report: [String: Any] = ["phase": actual, "count": moved, "pid": ProcessInfo.processInfo.processIdentifier]
+        try AtomicFile.writePrivate(JSONSerialization.data(withJSONObject: report), to: paths.root.appendingPathComponent(".rollback-probe-pause.json"))
+        // Probe-only deterministic fault point AFTER a real rename, before its progress commit.
+        raise(SIGSTOP)
+      }
+    }
+    let archive: URL
+    if operation == "--rollback-migration-fixture" {
+      guard let plan = LegacyMigration.loadPlan(paths: paths) else { throw LauncherError.invalid("Fixture migration plan missing.") }
+      archive = try LegacyMigration.rollbackFixture(plan, paths: paths, checkpoint: checkpoint)
+      try checkpoint("rollback.returned", plan.destinations.count)
+      let library = try LibraryRepository(paths: paths).load()
+      try LibraryRepository(paths: paths).save(LegacyMigration.libraryAfterRollback(library, plan: plan))
+    } else {
+      archive = try LegacyMigration.recoverInterruptedFixture(paths: paths, checkpoint: checkpoint)
+    }
+    let value: [String: Any] = ["archive": archive.path, "recoveryRequired": LegacyMigration.requiresRecovery(paths: paths), "kind": LegacyMigration.recoveryKind(paths: paths) ?? "none", "planStatus": LegacyMigration.loadPlan(paths: paths)?.status ?? "missing"]
+    print(String(decoding: try JSONSerialization.data(withJSONObject: value), as: UTF8.self)); exit(0)
+  }
+}
 
 for operation in ["--execute-migration-fixture", "--recover-migration-fixture"] {
   if let index = CommandLine.arguments.firstIndex(of: operation),

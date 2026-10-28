@@ -1,8 +1,8 @@
 {
-  "createdAt": "2026-10-28T03:07:00.186750+01:00",
+  "createdAt": "2026-10-28T03:29:36.744252+01:00",
   "goalComplete": false,
   "core": {
-    "checks": 24,
+    "checks": 25,
     "passed": true,
     "names": [
       "Valve manifests and malformed input",
@@ -16,6 +16,7 @@
       "Literal process arguments and verified engine selection",
       "Dependencies and registry remain isolated between games",
       "Non-destructive legacy migration and rollback source",
+      "Interrupted rollback restores copies and preserves conflicts",
       "Migration preflight does not leave partial prefixes",
       "Migrated executable bindings belong only to the assigned profile",
       "Interrupted copies are archived and block only affected sessions",
@@ -70,6 +71,24 @@
       "originalUnchangedAfterRetry": true
     },
     "scope": "actual LauncherCore FileManager copy, SIGKILL, journal recovery and retry; synthetic files only"
+  },
+  "rollbackCrash": {
+    "passed": true,
+    "checks": {
+      "killedAfterTwoActualRenamesBeforeProgressCommit": true,
+      "liveTransactionPreventsRecoveryMutation": true,
+      "pendingRollbackBlocksAffectedSessions": true,
+      "conflictMoveCrashKeepsBothCopiesJournaled": true,
+      "recoveryItselfCanCrashAfterActualRestore": true,
+      "recoveryCommitBoundaryCanResumeWithoutRepeatingMoves": true,
+      "repeatedRecoveryRestoresEveryModifiedCopyAndOriginal": true,
+      "libraryBindingsRemainValidAfterRollbackAbort": true,
+      "retryCommitsArchiveWithoutDeletingNewOrOriginalData": true,
+      "commitBoundaryCrashAbortsSafelyAndRestoresBindings": true,
+      "postCommitCrashReconcilesStaleLibraryWithoutPrefixMutation": true
+    },
+    "realSIGKILLCount": 6,
+    "scope": "actual rollback and recovery renames with SIGKILL, before progress commit; synthetic prefixes only"
   },
   "controllerPolicy": {
     "passed": true,
@@ -238,6 +257,8 @@
       "errorDoesNotShowLauncher": true,
       "errorIsDeferred": true,
       "initialCanvasAllocated": true,
+      "interfaceCommandsDisabledDuringGame": true,
+      "interfaceCommandsRestoredAfterGame": true,
       "notificationRemainsAccessible": true,
       "realSessionStarted": true,
       "returnRestoresCanvas": true,
@@ -262,7 +283,7 @@
     "Physical-controller behavior and in-game input suppression",
     "Native macOS game save/account isolation and complete release packaging",
     "Guided migration UI visual verification (Mac locked during current attempt)",
-    "Real legacy user-data/game migration and rollback interrupted mid-move",
+    "Real legacy user-data/game migration beyond synthetic copy and rollback crash fixtures",
     "External updaters that do not participate in the installation lease protocol",
     "Corresponding source, build provenance and license notices for bootstrapped runtime dependency binaries"
   ]

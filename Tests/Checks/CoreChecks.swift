@@ -30,6 +30,7 @@ public final class CoreChecks {
       ),
       ("Dependencies and registry remain isolated between games", testDependencyIsolation),
       ("Non-destructive legacy migration and rollback source", testLegacyMigration),
+      ("Interrupted rollback restores copies and preserves conflicts", RollbackRecoveryChecks.validate),
       ("Migration preflight does not leave partial prefixes", testMigrationPreflight),
       ("Migrated executable bindings belong only to the assigned profile", testMigrationBindings),
       ("Interrupted copies are archived and block only affected sessions", testMigrationRecovery),

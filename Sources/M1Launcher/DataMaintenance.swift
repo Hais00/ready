@@ -11,10 +11,13 @@ private enum MaintenanceOperation {
   func execute(paths: LauncherPaths) throws -> (LibraryState?, String) {
     switch self {
     case .recover:
+      let restoringRollback = LegacyMigration.recoveryKind(paths: paths) == "rollback"
       _ = try LegacyMigration.recoverInterrupted(paths: paths)
       return (
         nil,
-        "Copie parziali archiviate. Puoi ripetere la migrazione; originali e dati personali conservati."
+        restoringRollback
+          ? "Annullamento interrotto recuperato: copie migrate ripristinate, originali e dati personali conservati."
+          : "Copie parziali archiviate. Puoi ripetere la migrazione; originali e dati personali conservati."
       )
     case .bind(let plan, let library):
       let rebound = try LegacyMigration.bindLibrary(library, plan: plan, paths: paths)
@@ -86,11 +89,15 @@ extension AppDelegate {
   @objc func dataMaintenance() {
     guard canMaintainData() else { return }
     if LegacyMigration.requiresRecovery(paths: paths) {
+      let restoringRollback = LegacyMigration.recoveryKind(paths: paths) == "rollback"
       let prompt = NSAlert()
-      prompt.messageText = "Migrazione interrotta"
+      prompt.messageText = restoringRollback ? "Annullamento interrotto" : "Migrazione interrotta"
       prompt.informativeText =
-        "Il vecchio ambiente è intatto. Le copie parziali saranno archiviate insieme al registro dell’operazione; i dati personali persistenti saranno conservati. Potrai poi ripetere la migrazione."
-      prompt.addButton(withTitle: "Archivia copie parziali")
+        restoringRollback
+        ? "Le copie migrate saranno ripristinate nei loro ambienti, così i collegamenti della libreria resteranno validi. L’originale e i dati personali rimarranno intatti; eventuali copie in conflitto saranno conservate in archivio. Potrai poi ripetere l’annullamento."
+        : "Il vecchio ambiente è intatto. Le copie parziali saranno archiviate insieme al registro dell’operazione; i dati personali persistenti saranno conservati. Potrai poi ripetere la migrazione."
+      prompt.addButton(
+        withTitle: restoringRollback ? "Ripristina copie migrate" : "Archivia copie parziali")
       prompt.addButton(withTitle: "Annulla")
       guard prompt.runModal() == .alertFirstButtonReturn else { return }
       maintain("Recupero dell’operazione interrotta…", operation: .recover)
