@@ -9,7 +9,7 @@ enum CanvasAction {
   case game(String)
   case gameOptions(String)
   case store(Store?)
-  case profiles, importGame, settings, search, fullscreen, refresh
+  case profiles, importGame, settings, search, fullscreen, refresh, steamAccount, downloads
 }
 struct CanvasHit {
   let id: String
@@ -73,6 +73,8 @@ final class MetalCanvas: NSView {
   }
   var message = ""
   var evaluationMode = false
+  var steamStatus = "Steam"
+  var steamOnline = false
   var onAction: ((CanvasAction) -> Void)?
   private var hits = [CanvasHit]()
   private var hoverID: String?
@@ -316,6 +318,7 @@ final class MetalCanvas: NSView {
       button(r, symbols[i], .store(s), id: "nav.store." + s.rawValue, active: filter == s)
     }
     button(CGRect(x: 12, y: height - 174, width: 46, height: 46), "person.2", .profiles, id: "nav.profiles")
+    button(CGRect(x:12,y:height-232,width:46,height:46),"arrow.down.circle",.downloads,id:"nav.downloads")
     button(CGRect(x: 12, y: height - 116, width: 46, height: 46), "plus", .importGame, id: "nav.import")
     button(CGRect(x: 12, y: height - 58, width: 46, height: 46), "gearshape", .settings, id: "nav.settings")
     let left: CGFloat = 112
@@ -327,7 +330,7 @@ final class MetalCanvas: NSView {
       color: color(evaluationMode ? 0xe8b76d : 0xb2c2c1))
     let profile = state.profiles.first { $0.id == state.activeProfile }?.name ?? "Giocatore"
     text(profile, CGRect(x: width - 330, y: 29, width: 180, height: 27), size: 14, bold: true)
-    icon("wifi", CGRect(x: width - 137, y: 30, width: 20, height: 20), tint: color(0xced4d3))
+    button(CGRect(x:width - 148,y:21,width:38,height:38),steamOnline ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.exclamationmark",.steamAccount,id:"toolbar.steam.account")
     let fmt = DateFormatter()
     fmt.dateFormat = "HH:mm"
     text(

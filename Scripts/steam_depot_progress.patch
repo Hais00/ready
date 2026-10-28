@@ -1,0 +1,220 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Independent private-I/O/numeric-progress changes against pinned DepotDownloader.
+--- a/ContentDownloader.cs
++++ b/ContentDownloader.cs
+@@ -434,6 +434,7 @@
+                 }
+                 else
+                 {
++                    ReadyDownloadProgress.Error("not_authorized");
+                     var contentName = GetAppName(appId);
+                     throw new ContentDownloaderException(string.Format("App {0} ({1}) is not available from this account.", appId, contentName));
+                 }
+@@ -695,11 +696,14 @@
+                 }
+             }
+ 
++            ReadyDownloadProgress.Plan((ulong)depotsToDownload.SelectMany(d => d.filteredFiles).Where(f => !f.Flags.HasFlag(EDepotFileFlag.Directory)).Sum(f => (long)f.TotalSize));
++
+             foreach (var depotFileData in depotsToDownload)
+             {
+                 await DownloadSteam3AsyncDepotFiles(cts, downloadCounter, depotFileData, allFileNamesAllDepots);
+             }
+ 
++            ReadyDownloadProgress.Finish(depotsToDownload.ToDictionary(d => d.depotDownloadInfo.DepotId.ToString(), d => d.depotDownloadInfo.ManifestId.ToString()));
+             Ansi.Progress(Ansi.ProgressState.Hidden);
+ 
+             Console.WriteLine("Total downloaded: {0} bytes ({1} bytes uncompressed) from {2} depots",
+@@ -750,8 +754,10 @@
+                     ulong manifestRequestCode = 0;
+                     var manifestRequestCodeExpiration = DateTime.MinValue;
+ 
++                    int readyManifestAttempts = 0;
+                     do
+                     {
++                        if (++readyManifestAttempts > 5) { ReadyDownloadProgress.Error("network_error"); cts.Cancel(); }
+                         cts.Token.ThrowIfCancellationRequested();
+ 
+                         Server connection = null;
+@@ -824,6 +830,7 @@
+ 
+                             if (e.StatusCode == HttpStatusCode.Unauthorized || e.StatusCode == HttpStatusCode.Forbidden)
+                             {
++                                ReadyDownloadProgress.Error("authentication_required");
+                                 Console.WriteLine("Encountered {2} for depot manifest {0} {1}. Aborting.", depot.DepotId, depot.ManifestId, (int)e.StatusCode);
+                                 break;
+                             }
+@@ -998,10 +1005,7 @@
+             var fileStagingPath = Path.Combine(stagingDir, file.FileName);
+ 
+             // This may still exist if the previous run exited before cleanup
+-            if (File.Exists(fileStagingPath))
+-            {
+-                File.Delete(fileStagingPath);
+-            }
++            ReadyDownloadProgress.RecoverStaging(fileStagingPath, fileFinalPath, file.Chunks, Path.Combine(depot.InstallDir, CONFIG_DIR, "ready-recovery"));
+ 
+             List<DepotManifest.ChunkData> neededChunks;
+             var fi = new FileInfo(fileFinalPath);
+@@ -1018,6 +1022,7 @@
+                 }
+                 catch (IOException ex)
+                 {
++                    ReadyDownloadProgress.Exception(ex);
+                     throw new ContentDownloaderException(string.Format("Failed to allocate file {0}: {1}", fileFinalPath, ex.Message));
+                 }
+ 
+@@ -1089,6 +1094,7 @@
+                                 }
+                                 catch (IOException ex)
+                                 {
++                                    ReadyDownloadProgress.Exception(ex);
+                                     throw new ContentDownloaderException(string.Format("Failed to resize file to expected size {0}: {1}", fileFinalPath, ex.Message));
+                                 }
+ 
+@@ -1121,7 +1127,8 @@
+                         }
+                         catch (IOException ex)
+                         {
+-                            throw new ContentDownloaderException(string.Format("Failed to allocate file {0}: {1}", fileFinalPath, ex.Message));
++                            ReadyDownloadProgress.Exception(ex);
++                    throw new ContentDownloaderException(string.Format("Failed to allocate file {0}: {1}", fileFinalPath, ex.Message));
+                         }
+                     }
+ 
+@@ -1131,6 +1138,7 @@
+ 
+                 if (neededChunks.Count == 0)
+                 {
++                    ReadyDownloadProgress.Existing(file.TotalSize);
+                     lock (depotDownloadCounter)
+                     {
+                         depotDownloadCounter.sizeDownloaded += file.TotalSize;
+@@ -1146,6 +1154,7 @@
+                 }
+ 
+                 var sizeOnDisk = (file.TotalSize - (ulong)neededChunks.Select(x => (long)x.UncompressedLength).Sum());
++                ReadyDownloadProgress.Existing(sizeOnDisk);
+                 lock (depotDownloadCounter)
+                 {
+                     depotDownloadCounter.sizeDownloaded += sizeOnDisk;
+@@ -1200,8 +1209,10 @@
+ 
+             try
+             {
++                int readyChunkAttempts = 0;
+                 do
+                 {
++                    if (++readyChunkAttempts > 5) { ReadyDownloadProgress.Error("network_error"); cts.Cancel(); }
+                     cts.Token.ThrowIfCancellationRequested();
+ 
+                     Server connection = null;
+@@ -1310,6 +1321,7 @@
+                 fileStreamData.fileLock.Dispose();
+             }
+ 
++            ReadyDownloadProgress.Chunk((ulong)written, chunk.CompressedLength);
+             ulong sizeDownloaded = 0;
+             lock (depotDownloadCounter)
+             {
+--- a/DepotConfigStore.cs
++++ b/DepotConfigStore.cs
+@@ -53,9 +53,13 @@
+             if (!Loaded)
+                 throw new Exception("Saved config before loading");
+ 
+-            using var fs = File.Open(Instance.FileName, FileMode.Create);
+-            using var ds = new DeflateStream(fs, CompressionMode.Compress);
+-            Serializer.Serialize(ds, Instance);
++            var temporary = Instance.FileName + ".ready-" + Guid.NewGuid().ToString("N");
++            using (var fs = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
++            {
++                using (var ds = new DeflateStream(fs, CompressionMode.Compress, true)) Serializer.Serialize(ds, Instance);
++                fs.Flush(true);
++            }
++            File.Move(temporary, Instance.FileName, true);
+         }
+     }
+ }
+--- a/Steam3Session.cs
++++ b/Steam3Session.cs
+@@ -563,6 +563,7 @@
+             }
+             else if (connectionBackoff >= 10)
+             {
++                ReadyDownloadProgress.Error("network_error");
+                 Console.WriteLine("Could not connect to Steam after 10 tries");
+                 Abort(false);
+             }
+@@ -598,6 +599,11 @@
+                 or EResult.Expired
+                 or EResult.Revoked;
+ 
++            if (Environment.GetEnvironmentVariable("READY_TOKEN_STDIN") == "1" && (isSteamGuard || is2FA || isAccessToken))
++            {
++                ReadyDownloadProgress.Error("authentication_required"); Abort(false); return;
++            }
++
+             if (isSteamGuard || is2FA || isAccessToken)
+             {
+                 bExpectingDisconnectRemote = true;
+@@ -652,6 +658,7 @@
+ 
+             if (loggedOn.Result == EResult.ServiceUnavailable)
+             {
++                ReadyDownloadProgress.Error("network_error");
+                 Console.WriteLine("Unable to login to Steam3: {0}", loggedOn.Result);
+                 Abort(false);
+ 
+@@ -660,6 +667,7 @@
+ 
+             if (loggedOn.Result != EResult.OK)
+             {
++                ReadyDownloadProgress.Error(loggedOn.Result is EResult.NoConnection or EResult.Timeout ? "network_error" : loggedOn.Result is EResult.RateLimitExceeded or EResult.LimitExceeded ? "rate_limited" : "authentication_required");
+                 Console.WriteLine("Unable to login to Steam3: {0}", loggedOn.Result);
+                 Abort();
+ 
+--- a/Program.cs
++++ b/Program.cs
+@@ -193,11 +193,13 @@
+                         ex is ContentDownloaderException
+                         || ex is OperationCanceledException)
+                     {
++                        ReadyDownloadProgress.Exception(ex);
+                         Console.WriteLine(ex.Message);
+                         return 1;
+                     }
+                     catch (Exception e)
+                     {
++                        ReadyDownloadProgress.Exception(e);
+                         Console.WriteLine("Download failed to due to an unhandled exception: {0}", e.Message);
+                         throw;
+                     }
+@@ -230,11 +232,13 @@
+                         ex is ContentDownloaderException
+                         || ex is OperationCanceledException)
+                     {
++                        ReadyDownloadProgress.Exception(ex);
+                         Console.WriteLine(ex.Message);
+                         return 1;
+                     }
+                     catch (Exception e)
+                     {
++                        ReadyDownloadProgress.Exception(e);
+                         Console.WriteLine("Download failed to due to an unhandled exception: {0}", e.Message);
+                         throw;
+                     }
+@@ -328,11 +332,13 @@
+                         ex is ContentDownloaderException
+                         || ex is OperationCanceledException)
+                     {
++                        ReadyDownloadProgress.Exception(ex);
+                         Console.WriteLine(ex.Message);
+                         return 1;
+                     }
+                     catch (Exception e)
+                     {
++                        ReadyDownloadProgress.Exception(e);
+                         Console.WriteLine("Download failed to due to an unhandled exception: {0}", e.Message);
+                         throw;
+                     }

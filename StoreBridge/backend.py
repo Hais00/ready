@@ -31,7 +31,9 @@ def transfer_legendary_cache(source,dest):
         if src.is_dir():shutil.copytree(src,target,dirs_exist_ok=True)
         else:shutil.copy2(src,target)
 def steam_request(request):
-    if request['operation'] in ('download','install'):return download(request)
+    from steam_downloads import OPERATIONS,dispatch as download_dispatch,legacy_download
+    if request['operation'] in OPERATIONS:return download_dispatch(request)
+    if request['operation'] in ('download','install'):return legacy_download(request)
     dotnet=TOOLS/'dotnet/dotnet';helper=tool_payload('SteamBridge/ReadySteamBridge.dll','StoreBridge/SteamBridge/bin/Release/net10.0/ReadySteamBridge.dll')
     if not dotnet.exists() or not helper.exists():raise BridgeError('backend_missing','Build the open Steam bridge with Scripts/store_bootstrap.py first')
     env={**os.environ,'DOTNET_CLI_TELEMETRY_OPTOUT':'1','DOTNET_GENERATE_ASPNET_CERTIFICATE':'false'}
@@ -84,7 +86,11 @@ def prepare_download(request,config,secrets_dir):
         dll=tool_payload('DepotDownloader/DepotDownloader.dll','StoreBridge/Dependencies/depotdownloader/DepotDownloader/bin/Release/net9.0/DepotDownloader.dll');dotnet=TOOLS/'dotnet/dotnet'
         if not dotnet.exists() or not dll.exists():raise BridgeError('backend_missing','Build the open Steam downloader first')
         env['READY_TOKEN_STDIN']='1'
-        args=[str(dotnet),str(dll),'-app',gid,'-username','ready-stdin-account','-remember-password','-os','macos' if platform=='macOS' else 'windows','-osarch','64','-dir',str(path)]
+        # Reserved downloader range is disjoint from the persistent service's
+        # 1..0x7fffffff LoginID range. Never reuse DepotDownloader's IP default.
+        login_id=o.get('downloadLoginID',0xD0000000|int.from_bytes(os.urandom(4),'big')&0x0fffffff)
+        if type(login_id)is not int or not 0xD0000000<=login_id<=0xDfffffff:raise BridgeError('invalid_request','Invalid downloader connection identity')
+        args=[str(dotnet),str(dll),'-app',gid,'-username','ready-stdin-account','-remember-password','-loginid',str(login_id),'-validate','-os','macos' if platform=='macOS' else 'windows','-osarch','64','-dir',str(path)]
         return args,env,json.dumps({'username':c['username'],'refresh_token':c['refresh_token']})+'\n',path
     if not py.exists():raise BridgeError('backend_missing','Install the open store engines with Scripts/store_bootstrap.py first')
     if store=='epic':

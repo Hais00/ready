@@ -17,8 +17,14 @@ static class Program
         return value.GetString() ?? fallback;
     }
     static TaskCompletionSource<T> Completion<T>() => new(TaskCreationOptions.RunContinuationsAsynchronously);
-    static async Task<int> Main()
+    static async Task<int> Main(string[] args)
     {
+        if(args.Length==1&&args[0]=="--service")
+        {
+            try{return await PersistentSteamService.RunAsync(Console.In,Console.Out,new SteamKitServiceTransport());}
+            catch{return 1;} // No unhandled SDK/cleanup exception text on stderr.
+        }
+        if(args.Length!=0)return 1;
         var stage=SteamOperationStage.Request;EResult? observedResult=null;
         SteamOwnershipFacts? ownershipFacts=null;
         try

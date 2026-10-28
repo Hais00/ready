@@ -109,7 +109,7 @@ def readonly_tree(root):
     for p in pathlib.Path(root).rglob('*'):
         if p.is_file() and not p.is_symlink():p.chmod(0o555 if p.stat().st_mode&0o111 else 0o444)
 
-def build(*,workspace,sdk_root,tools_store):
+def build(*,workspace,sdk_root,tools_store,downloader_root=None):
     recipe_before=sha(pathlib.Path(__file__))
     bootstrap_before=sha(ROOT/'Scripts/store_bootstrap.py')
     workspace=canonical(workspace);owned(workspace,True);sdk=canonical(sdk_root);owned(sdk,True)
@@ -120,7 +120,9 @@ def build(*,workspace,sdk_root,tools_store):
     run=pathlib.Path(tempfile.mkdtemp(prefix='steam-tools-build-',dir=workspace));run.chmod(0o700)
     write_new(run/'.ready-store-steam-build',{'schema':1,'kind':'owned-steam-tools-build'})
     source=run/'source';project=source/'StoreBridge/SteamBridge';project.mkdir(mode=0o700,parents=True)
-    for name in ['Program.cs','SteamBridge.csproj']:copy_file(ROOT/'StoreBridge/SteamBridge'/name,project/name)
+    project_files=[*sorted((ROOT/'StoreBridge/SteamBridge').glob('*.cs')),ROOT/'StoreBridge/SteamBridge/SteamBridge.csproj']
+    project_inputs={path.name:sha(path)for path in project_files}
+    for source_file in project_files:copy_file(source_file,project/source_file.name)
     vendor=source/'Vendor/steamkit';source_copy(ROOT/'Vendor/steamkit',vendor)
     original=ROOT/'Vendor/steamkit';original_patch=original/json.loads((ROOT/'Scripts/steamkit_websocket_close.lock.json').read_text())['path']
     upstream_before=sha(original_patch);patch=apply_steamkit_patch(vendor)
@@ -134,7 +136,8 @@ def build(*,workspace,sdk_root,tools_store):
     command=[str(sdk/'dotnet'),'build',str(project/'SteamBridge.csproj'),'-c','Release','--nologo','--configfile',str(config),'-p:TargetFrameworks=net10.0','-p:NuGetAudit=false','-p:UseSharedCompilation=false','-nodeReuse:false','-o',str(output)]
     result=subprocess.run(command,cwd=run,env=env,capture_output=True,text=True,timeout=180);(run/'build.log').write_text(result.stdout+result.stderr)
     if result.returncode:raise RuntimeError('Offline SteamBridge source build failed; retained private build log')
-    if sha(original_patch)!=upstream_before or sha(project/'Program.cs')!=sha(ROOT/'StoreBridge/SteamBridge/Program.cs'):raise ValueError('Source input changed during build')
+    current_project_files=[*sorted((ROOT/'StoreBridge/SteamBridge').glob('*.cs')),ROOT/'StoreBridge/SteamBridge/SteamBridge.csproj']
+    if sha(original_patch)!=upstream_before or {path.name:sha(path)for path in current_project_files}!=project_inputs or any(sha(project/name)!=digest for name,digest in project_inputs.items()):raise ValueError('Source input changed during build')
     if sha(pathlib.Path(__file__))!=recipe_before or sha(ROOT/'Scripts/store_bootstrap.py')!=bootstrap_before:raise ValueError('Source build recipe changed while compiling')
     stage=store/('.stage-'+uuid.uuid4().hex);stage.mkdir(mode=0o700)
     shutil.copytree(output,stage/'SteamBridge',symlinks=True,copy_function=copy_file)
@@ -152,6 +155,9 @@ def build(*,workspace,sdk_root,tools_store):
         for archive in (packages/relative).glob('*.nupkg'):copy_file(archive,stage/'BuildInputs/NuGet'/relative/archive.name)
     aliases={}
     for name,target in [('venv',ROOT/'Runtime/Tools/StoreBridge/venv'),('DepotDownloader',ROOT/'StoreBridge/Dependencies/depotdownloader/DepotDownloader/bin/Release/net9.0')]:
+        if name=='DepotDownloader':
+            if downloader_root is not None:target=canonical(downloader_root)
+            elif (ROOT/'Runtime/Tools/StoreBridge/DepotDownloader').exists():target=(ROOT/'Runtime/Tools/StoreBridge/DepotDownloader').resolve(strict=True)
         if target.is_dir():
             (stage/name).symlink_to(target,target_is_directory=True)
             aliases[name]={'path':str(target),'inventorySHA256':identity(inventory(target)),'readOnlyUseContract':True,'portable':False}

@@ -270,8 +270,13 @@ final class StoreClient {
         if ["result", "auth_url", "error"].contains(type) { terminal = value }
         else if ["progress", "qr"].contains(type) { deliver(value, state: state) }
       }
-      while let chunk = try output.fileHandleForReading.read(upToCount: 4096), !chunk.isEmpty {
-        pending.append(chunk)
+      var storage=[UInt8](repeating:0,count:4096)
+      while true {
+        let count=Darwin.read(output.fileHandleForReading.fileDescriptor,&storage,storage.count)
+        if count<0&&errno==EINTR{continue}
+        if count<0{throw Failure.pipe}
+        if count==0{break}
+        pending.append(contentsOf:storage.prefix(count))
         guard pending.count < 32_000_000 else { throw Failure.response }
         while let newline = pending.firstIndex(of: 0x0a) {
           try consume(Data(pending[..<newline]))

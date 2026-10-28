@@ -187,3 +187,9 @@ not moved or deleted. That view is local-only. Python/Homebrew portability,
 complete .NET/NuGet corresponding-source/notices and whole-tools binary
 distribution approval remain separate work. The manifest does not label those
 closures approved or include any proprietary Valve/Apple assets.
+
+The Steam download path now has a [durable queue and pause/resume adapter](DOWNLOADS.md).
+It persists safe per-profile jobs, retains partial game/depot data, inherits the
+shared installation lease, and publishes launch state only after completion and
+binary/manifest checks. Its process and C# fixtures are synthetic; they do not
+claim real account/CDN/commercial-game download validation.

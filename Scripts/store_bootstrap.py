@@ -29,9 +29,9 @@ def install_python():
         nile.write_text(text+'\n[tool.setuptools.packages.find]\ninclude = ["nile*"]\n')
     run(target/'bin/python','-m','pip','install','--disable-pip-version-check',ROOT/'StoreBridge/Dependencies/legendary',ROOT/'StoreBridge/Dependencies/gogdl',ROOT/'StoreBridge/Dependencies/nile')
     with (ROOT/'Evidence/stores-python-packages.txt').open('w') as out:run(target/'bin/python','-m','pip','freeze',stdout=out)
-def patch_depot():
+def patch_depot(source=None):
     # Separate GPL-2 tool, communicating over stdin/stdout; never linked into the GPL-3 app.
-    source=ROOT/'StoreBridge/Dependencies/depotdownloader/DepotDownloader'
+    source=pathlib.Path(source) if source is not None else ROOT/'StoreBridge/Dependencies/depotdownloader/DepotDownloader'
     program=source/'Program.cs';text=program.read_text(encoding='utf-8-sig')
     if 'READY_TOKEN_STDIN' not in text:
         needle='ContentDownloader.Config.RememberPassword = HasParameter(args, "-remember-password");'
@@ -85,16 +85,25 @@ def build_steam(*,work_root=None,sdk_root=None,tools_store=None,steam_only=False
     workspace=pathlib.Path(work_root or os.environ.get('READY_STORE_BUILD_ROOT',ROOT/'Runtime/Tools/StoreBridge/build'))
     workspace.mkdir(parents=True,exist_ok=True,mode=0o700)
     destination=pathlib.Path(tools_store or ROOT/'Runtime/Tools/StoreBridge/Versions')
-    result=build(workspace=workspace.resolve(),sdk_root=sdk.resolve(),tools_store=destination.resolve())
-    if select_project:result['selection']=select_helper(pathlib.Path(result['versionRoot']))
+    downloader=None
     if not steam_only:
-        patch_depot()
-        run(sdk/'dotnet','build',ROOT/'StoreBridge/Dependencies/depotdownloader/DepotDownloader/DepotDownloader.csproj','-c','Release','--nologo')
+        from build_steam_downloader import build as build_downloader,select_project as select_downloader
+        downloader=build_downloader(workspace.resolve(),sdk.resolve(),destination.resolve()/'DownloadVersions')
+        if select_project:downloader['selection']=select_downloader(pathlib.Path(downloader['versionRoot']))
+    result=build(workspace=workspace.resolve(),sdk_root=sdk.resolve(),tools_store=destination.resolve(),downloader_root=pathlib.Path(downloader['versionRoot'])/'DepotDownloader' if downloader else None)
+    if select_project:result['selection']=select_helper(pathlib.Path(result['versionRoot']))
+    if downloader:result['downloader']=downloader
     return result
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--sources-only',action='store_true');parser.add_argument('--steam-only',action='store_true')
+    parser=argparse.ArgumentParser();parser.add_argument('--sources-only',action='store_true');parser.add_argument('--steam-only',action='store_true');parser.add_argument('--steam-downloader-only',action='store_true')
     parser.add_argument('--work-root',type=pathlib.Path);parser.add_argument('--sdk-root',type=pathlib.Path);parser.add_argument('--tools-store',type=pathlib.Path)
     parser.add_argument('--no-project-helper-selection',action='store_true');a=parser.parse_args()
+    if a.steam_downloader_only:
+        if a.sources_only or a.steam_only or not all([a.work_root,a.sdk_root,a.tools_store]):parser.error('--steam-downloader-only requires explicit owned work/sdk/store paths; no fetching')
+        from build_steam_downloader import build,select_project
+        result=build(a.work_root.resolve(),a.sdk_root.resolve(),a.tools_store.resolve())
+        if not a.no_project_helper_selection:result['selection']=select_project(pathlib.Path(result['versionRoot']))
+        print(json.dumps(result,indent=2));return
     if a.steam_only:
         if a.sources_only or not all([a.work_root,a.sdk_root,a.tools_store]):parser.error('--steam-only requires explicit --work-root, --sdk-root and --tools-store; no fetching is performed')
         print(json.dumps(build_steam(work_root=a.work_root,sdk_root=a.sdk_root,tools_store=a.tools_store,steam_only=True,select_project=not a.no_project_helper_selection),indent=2));return

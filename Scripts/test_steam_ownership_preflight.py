@@ -154,7 +154,7 @@ def main():
         else: shutil.copy2(source, target)
     cache.verify_archive(manifest, sdk)
     source = build / 'source'; project = source / 'StoreBridge/SteamBridge'; project.mkdir(parents=True)
-    for name in ('Program.cs', 'SteamBridge.csproj'): shutil.copy2(ROOT / 'StoreBridge/SteamBridge' / name, project / name)
+    for source in [*sorted((ROOT / 'StoreBridge/SteamBridge').glob('*.cs')), ROOT / 'StoreBridge/SteamBridge/SteamBridge.csproj']: shutil.copy2(source, project / source.name)
     vendor = source / 'Vendor/steamkit'; vendor.parent.mkdir(parents=True)
     shutil.copytree(ROOT / 'Vendor/steamkit', vendor, ignore=shutil.ignore_patterns('bin', 'obj', '.git'))
     patch_path=ROOT/'Scripts/steamkit_websocket_close.patch'

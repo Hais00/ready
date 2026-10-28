@@ -21,6 +21,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   var controllerObserver: NSObjectProtocol?
   var storeClient: StoreClient!
   var steamAccounts: SteamAccountCoordinator!
+  var steamNetwork: SteamClientSession?
+  var steamAccountView: SteamAccountView?
+  var steamGuardChallenge: String?
+  var steamDownloads: SteamDownloads?
+  var steamDownloadsView: SteamDownloadsView?
   lazy var dialogs = ReadyDialogPresenter(window: { [weak self] in self?.window })
   var qrDialog: UUID?
   var qrImage: NSImageView?
@@ -133,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     NSApp.activate(ignoringOtherApps: true)
     if args.contains("--fullscreen") { window.toggleFullScreen(nil) }
     refreshLocal()
+    MainActor.assumeIsolated { configureSteamNetwork() }
   }
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     !CommandLine.arguments.contains("--graphics-self-test") && !session.running
@@ -193,11 +199,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       return .terminateLater
     }
     storeClient?.cancelAll()
+    MainActor.assumeIsolated { steamDownloads?.stop() }
+    MainActor.assumeIsolated { steamNetwork?.stop() }
     return .terminateNow
   }
   func windowDidResize(_ notification: Notification) { canvas?.refresh() }
   // Called only at initial startup or while every session/store operation is idle.
   func configureRuntimeClients() {
+    MainActor.assumeIsolated { steamNetwork?.stop(); steamNetwork = nil }
     session = SessionManager(paths: paths, project: project, runtimeRoot: runtimeRoot)
     session.onWillLaunch = { [weak self] in
       guard let self else { return }
@@ -244,6 +253,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       let item = library.submenu!.addItem(withTitle: name, action: selector, keyEquivalent: key)
       item.target = self
     }
+    let steam=NSMenuItem(title:"Steam",action:nil,keyEquivalent:"");menu.addItem(steam);steam.submenu=NSMenu()
+    for(name,selector)in [("Account, amici e attività…",#selector(steamAccountAction)),("Download…",#selector(steamDownloadsAction)),("Riconnetti",#selector(steamReconnectAction)),("Modalità offline",#selector(steamOfflineAction))] {
+      steam.submenu?.addItem(withTitle:name,action:selector,keyEquivalent:"").target=self
+    }
     let w = NSMenuItem(title: "Finestra", action: nil, keyEquivalent: "")
     menu.addItem(w)
     w.submenu = NSMenu()
@@ -262,6 +275,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       #selector(settings), #selector(runtimeLocationSettings), #selector(dataMaintenance),
       #selector(showNotifications),
       #selector(toggleFullscreen),
+      #selector(steamAccountAction),#selector(steamDownloadsAction),#selector(steamReconnectAction),#selector(steamOfflineAction),
     ]
     if let action = item.action, interfaceActions.contains(action) {
       if action == #selector(profiles), authenticationSession != nil { return false }
@@ -281,12 +295,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     case .profiles: profiles()
     case .importGame: importGame()
     case .settings: settings()
+    case .steamAccount: MainActor.assumeIsolated { showSteamAccount() }
+    case .downloads: MainActor.assumeIsolated { showSteamDownloads() }
     case .search: search()
     case .fullscreen: toggleFullscreen()
     case .refresh: refreshLocal()
     }
   }
   @objc func toggleFullscreen() { window.toggleFullScreen(nil) }
+  @objc func steamAccountAction(){MainActor.assumeIsolated{showSteamAccount()}}
+  @objc func steamDownloadsAction(){MainActor.assumeIsolated{showSteamDownloads()}}
+  @objc func steamReconnectAction(){MainActor.assumeIsolated{if steamNetwork==nil{configureSteamNetwork()};steamNetwork?.reconnect()}}
+  @objc func steamOfflineAction(){MainActor.assumeIsolated{steamNetwork?.goOffline()}}
   func refreshLocal() {
     guard !maintenanceInProgress else { return }
     do {
@@ -404,6 +424,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         else { return }
         MainActor.assumeIsolated { self.steamAccounts.cancel(profile: self.state.activeProfile) }
         self.state.activeProfile = profiles[pick.indexOfSelectedItem].id
+        MainActor.assumeIsolated { self.configureSteamNetwork() }
         do { try self.persist() } catch { self.showError(error) }
       } else {
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 540, height: 28))
@@ -428,6 +449,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
           MainActor.assumeIsolated { self.steamAccounts.cancel(profile: self.state.activeProfile) }
           self.state.profiles.append(profile)
           self.state.activeProfile = profile.id
+          MainActor.assumeIsolated { self.configureSteamNetwork() }
           do { try self.persist() } catch { self.showError(error) }
         }
       }
@@ -672,6 +694,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       }
       if choice == 3 {
         self.cancelAuthentication()
+        MainActor.assumeIsolated { self.steamNetwork?.logout() }
         MainActor.assumeIsolated { self.steamAccounts.signOut(profile: profile) }
         self.canvas.message = "Steam scollegato da questo profilo."
         self.canvas.refresh()
@@ -682,6 +705,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
   }
   private func beginStoreConnection(_ store: Store, profile: UUID, synchronize: Bool) {
+    if store == .steam && !synchronize {
+      MainActor.assumeIsolated { showSteamAccount() }
+      return
+    }
     if synchronize {
       syncStore(store, profile: profile)
       return
@@ -812,7 +839,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   func syncStore(_ store: Store, profile: UUID) {
     canvas.message = "Sincronizzazione \(store.title)…"
     canvas.refresh()
-    storeClient.request(operation: "library", store: store, profile: profile) { [weak self] event in
+    let receive: ([String:Any])->Void = { [weak self] event in
       guard let self else { return }
       if event["type"] as? String == "error" {
         self.showError(
@@ -846,11 +873,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       self.canvas.message = "\(incoming.count) giochi sincronizzati da \(store.title)"
       try? self.persist()
     }
+    if store == .steam {
+      MainActor.assumeIsolated { requestSteamLibrary(profile:profile,event:receive) }
+    } else { storeClient.request(operation:"library",store:store,profile:profile,event:receive) }
   }
   func installGame(index: Int, variant: GameVariant) {
     guard !maintenanceInProgress else { return }
     let profile = state.activeProfile
     let game = state.games[index]
+    if game.store == .steam {
+      MainActor.assumeIsolated {
+        if steamDownloads==nil{configureSteamNetwork()}
+        let external=ProcessInfo.processInfo.environment["READY_GAME_LIBRARY_ROOT"] ?? "/Volumes/Dati APFS/Ready Games"
+        let volume=URL(fileURLWithPath:"/Volumes/Dati APFS")
+        guard FileManager.default.fileExists(atPath:volume.path)else{showError(LauncherError.unavailable("Collega il disco Dati APFS per installare i giochi."));return}
+        let target=URL(fileURLWithPath:external).appendingPathComponent("Steam/\(SafePath.component(game.storeID))/\(variant.platform.rawValue)")
+        steamDownloads?.enqueue(game:game,variant:variant,installation:target)
+        showSteamDownloads()
+      }
+      return
+    }
     let base = paths.root.appendingPathComponent(
       "Games/\(game.store.rawValue)/\(SafePath.component(game.storeID))/\(variant.platform.rawValue)"
     )

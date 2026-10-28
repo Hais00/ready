@@ -260,7 +260,7 @@ def dispatch(r,http=None):
     operation={'auth_start':'auth_begin','install':'download'}.get(operation,operation)
     if operation!=r.get('operation'):r={**r,'operation':operation}
     if 'authState' not in o and 'state' in o:o={**o,'authState':o['state']}
-    if operation=='capabilities':return {'protocolVersion':1,'stores':['steam','epic','gog','amazon'],'operations':['auth_begin','auth_complete','refresh','library','download','launch_info','authorize_game','native_inspect'],'operationStores':{'authorize_game':['steam']},'nativeArchitecturePolicy':'unknown until local Mach-O inspection','credentialsTransport':'stdin/stdout only; caller must store in Keychain'}
+    if operation=='capabilities':return {'protocolVersion':1,'stores':['steam','epic','gog','amazon'],'operations':['auth_begin','auth_complete','refresh','library','download','download_prepare','download_run','download_status','download_list','download_control','launch_info','authorize_game','native_inspect'],'operationStores':{'authorize_game':['steam'],'download_prepare':['steam'],'download_run':['steam'],'download_status':['steam'],'download_list':['steam'],'download_control':['steam']},'nativeArchitecturePolicy':'unknown until local Mach-O inspection','credentialsTransport':'stdin/stdout only; caller must store in Keychain'}
     if operation=='native_inspect':return inspect_native(require(o.get('path')))
     if store=='steam':
         from backend import steam_request

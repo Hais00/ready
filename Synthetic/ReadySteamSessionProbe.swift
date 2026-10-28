@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: GPL-3.0-only
+import Foundation
+import LauncherCore
+
+@main struct ReadySteamSessionProbe {
+  @MainActor static func main() throws {
+    let profile=UUID(), other=UUID()
+    let initial=try JSONSerialization.data(withJSONObject:["username":"fixture_account","refresh_token":"fixture_only_secret"])
+    var vault=[profile:initial,other:initial], saves=0, failSave=false, checks=[String:Bool]()
+    let access=StoreClient.CredentialAccess(load:{id,_ in vault[id]},save:{data,id,_ in if failSave{throw NSError(domain:"FixtureVaultUnavailable",code:1)};vault[id]=data;saves+=1},remove:{id,_ in vault.removeValue(forKey:id)})
+    let session=SteamClientSession(profile:profile,command:[CommandLine.arguments[1],CommandLine.arguments[2]],credentialAccess:access)
+    var stage="initial_connect"
+    func spin(_ condition:()->Bool) throws {
+      let end=Date().addingTimeInterval(8)
+      while !condition() && Date()<end { _=RunLoop.main.run(mode:.default,before:Date().addingTimeInterval(0.01)) }
+      guard condition() else { throw NSError(domain:"SteamSessionFixtureTimeout_"+stage,code:1) }
+    }
+    defer{session.stop()}
+    session.start();try spin{session.state.online && session.state.accountName=="fixture_account"}
+    checks["savedProfileCredentialConnectsWithoutQR"]=session.state.accountName=="fixture_account"
+    try spin{session.state.friends.count==1}
+    checks["friendsAndActivitySnapshot"]=session.state.friends[0].gameName=="Fixture game"
+    session.request("fixture_normalization"){_ in};try spin{session.state.friends.first?.presence=="offline"}
+    checks["personaAndEmptyActivityNormalized"]=session.state.presence=="away"&&session.state.friends[0].gameName==nil&&session.state.friends[0].gameID==nil
+    var reply=false
+    stage="stale_frames"
+    session.request("fixture_stale") { _ in reply=true }
+    try spin{reply}
+    checks["staleGenerationAndProfileEventsIgnored"]=session.state.accountName=="fixture_account"
+    stage="manual_offline";session.goOffline();try spin{session.state.connection=="offline"}
+    checks["manualOfflinePreservesAccount"]=vault[profile]==initial
+    stage="reconnect";session.reconnect();try spin{session.state.online}
+    checks["explicitReconnectRestoresOnline"]=true
+    stage="network_loss";session.request("fixture_network_loss"){_ in}
+    try spin{session.state.connection=="reconnecting"}
+    checks["networkLossDoesNotForgetCredential"]=vault[profile]==initial
+    stage="network_recovered";session.request("fixture_recovered"){_ in};try spin{session.state.online}
+    stage="remote_kick";session.request("fixture_remote_kick"){_ in};try spin{session.state.reason=="session_replaced"}
+    checks["remoteSessionReplacementKeepsCredentialForExplicitReconnect"]=vault[profile]==initial
+    session.reconnect();try spin{session.state.online}
+    stage="revocation";session.request("fixture_revoked"){_ in};try spin{vault[profile]==nil}
+    checks["revocationInvalidatesOnlyCurrentProfile"]=vault[other]==initial&&session.state.connection=="authorization_required"
+    var sawQR=false
+    session.onAuthentication={if $0["type"]as?String=="qr"{sawQR=true}}
+    stage="qr";session.authenticate();try spin{sawQR}
+    failSave=true;session.request("fixture_auth_complete"){_ in}
+    try spin{session.state.online && !session.state.warning.isEmpty}
+    checks["credentialStorageFailureRemainsVisibleAfterOnline"]=vault[profile]==nil
+    failSave=false;sawQR=false
+    let cancelledAuth=session.authenticate();try spin{sawQR}
+    session.cancel(cancelledAuth);sawQR=false
+    session.request("fixture_late_qr"){_ in}
+    let settle=Date().addingTimeInterval(0.15)
+    while Date()<settle{_=RunLoop.main.run(mode:.default,before:Date().addingTimeInterval(0.01))}
+    checks["cancelledAuthenticationCannotRedisplayQR"] = !sawQR
+    session.authenticate();try spin{sawQR}
+    session.logout();try spin{session.state.connection=="logged_out"}
+    let end=Date().addingTimeInterval(0.3)
+    while Date()<end{_=RunLoop.main.run(mode:.default,before:Date().addingTimeInterval(0.01))}
+    checks["lateCredentialAfterLogoutCannotResave"]=vault[profile]==nil&&saves==0
+    let empty=SteamClientSession(profile:UUID(),command:[CommandLine.arguments[1],CommandLine.arguments[2]],credentialAccess:access)
+    empty.start();try spin{empty.state.connection=="offline"};checks["realSnapshotShapeShowsOfflineWithoutCredential"]=true;empty.stop()
+    checks["allPassed"]=checks.values.allSatisfy{$0}
+    print(String(data:try JSONSerialization.data(withJSONObject:checks,options:[.sortedKeys]),encoding:.utf8)!)
+    if checks["allPassed"] != true{exit(1)}
+  }
+}

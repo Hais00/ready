@@ -1,0 +1,96 @@
+// SPDX-License-Identifier: GPL-3.0-only
+import AppKit
+import LauncherCore
+
+extension AppDelegate {
+  @MainActor func configureSteamNetwork() {
+    steamDownloads?.stop()
+    steamNetwork?.stop()
+    steamNetwork = nil; steamAccountView = nil; steamGuardChallenge = nil
+    let profile = state.activeProfile
+    let downloads=SteamDownloads(profile:profile,client:storeClient)
+    steamDownloads=downloads
+    downloads.onChange = {[weak self,weak downloads] jobs in
+      guard let self,let downloads,self.steamDownloads===downloads,self.state.activeProfile==profile else{return}
+      self.steamDownloadsView?.update(jobs)
+    }
+    downloads.onError = {[weak self] message in self?.showError(LauncherError.failed(message))}
+    downloads.onInstalled = {[weak self] job in self?.acceptSteamInstallation(job,profile:profile)}
+    downloads.restore()
+    guard let command = SteamClientSession.installedCommand(project: project, runtimeRoot: runtimeRoot) else { return }
+    let network = SteamClientSession(profile: profile, command: command, credentialAccess: .keychain(stateRoot: paths.root))
+    steamNetwork = network
+    network.onChange = { [weak self, weak network] status in
+      guard let self, let network, self.steamNetwork === network, self.state.activeProfile == profile else { return }
+      let becameOnline=status.online && self.canvas?.steamOnline != true
+      self.steamAccountView?.update(status)
+      self.canvas?.steamStatus = status.online ? (status.displayName.isEmpty ? "Steam online" : status.displayName) : "Steam · " + status.connection
+      self.canvas?.steamOnline = status.online
+      if !self.session.running { self.canvas?.refresh() }
+      if becameOnline{self.steamDownloads?.resumeAfterAuthorization()}
+    }
+    network.onAuthentication = { [weak self, weak network] event in
+      guard let self, let network, self.steamNetwork === network, self.state.activeProfile == profile else { return }
+      if event["type"]as?String=="guard" { self.steamGuardChallenge = event["challengeID"]as?String }
+      self.steamAccountView?.authenticationEvent(event)
+    }
+    if CredentialVault.steamStatus(CredentialVault.load(profile:profile,store:.steam,stateRoot:paths.root)) == .available { network.start() }
+  }
+  @MainActor func showSteamDownloads() {
+    if steamDownloads==nil{configureSteamNetwork()}
+    guard let downloads=steamDownloads else{return}
+    let view=SteamDownloadsView(frame:NSRect(x:0,y:0,width:670,height:430));steamDownloadsView=view
+    view.titleForGame = {[weak self]id in self?.state.games.first(where:{$0.store == .steam && $0.storeID==id})?.title ?? id}
+    view.onControl = {[weak downloads]id,action in downloads?.control(id,action:action)}
+    view.update(downloads.snapshot)
+    _=presentDialog(title:"Download Steam",message:"Le installazioni sono condivise fra profili; account e salvataggi personali restano separati. Pausa e annullamento conservano i file.",content:view,actions:[.init("Chiudi",role:.cancel)]){[weak self]_ in self?.steamDownloadsView=nil}
+  }
+  @MainActor private func acceptSteamInstallation(_ job:SteamDownloadJob,profile:UUID) {
+    guard state.activeProfile==profile,let value=job.raw["installedVariant"]as?[String:Any],
+      let data=try?JSONSerialization.data(withJSONObject:value),var variant=try?JSONDecoder().decode(GameVariant.self,from:data),
+      let index=state.games.firstIndex(where:{$0.store == .steam && $0.storeID==job.gameID})else{return}
+    if let selected=state.games[index].variants.first(where:{$0.platform.rawValue==job.platform}){variant.id=selected.id}
+    variant.installationRoot=job.raw["installDir"]as?String ?? variant.installationRoot
+    if let position=state.games[index].variants.firstIndex(where:{$0.id==variant.id}){state.games[index].variants[position]=variant}else{state.games[index].variants.append(variant)}
+    PEImports.annotate(&state.games[index],variant:variant)
+    do{try persist()}catch{showError(error)}
+  }
+  @MainActor func showSteamAccount() {
+    guard !session.running, !maintenanceInProgress else { return }
+    if steamNetwork == nil { configureSteamNetwork() }
+    guard let network = steamNetwork else {
+      showError(LauncherError.unavailable("Installa il servizio Steam centrale prima di collegare l’account.")); return
+    }
+    let profile = state.activeProfile
+    let view = SteamAccountView(frame:NSRect(x:0,y:0,width:660,height:710))
+    steamAccountView = view; view.update(network.state)
+    view.onQRLogin = { [weak self,weak network] in self?.steamGuardChallenge=nil;network?.authenticate() }
+    view.onPasswordLogin = { [weak self,weak network] name, password in self?.steamGuardChallenge=nil;network?.authenticate(method:"password",username:name,password:password) }
+    view.onGuard = { [weak self, weak network] code in
+      guard let challenge = self?.steamGuardChallenge else { return }; network?.submitGuard(challengeID:challenge,code:code)
+    }
+    view.onPresence = { [weak network] in network?.setPresence($0) }
+    view.onReconnect = { [weak network] in network?.reconnect() }
+    view.onOffline = { [weak network] in network?.goOffline() }
+    view.onDisplayName = {[weak self,weak network]name in network?.request("set_persona_name",options:["displayName":name]){event in self?.steamAccountView?.actionEvent(event)}}
+    view.onFriendAction = {[weak self,weak network]operation,id in
+      guard let self,self.state.activeProfile==profile,UInt64(id) != nil else{return}
+      network?.request(operation,options:["steamID":id]){[weak self]event in
+        self?.steamAccountView?.actionEvent(event)
+      }
+    }
+    view.onLogout = { [weak self, weak network] in
+      guard let self, self.state.activeProfile == profile else { return }
+      self.steamDownloads?.stop();network?.logout(); self.steamAccounts.signOut(profile:profile)
+    }
+    _ = presentDialog(title:"Steam · account, amici e attività",message:"Un solo accesso per questo profilo, condiviso da giochi macOS e Windows. La password non viene salvata.",content:view,actions:[.init("Chiudi",role:.cancel)]) { [weak self,weak network] _ in network?.cancelAuthentication();self?.steamAccountView = nil }
+    network.start()
+    network.request("snapshot") { _ in }
+  }
+  @MainActor func requestSteamLibrary(profile:UUID, event:@escaping ([String:Any])->Void) {
+    guard profile == state.activeProfile else { return }
+    if steamNetwork == nil { configureSteamNetwork() }
+    guard let network = steamNetwork else { event(["type":"error","message":"Servizio Steam non installato."]); return }
+    network.request("library",event:event)
+  }
+}

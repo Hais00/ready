@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "license": "GPL-2.0-only",
+  "upstreamVersion": "3.4.0",
+  "sourcePatchRequiresExistingPrivateStdinPatch": true,
+  "files": {
+    "ContentDownloader.cs": {
+      "baseSHA256": "c8d27b4b61db8dadf1d6ba4ef7176cfefa6ea026571bda83f8635679007b68e3",
+      "patchedUTF8SHA256": "01bb18a3b4d9b57cd8b7963668faa8f12cdad852acee416b81e0abed480aec53"
+    },
+    "DepotConfigStore.cs": {
+      "baseSHA256": "e971911fd7c6a4bb0a2d4316edb7e56425a40423bf0a21888e85d72751b87e88",
+      "patchedUTF8SHA256": "950ee403d1956f53cbcedbd49115aeff140bafb5e1f9a12f8bb5bd3a65a0e398"
+    },
+    "Steam3Session.cs": {
+      "baseSHA256": "cc3c9e366b36c093fcf83767768db3e1dd42588311e2e238caecacb7049a531e",
+      "patchedUTF8SHA256": "d6240da36762ac54f3761b57f5e220c342d9d652c6be1d58632c3ef4c30d4a02"
+    },
+    "Program.cs": {
+      "baseSHA256": "177837e23c515887fa9c98bea56e0a473674111451a0f72d6d1cf9decfb1980b",
+      "patchedUTF8SHA256": "36080f27e09052078d413784305bc374a2aa744fce709e6530f853bb6df2ff5b"
+    }
+  },
+  "patchSHA256": "9cb724db967dc3da49a41ae1ff5bb57fbe2f3dc946aaa7048835fe4be6e61341",
+  "helperSHA256": "f7326ce485277318eb880cae66862e55d15ee37277a54af97a854a7d6584086b"
+}
