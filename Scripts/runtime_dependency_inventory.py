@@ -17,6 +17,8 @@ import struct
 import sys
 import uuid
 
+from runtime_evidence_transport import resolve_evidence_index
+
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 ORIGINAL_URL='https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.18/wine-devel-11.18-osx64.tar.xz'
 ORIGINAL_DIGEST='aa0ea4c82e636ae7bca2076387cb0a5affa26509ad13f119ecd0d62bd7ba6f82'
@@ -179,7 +181,7 @@ REQUIRED_RUNTIME_CHECKS={
     'gpu.wine1120.pe64','gpu.wine1120.pe32',
 }
 
-def source_inventory(prefix):
+def source_inventory(prefix,evidence_index=None):
     prefix=prefix.resolve(strict=True);errors=[];cache={}
     def checked(relative):
         raw=pathlib.Path(relative)
@@ -293,11 +295,22 @@ def source_inventory(prefix):
         if any(value is not True for value in tests.values()):runtime_errors.append('runtime_matrix_has_failure')
         evidence=receipt.get('evidenceFiles',[])
         if not evidence:runtime_errors.append('runtime_evidence_files_missing')
+        transported=None
+        if evidence_index is not None:
+            try:transported=resolve_evidence_index(evidence_index,receipt,hashed(receipt_path),manifest_hash)
+            except (OSError,ValueError,KeyError,TypeError) as error:
+                runtime_errors.append('runtime_evidence_transport_invalid:'+str(error));transported={}
         for item in evidence:
-            raw=pathlib.Path(item['path']);path=(raw if raw.is_absolute()else ROOT/raw).resolve(strict=True)
-            if not path.is_relative_to((ROOT/'Evidence').resolve())or not path.is_file():runtime_errors.append('runtime_evidence_path_outside_owned_logs');continue
+            raw=pathlib.Path(item['path'])
+            if evidence_index is not None:
+                # Explicit transported mode NEVER consults original host logs.
+                path=transported.get(item['path'])
+                if path is None:continue
+            else:
+                path=(raw if raw.is_absolute()else ROOT/raw).resolve(strict=True)
+                if not path.is_relative_to((ROOT/'Evidence').resolve())or not path.is_file():runtime_errors.append('runtime_evidence_path_outside_owned_logs');continue
             if hashed(path)!=item.get('sha256'):runtime_errors.append('runtime_evidence_hash_mismatch:'+path.name)
-            if path.suffix=='.json':
+            if raw.suffix=='.json':
                 raw_report=json.loads(path.read_text())
                 if 'testedBinaryHashes'in raw_report:
                     if raw_report['testedBinaryHashes']!=all_binaries:runtime_errors.append('runtime_log_binary_inputs_mismatch:'+path.name)
@@ -310,12 +323,13 @@ def source_inventory(prefix):
                     if raw_report.get('certificateValidationBypassUsed',False)is not False:runtime_errors.append('runtime_tls_validation_bypassed:'+path.name)
 
     else:runtime_errors.append('runtime_validation_receipt_missing')
-    return {'schema':2,'provenanceKind':'source-runtime-subset'if selection else'source-build-manifest','scope':'dependency shared-library/module payload only; does not approve app, tools, static libraries, fonts/assets, or optional proprietary system/runtime files','root':str(prefix),'dependencySetID':manifest.get('dependencySetID'),'dependencyManifestSHA256':manifest_hash,'binaryFingerprint':fingerprint,'payloadFingerprint':hashlib.sha256(json.dumps({path:all_binaries[path]for path in sorted(approved)},sort_keys=True,separators=(',',':')).encode()).hexdigest(),'selectionSHA256':hashed(selection_path)if selection else None,'correspondingSourceComplete':corresponding,'runtimeValidationPending':bool(runtime_errors),'binaryRedistributionReady':corresponding and not runtime_errors,'gateReasons':errors+runtime_errors,'summary':{'sourceComponents':len(components),'mappedCodeInputs':len(all_binaries),'approvedPayloadLibrariesAndModules':len(approved),'unapprovedOtherCodeInputs':len(other),'provenanceFilesVerified':len(provenance),'runtimeChecks':len(receipt.get('tests',{}))if receipt else 0},'approvedPayloadFiles':sorted(approved),'outsideScopeCodeFiles':sorted(other),'systemDependenciesNotRedistributed':system,'actualSharedLibraryClosure':links,'aliases':aliases,'runtimeValidationReceiptSHA256':hashed(receipt_path)if receipt else None}
+    return {'schema':2,'provenanceKind':'source-runtime-subset'if selection else'source-build-manifest','scope':'dependency shared-library/module payload only; does not approve app, tools, static libraries, fonts/assets, or optional proprietary system/runtime files','root':str(prefix),'dependencySetID':manifest.get('dependencySetID'),'dependencyManifestSHA256':manifest_hash,'binaryFingerprint':fingerprint,'payloadFingerprint':hashlib.sha256(json.dumps({path:all_binaries[path]for path in sorted(approved)},sort_keys=True,separators=(',',':')).encode()).hexdigest(),'selectionSHA256':hashed(selection_path)if selection else None,'correspondingSourceComplete':corresponding,'runtimeValidationPending':bool(runtime_errors),'binaryRedistributionReady':corresponding and not runtime_errors,'gateReasons':errors+runtime_errors,'summary':{'sourceComponents':len(components),'mappedCodeInputs':len(all_binaries),'approvedPayloadLibrariesAndModules':len(approved),'unapprovedOtherCodeInputs':len(other),'provenanceFilesVerified':len(provenance),'runtimeChecks':len(receipt.get('tests',{}))if receipt else 0},'approvedPayloadFiles':sorted(approved),'outsideScopeCodeFiles':sorted(other),'systemDependenciesNotRedistributed':system,'actualSharedLibraryClosure':links,'aliases':aliases,'runtimeValidationReceiptSHA256':hashed(receipt_path)if receipt else None,'evidenceResolution':'transport-index'if evidence_index is not None else'original-owned-logs'}
 
-def inventory(root):
+def inventory(root,evidence_index=None):
     path=root.resolve(strict=True)
-    if (path/'manifest.json').is_file()or(path/'selected-runtime-files.json').is_file():return source_inventory(path)
-    if path.name=='lib'and((path.parent/'manifest.json').is_file()or(path.parent/'selected-runtime-files.json').is_file()):return source_inventory(path.parent)
+    if (path/'manifest.json').is_file()or(path/'selected-runtime-files.json').is_file():return source_inventory(path,evidence_index=evidence_index)
+    if path.name=='lib'and((path.parent/'manifest.json').is_file()or(path.parent/'selected-runtime-files.json').is_file()):return source_inventory(path.parent,evidence_index=evidence_index)
+    if evidence_index is not None:raise ValueError('Transported evidence requires a source dependency manifest')
     return bootstrap_inventory(path)
 
 
@@ -323,9 +337,10 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root',type=pathlib.Path,default=ROOT/'Runtime/wine-deps/lib')
     parser.add_argument('--output',type=pathlib.Path)
+    parser.add_argument('--evidence-index',type=pathlib.Path,help='Resolve all receipt evidence through a bound transported index; never fall back to original logs')
     parser.add_argument('--gate',action='store_true',help='Exit 3 while binary redistribution is not ready')
     args=parser.parse_args()
-    try:report=inventory(args.root)
+    try:report=inventory(args.root,evidence_index=args.evidence_index)
     except (OSError,ValueError,KeyError,TypeError,struct.error):report={'schema':2,'binaryRedistributionReady':False,'gateReasons':['invalid_or_incomplete_dependency_evidence'],'summary':{}}
     if args.output:
         args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(report,indent=2)+'\n')

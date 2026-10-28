@@ -1,3 +1,4 @@
 # Preserve verbatim upstream notices and unified-diff context lines.
 DXMTIntegration/UPSTREAM_* -whitespace
 Scripts/*.patch -whitespace
+LICENSES/LGPL-2.1.txt -whitespace

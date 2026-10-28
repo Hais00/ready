@@ -19,7 +19,7 @@ See [portable frontend packaging](Docs/FRONTEND_PACKAGING.md), [requirements and
 
 ## Build and test
 
-The build targets macOS 14+ and Swift 5.10+; current runtime validation is on macOS 27.0.1. Metal4/GPTK4 testing requires a compatible newer SDK/OS and Apple Silicon. The native group-lifetime checks have not been run on macOS 14/15.
+The frontend build targets macOS 14+ and Swift 5.10+; current runtime validation is on macOS 27.0.1. The currently built Wine/Vulkan payload declares macOS 27 as its minimum OS. Metal4/GPTK4 testing requires a compatible newer SDK/OS and Apple Silicon. The native group-lifetime checks have not been run on macOS 14/15.
 
 ```sh
 swift build --product M1Launcher --jobs 2
@@ -39,6 +39,8 @@ swift run M1Launcher --graphics-self-test
 
 The app is generated at `Build/ready.app`. The frontend carries its own support code, native overlay, session keeper, sources and notices. Engines and store tools remain external and central; `READY_RUNTIME_ROOT` selects their location. A packaged frontend defaults to the selected application-data directory’s Runtimes folder and reports an absent runtime honestly. Source execution retains its development fallback. See the packaging guide for the exact scope and remaining distribution requirements.
 
+Versioned [relative runtime paths](Docs/PORTABLE_RUNTIME_PATHS.md) resolve against the configuration location. Diagnostic projections retain component bytes and historical receipts while generating separate entrypoints and ICDs for relocation testing. Whole-runtime assembly and distribution remain work in progress; the current native ARM64 Kosmic dependency closure still includes Homebrew.
+
 ## Sources and runtimes
 
 ```sh
@@ -47,17 +49,19 @@ python3 Scripts/fetch_sources.py
 
 Public upstream sources go into ignored `Vendor/`, pinned in `sources.lock.json`. Store helper source acquisition/build scripts and locks live in `StoreBridge/` and `Scripts/`. Build/download intermediates can be cleaned only inside this project after preserving installed runtimes and provenance.
 
+Additional source-only packets retain the complete recursive [renderer sources](Docs/RENDERER_PROVENANCE.md) and [Wine/DXMT/data/toolchain inputs](Docs/RUNTIME_CORE_PROVENANCE.md), with exact archive/commit pins, acquisition recipes, notices and integrity checks. Acquiring these sources does not attest every historical binary build or approve an entire runtime release.
+
 Apple D3DMetal/GPTK evaluation libraries are **proprietary optional local inputs**, excluded from the open-source distribution. Their beta license permits certain non-commercial distribution; that does not make them open source or license them under our GPL. The working open DX11 path tested here is Wine + [DXMT](Docs/DXMT.md). Wine + Vulkan + KosmicKrisp/MoltenVK also passes Vulkan presentation probes. Current DXVK/VKD3D device-creation failures are documented in [runtime validation](Docs/RUNTIME.md); those paths are not enabled automatically as verified DX11/DX12 engines.
 
 ## Verified so far / still open
 
-The [sanitized checkpoint](Validation/checkpoint.json) records 28 domain checks, 64 store protocol/concurrency tests, real process/session coordination, and real Wine registry/folder API checks across game/profile prefixes. Two actual Windows sessions also verify that terminating A leaves B running with its lease intact. Game readers and store writers now protect shared installation files with an interoperable lease. Twenty-eight keeper checks include native wrappers that exit before their child, isolated termination, crash survival and actual Metal overlay handoff. Sixteen real-process StoreClient checks cover cancellation and private credential transport without accessing real Keychain accounts. Actual Metal overlay rendering passes six ARM64/x64 paths and a Windows Vulkan → Wine → KosmicKrisp path. The launcher releases its canvas texture during play; a local Metal allocation measurement falls from about 47 MB to 0.74 MB.
+The [sanitized checkpoint](Validation/checkpoint.json) records 29 domain checks, 64 store protocol/concurrency tests, real process/session coordination, and real Wine registry/folder API checks across game/profile prefixes. Two actual Windows sessions also verify that terminating A leaves B running with its lease intact. Game readers and store writers now protect shared installation files with an interoperable lease. Twenty-eight keeper checks include native wrappers that exit before their child, isolated termination, crash survival and actual Metal overlay handoff. Sixteen real-process StoreClient checks cover cancellation and private credential transport without accessing real Keychain accounts. Actual Metal overlay rendering passes six ARM64/x64 paths and a Windows Vulkan → Wine → KosmicKrisp path. The launcher releases its canvas texture during play; a local Metal allocation measurement falls from about 47 MB to 0.74 MB.
 
 The Library menu and settings expose **Dati e ripristino** for guided legacy migration, interrupted-copy recovery and archival rollback. The copy crash probe passes; visual verification of the new dialogs is pending because the Mac was locked during the attempt.
 
 Save-folder recipes persist outside disposable prefixes. Eleven recreation-crash checks include a real SIGKILL before replacement metadata exists; ten archive-recovery checks include six real SIGKILL boundaries and preserve one stable recovery archive. These use synthetic data and do not certify migrations of real user games. Interrupted renderer DLL projections also recover under the prefix lease, retaining before/after custom versions.
 
-The relocatable frontend passes 14 packaging/configuration checks, including a saved central-runtime location, restoration and invalid-path rejection. **Libreria → Motori…** selects that location without copying engines or changing their configuration. The graphical selection flow still needs visual verification. A separate [diagnostic XInput provider](Docs/XINPUT_CAPTURE.md) passes ten DLL/architecture combinations and actual injected-overlay integration with simulated controller input; it is not the active runtime and does not establish physical-controller or other input-API support.
+The relocatable frontend passes 15 packaging/configuration checks, including a saved central-runtime location, restoration and invalid-path rejection. **Libreria → Motori…** selects that location without copying engines or changing their configuration. The graphical selection flow still needs visual verification. A separate [diagnostic XInput provider](Docs/XINPUT_CAPTURE.md) passes ten DLL/architecture combinations and actual injected-overlay integration with simulated controller input; it is not the active runtime and does not establish physical-controller or other input-API support.
 
 For an isolated application-data root use `--data-root /absolute/path` (profiles, store state, installation locks and Keychain service namespace are separated).
 

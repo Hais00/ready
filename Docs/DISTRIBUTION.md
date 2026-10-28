@@ -189,3 +189,56 @@ python3 Scripts/runtime_dependency_inventory.py --root Runtime/Sets/ready-source
 ```
 
 Finalized prefixes refuse in-place rebuild/finalize; use a new locked recipe revision/input set for a subsequent provider. Build/work caches are ours only and remain separate from the retained source/receipt packet; cleanup must follow validation and must not discard corresponding-source material. The current sources, receipts, selected libraries, and 32-log runtime proof close the **dependency subset** gate. Fonts/assets, copied games, store tools/.NET, the whole app, and optional proprietary files still need their own applicable distribution review.
+
+### Private portable verification of the same dependency gate
+
+The existing **25 shared libraries/modules** gate can now verify a transported
+copy without reading the original machine's `Evidence` directory. This changes
+only evidence location; it does not approve the whole runtime/application, tools,
+fonts/assets, additional code, or any optional proprietary Apple payload.
+
+`Scripts/runtime_evidence_transport.py` creates a new, marked **private local
+diagnostic packet** under `Runtime/DiagnosticEvidencePackets`. It COW-copies the
+selected dependency root, including the original source archives/notices/receipts,
+and copies all 32 hash-bound evidence files verbatim. The original manifest,
+`runtime-validation.json`, selection record, raw reports and logs are never
+rewritten. Historical references inside them remain historical references.
+
+The separate `evidence-index.json` maps each exact original receipt reference to
+a packet-relative path plus its SHA256. The index is bound to the unchanged
+original manifest SHA256 and receipt SHA256. An explicit inspector option selects
+this mode; it requires the complete exact reference set and never falls back to
+the original logs. Missing or changed files, stale bindings, unknown/duplicate or
+missing references, unsafe paths, symlink escapes, type changes and aliased
+references close the gate. The original receipt reference still determines raw
+JSON validation, so renaming a report cannot skip its existing checks.
+
+```sh
+# Local diagnostic packet only. This is not a release/archive publication step.
+python3 -B Scripts/runtime_evidence_transport.py --name "Private gate25 evidence"
+
+python3 -B Scripts/runtime_dependency_inventory.py \
+  --root "Runtime/DiagnosticEvidencePackets/Private gate25 evidence/dependency-root" \
+  --evidence-index "Runtime/DiagnosticEvidencePackets/Private gate25 evidence/evidence-index.json" \
+  --gate
+
+python3 -B Scripts/test_runtime_evidence_transport.py \
+  --packet "Runtime/DiagnosticEvidencePackets/Private gate25 evidence"
+```
+
+The local test passes the gate with the original `Evidence`, runtime sets/providers
+and source-dependency directories denied to the **verifier process only** through
+macOS sandbox policy. A control run without the transported index fails under the
+same denial. Eight COW negative fixtures exercise missing/changed evidence, wrong
+receipt/manifest binding, unknown/missing references, parent traversal and a
+symlink escape to otherwise hash-correct bytes. No real source tree or receipt is
+mutated. The private report is `Evidence/runtime-evidence-transport-tests.json`.
+
+`packet-manifest.json` explicitly retains `diagnosticOnly: true`,
+`binaryDistributionApproved: false`, `publicArchiveApproved: false` and
+`activationPerformed: false`. A true inspector result continues to mean only the
+existing selected25 dependency scope. Some unchanged historical logs mention
+optional local Apple evaluation; transporting those text records neither includes
+Apple runtime files nor approves their redistribution. Packets and raw logs stay
+local under ignored Runtime storage; this workflow does not upload them to GitHub
+or create a public archive.

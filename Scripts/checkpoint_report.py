@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 """Summarize local verification without uploading raw logs, tokens or local user paths."""
-import datetime, json, pathlib, re
+import datetime, hashlib, json, pathlib, re
 from zoneinfo import ZoneInfo
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 def read(name):return json.loads((ROOT/'Evidence'/name).read_text())
@@ -34,6 +34,12 @@ frontend_package=read('frontend-package-tests.json')
 xinput=read('runtime-xinput-capture.json')
 xinput_overlay=read('runtime-xinput-real-overlay.json')
 xinput_provider=read('runtime-xinput-provider.json')
+projection=read('runtime-projection-tests.json')
+projection_resources=read('runtime-projection-resource-resume-tests.json')
+transport=read('runtime-evidence-transport-tests.json')
+core_sources=read('runtime-core-source-acquisition.json')
+core_sources_negative=read('runtime-core-source-negative-checks.json')
+renderer_sources=read('runtime-renderer-distribution-audit.json')['correspondingSourceAcquisition']
 store_log=(ROOT/'Evidence/stores-parent-tests.log').read_text()
 match=re.search(r'Ran (\d+) tests',store_log)
 assert core['pass'] and host['passed'] and manager['passed']
@@ -51,6 +57,19 @@ assert frontend_package['passed']
 assert xinput['passed'] and xinput['twoSessionIsolation']['passed'] and xinput_overlay['passed']
 assert not xinput['defaultRuntimeModified'] and not xinput_overlay['defaultRuntimeModified']
 assert xinput_provider['diagnosticOnly'] and not xinput_provider['activated']
+assert projection['passed'] and not projection['staticOnly'] and projection['sourceAndProjectionBytesUnchanged']
+assert projection['ownedPrefixFixturesRemoved'] and not projection['binaryDistributionApproved']
+assert projection_resources['passed'] and projection_resources['sourceAndProjectionBytesUnchanged']
+assert projection_resources['ownedPrefixFixturesRemoved'] and not projection_resources.get('skippedChecks')
+assert len(projection_resources['tests']) == 13 and all(value['passed'] for value in projection_resources['tests'].values())
+assert projection_resources['historicalBaseRelocationReportSHA256'] == hashlib.sha256((ROOT/'Evidence/runtime-projection-tests.json').read_bytes()).hexdigest()
+assert not projection_resources['additionalProbeScope']['certificateValidationBypassUsed']
+assert not projection_resources['additionalProbeScope']['directToDisplayClaimed']
+assert transport['passed'] and transport['originalEvidenceDeniedOnlyToVerifier']
+assert transport['originalAndPacketPayloadReceiptEvidenceUnchanged'] and not transport['binaryDistributionApproved']
+assert core_sources['finalized'] and core_sources['allSourceMaterialAcquired'] and core_sources['immutableVerificationPassed']
+assert core_sources_negative['passed'] and not core_sources['artifactCorrespondenceVerified'] and not core_sources['licenseApproval']
+assert renderer_sources['completeRecursiveGitSources'] and not renderer_sources['artifactBinaryBuildAttested']
 assert apple_gpu['evaluationOnly'] and not apple_gpu['enabledForConsumerPlay']
 assert prefix['verified'] and canonical['verified'] and wine_overlay['passed'] and frontend['pass']
 gpu_paths=[path for path in overlay if 'architecture' in path]
@@ -103,6 +122,26 @@ report={
   'separateSessionsVerified':True,'actualInjectedOverlayStatusVerified':True,
   'physicalControllerVerified':False,'activated':False,
   'scope':'Wine 11.20 builtin XInput with simulated device input; other input APIs and WineCX unverified'},
+ 'portableRuntimeProjection':{'passed':True,'checks':len(projection['tests']),
+  'additionalResourceChecks':len(projection_resources['tests']),
+  'resourceScope':'DXMT PE64 shader/readback; 600 DXMT PE64/PE32 fullscreen-requested presents; Vulkan600 presents; TLS/certificate rejection/GDI/DirectWrite PE64/PE32',
+  'PE32ShaderRasterizationVerified':False,'directToDisplayVerified':False,
+  'minimumMacOS':projection['minimumMacOS'],'diagnosticOnly':True,
+  'oldRuntimeRootsDenied':True,'sourceAndProjectionBytesUnchanged':True,
+  'scope':'real relocated open Wine/Windows synthetic programs with per-game/profile save bindings and native image audit',
+  'nativeARM64HomebrewClosureResolved':False,'wholeRuntimeDistributionApproved':False},
+ 'transportedDependencyEvidence':{'passed':True,'checks':len(transport['tests']),
+  'evidenceFiles':transport['evidenceFiles'],'originalEvidenceDeniedToVerifier':True,
+  'scope':transport['scope'],'approvedLibrariesAndModules':transport['transportedGateSummary']['approvedPayloadLibrariesAndModules'],
+  'originalPayloadReceiptEvidenceUnchanged':True,'wholeApplicationDistributionApproved':False},
+ 'sourceAcquisition':{'coreInputArchives':core_sources['componentsAcquired'],
+  'previouslyRetainedDXMTArchives':core_sources['previouslyRetainedDXMTSourceArchives'],
+  'coreSourcePacketIntegrityVerified':True,'coreIntegrityChecks':len(core_sources_negative['checks']),
+  'rendererRepositoryRevisions':renderer_sources['repositoryRevisions'],
+  'rendererVerifiedGitBlobFiles':renderer_sources['verifiedGitBlobFiles'],
+  'rendererNoticeDocuments':renderer_sources['indexedNoticeDocuments'],
+  'rendererCompleteRecursiveGitSources':True,'historicalBinaryBuildCorrespondenceVerified':False,
+  'wholeRuntimeLicenseApproval':False},
  'overlay':{'gpuPaths':len(gpu_paths),
   'wineVulkanMetalVerified':True,'shownTrackedTextureBytes':835584,'hiddenTrackedTextureBytes':0,
   'directToDisplayVerified':False,'observedHUDMode':'Composited in both native baseline and overlay samples'},
@@ -114,6 +153,8 @@ report={
   'Guided migration UI visual verification (Mac locked during current attempt)',
   'Real legacy user-data/game migration beyond synthetic copy and rollback crash fixtures',
   'External updaters that do not participate in the installation lease protocol',
+  'Native ARM64 Kosmic Homebrew closure and a complete portable runtime installer',
+  'Historical static-input/binary source correspondence and exact release notices beyond acquired source archives',
   'Whole-application packaging and remaining third-party distribution inventory beyond the approved 25-library dependency payload']
 }
 out=ROOT/'Validation';out.mkdir(exist_ok=True)
