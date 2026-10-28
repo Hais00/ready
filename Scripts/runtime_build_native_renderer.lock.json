@@ -1,0 +1,77 @@
+{
+  "activationAllowed": false,
+  "architecture": "arm64",
+  "binaryRedistributionReady": false,
+  "compatibilityEvidence": {
+    "abiAssumedFromSoname": false,
+    "depLibclcEnabledForKosmic": false,
+    "mesaLinkerAPICheck": "SetAllowPtrTypeMismatch(true)",
+    "mesaRequiredSPIRVTools": ">=2024.1",
+    "spirvToolsDEPSHeadersCommit": "29981f65241605e08b0ede4cfeb999fe3b723c6a"
+  },
+  "forbiddenRuntimeInputs": [
+    "Homebrew dylibs/static libraries",
+    "Runtime68 binaries",
+    "old Mesa/old community dependencies",
+    "Apple evaluation runtime"
+  ],
+  "hostToolsOnly": [
+    "Apple clang/SDK27",
+    "Homebrew Meson/Ninja/CMake/Python",
+    "LLVM/clang-cpp/LLVMSPIRVLib for Mesa CLC tools only"
+  ],
+  "minimumMacOS": "27.0",
+  "optimization": "-O2 -g0",
+  "reserveBytes": 536870912,
+  "schema": 1,
+  "sources": [
+    {
+      "name": "mesa",
+      "readOnlySource": "Vendor/mesa",
+      "retainedArchive": null,
+      "sha256": "6b9154bc46ec73901555dbcb61600eb69607dc1da718a87e7a1c09a755bb1b6d",
+      "url": "https://archive.mesa3d.org/mesa-26.3.0-rc2.tar.xz",
+      "version": "26.3.0-rc2"
+    },
+    {
+      "name": "zstd",
+      "readOnlySource": null,
+      "retainedArchive": "Runtime/SourceDependencies/source-deps-839dc852b05e28e8b67d/share/ready/sources/zstd-1.5.7.tar.gz",
+      "sha256": "37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3",
+      "url": "https://github.com/facebook/zstd/archive/refs/tags/v1.5.7.tar.gz",
+      "version": "1.5.7"
+    },
+    {
+      "commit": "0d6fd73ca73830ccab5fa1f00ed5ed40124e2c55",
+      "name": "spirv-tools",
+      "readOnlySource": "Runtime/CorrespondingSources/renderer-sources-4d0f21c8f6e04e228035/repositories/ca138f6c2ea253a84ca4",
+      "retainedArchive": "Runtime/CorrespondingSources/renderer-sources-4d0f21c8f6e04e228035/archives/ca138f6c2ea253a84ca4.tar.gz",
+      "sha256": "20219c0962dffb0d7644bb3116a5923cfcf0526a569baa0b2a17343dd2fa6e5d",
+      "url": "https://codeload.github.com/KhronosGroup/SPIRV-Tools/tar.gz/0d6fd73ca73830ccab5fa1f00ed5ed40124e2c55",
+      "version": "2026.3"
+    },
+    {
+      "commit": "29981f65241605e08b0ede4cfeb999fe3b723c6a",
+      "name": "spirv-headers",
+      "readOnlySource": "Runtime/CorrespondingSources/renderer-sources-4d0f21c8f6e04e228035/repositories/daa06787b2dcec7bf28e",
+      "retainedArchive": "Runtime/CorrespondingSources/renderer-sources-4d0f21c8f6e04e228035/archives/daa06787b2dcec7bf28e.tar.gz",
+      "sha256": "232899f1ad4104fb5bc377b94596c7621575eee62ad9a9e8f929b63a7dd8a7ad",
+      "url": "https://codeload.github.com/KhronosGroup/SPIRV-Headers/tar.gz/29981f65241605e08b0ede4cfeb999fe3b723c6a"
+    },
+    {
+      "name": "vulkan-loader",
+      "readOnlySource": "Runtime/vulkan-loader-1.4.366",
+      "retainedArchive": null,
+      "sha256": "d6ee019b105ddac28d564b3337b70b9af5489da6f5c0335c72fb3aae1eeff9c1",
+      "url": "https://codeload.github.com/KhronosGroup/Vulkan-Loader/tar.gz/v1.4.366"
+    },
+    {
+      "name": "vulkan-headers",
+      "readOnlySource": "Runtime/vulkan-headers-1.4.366",
+      "retainedArchive": null,
+      "sha256": "577b90c208e6fd39ec9a1460e48772f63c76f6f5afb441df2a977a0fdb3f618c",
+      "url": "https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/v1.4.366"
+    }
+  ],
+  "staticClosureRequiresLinkMap": true
+}

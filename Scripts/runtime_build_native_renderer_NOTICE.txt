@@ -1,0 +1,49 @@
+ready native renderer build and probe integration
+SPDX-License-Identifier: GPL-3.0-only
+Copyright 2026 ready contributors. See the repository LICENSE for full terms.
+
+This recipe builds unchanged public source into a separate ARM64 provider. It
+never modifies Vendor, the active runtime generation, or the default settings.
+A built/tested candidate is not whole-application distribution approval.
+
+Pinned implementation inputs (complete archive SHA256 values are in the lock):
+- Mesa26.3.0-rc2, primary https://archive.mesa3d.org/mesa-26.3.0-rc2.tar.xz
+  Source6b9154bc46ec73901555dbcb61600eb69607dc1da718a87e7a1c09a755bb1b6d.
+  Upstream docs/license.rst explicitly defers to individual source notices;
+  inspected Kosmic files identify MIT. The complete source archive and upstream
+  license/notice documents are retained, rather than assigning all Mesa code a
+  license from its project name.
+- zstd1.5.7, primary https://github.com/facebook/zstd/tree/v1.5.7
+  Source37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3.
+  LICENSE/COPYING and per-file notices are retained. Its library has permitted
+  BSD/GPL alternatives and contributed-code terms; our GPL does not replace them.
+- SPIRV-Tools commit0d6fd73ca73830ccab5fa1f00ed5ed40124e2c55,
+  https://github.com/KhronosGroup/SPIRV-Tools
+  Observed built pkg-config version2026.3.1. Its exact DEPS header revision is
+  SPIRV-Headers29981f65241605e08b0ede4cfeb999fe3b723c6a. Root Apache-2.0 and
+  applicable individual notices are retained from both complete source archives.
+- Vulkan Loader and Headers1.4.366, https://github.com/KhronosGroup/Vulkan-Loader
+  and https://github.com/KhronosGroup/Vulkan-Headers. Both exact archive hashes
+  and primary license documents are retained. The Loader license identifies
+  Apache-2.0 for the majority of files with per-file exceptions.
+
+The provider's share/ready/sources retains all six complete input archives.
+share/ready/notices retains upstream documents; source archives also retain
+individual source headers. share/ready/recipes retains each actual orchestration
+snapshot and the full GPL-3.0-only license. share/ready/receipts retains exact
+commands/log hashes, CMake/Meson metadata, compile database, final link map,
+normalization and signing commands. Dynamic dependency identities are parsed
+from actual Mach-O load commands, not inferred from filenames or SONAMEs.
+
+Only four source-built dylibs and their relative aliases form the candidate
+runtime closure: Kosmic, zstd, SPIRV-Tools and Vulkan Loader. Other dependencies
+are macOS system libraries/frameworks. The final ICD link map has364 object
+entries and contains no Homebrew archive/object or MesaCLC/LLVM/clang-cpp/
+LLVMSPIRV compiler object. Those compilers are host tools, not runtime inputs.
+Mesa's libclc dependency is not enabled for this Kosmic-only configuration;
+its generated kernel library comes from Mesa CL/libcl/poly sources.
+
+macOS27 is the actual minimum encoded in all four ARM64 dylibs. No macOS14
+compatibility, DXVK/VKD3D capability, complete Vulkan conformance, or game
+compatibility is claimed by these build/probe receipts. Apple evaluation files
+are entirely excluded. The runtime source still uses platform Metal APIs.

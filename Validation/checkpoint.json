@@ -1,5 +1,5 @@
 {
-  "createdAt": "2026-10-28T06:59:36.654802+01:00",
+  "createdAt": "2026-10-28T07:56:48.014175+01:00",
   "goalComplete": false,
   "core": {
     "checks": 29,
@@ -301,7 +301,11 @@
   "winePE32": {
     "verified": true,
     "scope": "real Win32 + DXMT DX11 device/buffer readback + 600-frame presentation",
-    "shaderRasterizationVerified": false,
+    "shaderRasterizationVerified": true,
+    "shaderProofRuntimeID": "ready-source-runtime-68c00b7d3878699829eb+ready-source-dxmt-68c00b7d3878699829eb",
+    "shaderProofScope": "real i386 PE32, SM5/FL11_0 HLSL triangle, 1152 colored and 2944 background pixels with center/corner checks",
+    "historicalBufferPresentationReportUnchanged": true,
+    "centralEnginesAndConfigurationsUnchanged": true,
     "commercialGameVerified": false
   },
   "winePrefixAPIs": {
@@ -391,6 +395,19 @@
     "rendererCompleteRecursiveGitSources": true,
     "historicalBinaryBuildCorrespondenceVerified": false,
     "wholeRuntimeLicenseApproval": false
+  },
+  "sourceBuiltNativeARM64Renderer": {
+    "passed": true,
+    "gpuAndPropertyChecks": 19,
+    "sandboxControls": 5,
+    "architecture": "arm64",
+    "minimumMacOS": "27.0",
+    "candidateFingerprint": "9f6573d3f72d8ef99744de8e53ddc8ac6820b33700af59043df3b358eb68aead",
+    "sourceBuiltLibraries": 4,
+    "strongHomebrewDependencies": 0,
+    "candidateBytesUnchanged": true,
+    "activated": false,
+    "wholeRuntimeDistributionApproved": false
   },
   "overlay": {
     "gpuPaths": 6,

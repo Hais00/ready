@@ -1,0 +1,40 @@
+; SPDX-License-Identifier: GPL-3.0-only
+OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint Vertex %main "main" %index %position
+OpDecorate %index BuiltIn VertexIndex
+OpDecorate %position BuiltIn Position
+%void = OpTypeVoid
+%function = OpTypeFunction %void
+%uint = OpTypeInt 32 0
+%float = OpTypeFloat 32
+%vec2 = OpTypeVector %float 2
+%vec4 = OpTypeVector %float 4
+%three = OpConstant %uint 3
+%zero = OpConstant %float 0
+%one = OpConstant %float 1
+%minus = OpConstant %float -1
+%plus = OpConstant %float 3
+%p0 = OpConstantComposite %vec2 %minus %minus
+%p1 = OpConstantComposite %vec2 %plus %minus
+%p2 = OpConstantComposite %vec2 %minus %plus
+%array = OpTypeArray %vec2 %three
+%positions = OpConstantComposite %array %p0 %p1 %p2
+%input_uint = OpTypePointer Input %uint
+%output_vec4 = OpTypePointer Output %vec4
+%function_array = OpTypePointer Function %array
+%function_vec2 = OpTypePointer Function %vec2
+%index = OpVariable %input_uint Input
+%position = OpVariable %output_vec4 Output
+%main = OpFunction %void None %function
+%entry = OpLabel
+%vertices = OpVariable %function_array Function %positions
+%i = OpLoad %uint %index
+%ptr = OpAccessChain %function_vec2 %vertices %i
+%point = OpLoad %vec2 %ptr
+%x = OpCompositeExtract %float %point 0
+%y = OpCompositeExtract %float %point 1
+%value = OpCompositeConstruct %vec4 %x %y %zero %one
+OpStore %position %value
+OpReturn
+OpFunctionEnd

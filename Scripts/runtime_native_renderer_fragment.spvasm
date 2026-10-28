@@ -1,0 +1,22 @@
+; SPDX-License-Identifier: GPL-3.0-only
+OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %main "main" %color
+OpExecutionMode %main OriginUpperLeft
+OpDecorate %color Location 0
+%void = OpTypeVoid
+%function = OpTypeFunction %void
+%float = OpTypeFloat 32
+%vec4 = OpTypeVector %float 4
+%quarter = OpConstant %float 0.25
+%half = OpConstant %float 0.5
+%threequarters = OpConstant %float 0.75
+%one = OpConstant %float 1
+%value = OpConstantComposite %vec4 %quarter %half %threequarters %one
+%output_vec4 = OpTypePointer Output %vec4
+%color = OpVariable %output_vec4 Output
+%main = OpFunction %void None %function
+%entry = OpLabel
+OpStore %color %value
+OpReturn
+OpFunctionEnd

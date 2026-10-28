@@ -15,6 +15,7 @@ prefix=read('runtime-prefix-isolation.json')
 canonical=read('runtime-prefix-canonical-paths.json')
 wine_sessions=read('session-host-wine-real.json')
 wow64=read('runtime-wow64-proof.json')
+wow64_shader=read('runtime-wow64-shader-proof.json')
 store_client=read('store-client-tests.json')
 migration_crash=read('migration-crash.json')
 copy_recovery_crash=read('copy-recovery-crash.json')
@@ -40,10 +41,16 @@ transport=read('runtime-evidence-transport-tests.json')
 core_sources=read('runtime-core-source-acquisition.json')
 core_sources_negative=read('runtime-core-source-negative-checks.json')
 renderer_sources=read('runtime-renderer-distribution-audit.json')['correspondingSourceAcquisition']
+native_renderer=read('runtime-native-renderer-validation.json')
+native_renderer_verify=read('runtime-native-renderer-independent-verification.json')
 store_log=(ROOT/'Evidence/stores-parent-tests.log').read_text()
 match=re.search(r'Ran (\d+) tests',store_log)
 assert core['pass'] and host['passed'] and manager['passed']
 assert wine_sessions['passed'] and wow64['verified']
+assert wow64_shader['passed'] and wow64_shader['shaderRasterization32Verified']
+assert wow64_shader['abiObservation']['pointerBits'] == 32
+assert wow64_shader['centralEnginesUnchanged'] and wow64_shader['exactPrefixStopped'] and not wow64_shader['scratchRetained']
+assert not wow64_shader['defaultConfigurationChanged'] and not wow64_shader['runtimeRebuilt']
 assert store_client['passed'] and migration_crash['passed']
 assert copy_recovery_crash['passed'] and recreation_crash['passed']
 assert copy_recovery_crash['actualSIGKILLCount'] == 6 and recreation_crash['realSIGKILLCount'] == 1
@@ -70,6 +77,9 @@ assert transport['originalAndPacketPayloadReceiptEvidenceUnchanged'] and not tra
 assert core_sources['finalized'] and core_sources['allSourceMaterialAcquired'] and core_sources['immutableVerificationPassed']
 assert core_sources_negative['passed'] and not core_sources['artifactCorrespondenceVerified'] and not core_sources['licenseApproval']
 assert renderer_sources['completeRecursiveGitSources'] and not renderer_sources['artifactBinaryBuildAttested']
+assert native_renderer['allPassed'] and native_renderer['candidateUnchanged']
+assert native_renderer_verify['verified'] and native_renderer_verify['runtimeValidationVerified']
+assert not native_renderer['activationPerformed'] and not native_renderer['advertisedFeaturesModified']
 assert apple_gpu['evaluationOnly'] and not apple_gpu['enabledForConsumerPlay']
 assert prefix['verified'] and canonical['verified'] and wine_overlay['passed'] and frontend['pass']
 gpu_paths=[path for path in overlay if 'architecture' in path]
@@ -108,7 +118,10 @@ report={
  'realWineSessions':{'passed':wine_sessions['passed'],'checks':wine_sessions['checks'],
   'scope':wine_sessions['testType'],'runtimeID':wine_sessions['runtimeID']},
  'winePE32':{'verified':wow64['verified'],'scope':'real Win32 + DXMT DX11 device/buffer readback + 600-frame presentation',
-  'shaderRasterizationVerified':wow64['shaderRasterization32Verified'],'commercialGameVerified':False},
+  'shaderRasterizationVerified':True,'shaderProofRuntimeID':wow64_shader['runtimeID'],
+  'shaderProofScope':'real i386 PE32, SM5/FL11_0 HLSL triangle, 1152 colored and 2944 background pixels with center/corner checks',
+  'historicalBufferPresentationReportUnchanged':True,'centralEnginesAndConfigurationsUnchanged':True,
+  'commercialGameVerified':False},
  'winePrefixAPIs':{'verified':True,'steps':len(prefix['steps']),'canonicalWindowsPaths':True,
   'scope':'Synthetic games, real Wine Windows registry and folder APIs, independent profile/game prefixes, recreation retains data'},
  'frontendMemory':frontend,
@@ -142,6 +155,11 @@ report={
   'rendererNoticeDocuments':renderer_sources['indexedNoticeDocuments'],
   'rendererCompleteRecursiveGitSources':True,'historicalBinaryBuildCorrespondenceVerified':False,
   'wholeRuntimeLicenseApproval':False},
+ 'sourceBuiltNativeARM64Renderer':{'passed':True,'gpuAndPropertyChecks':len(native_renderer['tests']),
+  'sandboxControls':len(native_renderer['sandboxControls']),'architecture':native_renderer['architecture'],
+  'minimumMacOS':native_renderer['minimumMacOS'],'candidateFingerprint':native_renderer['candidateFingerprint'],
+  'sourceBuiltLibraries':4,'strongHomebrewDependencies':0,'candidateBytesUnchanged':True,
+  'activated':False,'wholeRuntimeDistributionApproved':False},
  'overlay':{'gpuPaths':len(gpu_paths),
   'wineVulkanMetalVerified':True,'shownTrackedTextureBytes':835584,'hiddenTrackedTextureBytes':0,
   'directToDisplayVerified':False,'observedHUDMode':'Composited in both native baseline and overlay samples'},
