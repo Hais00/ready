@@ -13,7 +13,10 @@ public final class CoreChecks {
         testDistinguishesARM64IntelAndFatBinaries
       ),
       ("Native macOS executable and platform proof", NativeBinaryChecks.validate),
-      ("Explicit evaluation mode preserves and restores runtime configuration", EvaluationModeChecks.validate),
+      (
+        "Explicit evaluation mode preserves and restores runtime configuration",
+        EvaluationModeChecks.validate
+      ),
       ("Per-prefix locks allow independent sessions", testPrefixLeasePreventsConcurrentMutations),
       (
         "Isolated game/profile prefix paths and persistent profiles",
@@ -25,12 +28,19 @@ public final class CoreChecks {
       ),
       ("Path traversal and symlink escape rejection", testSavePathsRejectTraversalAndSymlinkEscape),
       (
+        "Per-game save folders survive recreation and remain isolated",
+        PersistentGameFolderChecks.validate
+      ),
+      (
         "Literal process arguments and verified engine selection",
         testLaunchPlanUsesLiteralArgumentsAndIsolatedPrefix
       ),
       ("Dependencies and registry remain isolated between games", testDependencyIsolation),
       ("Non-destructive legacy migration and rollback source", testLegacyMigration),
-      ("Interrupted rollback restores copies and preserves conflicts", RollbackRecoveryChecks.validate),
+      (
+        "Interrupted rollback restores copies and preserves conflicts",
+        RollbackRecoveryChecks.validate
+      ),
       ("Migration preflight does not leave partial prefixes", testMigrationPreflight),
       ("Migrated executable bindings belong only to the assigned profile", testMigrationBindings),
       ("Interrupted copies are archived and block only affected sessions", testMigrationRecovery),

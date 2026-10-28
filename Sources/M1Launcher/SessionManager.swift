@@ -295,7 +295,8 @@ final class SessionManager {
         throw LauncherError.unavailable(
           "Recupera la migrazione interrotta da Dati e ripristino prima di avviare il gioco.")
       }
-      _ = try PrefixManager(paths: paths).prepare(profile: ctx.profile, gameID: ctx.game.id)
+      _ = try PrefixManager(paths: paths).prepare(
+        profile: ctx.profile, gameID: ctx.game.id, saveRules: ctx.game.saveRules)
       try checkCancellation(ctx)
       let marker = prefix.appendingPathComponent(".ready/runtime-initialized")
       let version = ctx.runtime.initializationIdentity(engine: plan.engine)
@@ -307,7 +308,8 @@ final class SessionManager {
         try runInitializationStage(
           ctx, name: "Inizializzazione Wine", program: plan.executable,
           arguments: ["wineboot", "-u"])
-        _ = try PrefixManager(paths: paths).prepare(profile: ctx.profile, gameID: ctx.game.id)
+        _ = try PrefixManager(paths: paths).prepare(
+          profile: ctx.profile, gameID: ctx.game.id, saveRules: ctx.game.saveRules)
         let registry = prefix.appendingPathComponent(".ready/folders.reg")
         let dosPath = "Z:" + registry.path.replacingOccurrences(of: "/", with: "\\")
         try runInitializationStage(

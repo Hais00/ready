@@ -1,8 +1,8 @@
 {
-  "createdAt": "2026-10-28T03:29:36.744252+01:00",
+  "createdAt": "2026-10-28T03:42:36.310628+01:00",
   "goalComplete": false,
   "core": {
-    "checks": 25,
+    "checks": 26,
     "passed": true,
     "names": [
       "Valve manifests and malformed input",
@@ -13,6 +13,7 @@
       "Isolated game/profile prefix paths and persistent profiles",
       "Personal folders persist across prefix recreation",
       "Path traversal and symlink escape rejection",
+      "Per-game save folders survive recreation and remain isolated",
       "Literal process arguments and verified engine selection",
       "Dependencies and registry remain isolated between games",
       "Non-destructive legacy migration and rollback source",
@@ -89,6 +90,17 @@
     },
     "realSIGKILLCount": 6,
     "scope": "actual rollback and recovery renames with SIGKILL, before progress commit; synthetic prefixes only"
+  },
+  "customSaveFolders": {
+    "passed": true,
+    "checks": {
+      "oldPrefixRetained": true,
+      "otherGameDoesNotSeeCustomSave": true,
+      "otherProfileDoesNotSeeCustomSave": true,
+      "recreationPreservesSaveWithoutRepeatingRecipe": true,
+      "writeThroughNormalWindowsPath": true
+    },
+    "scope": "real SessionManager/Wine CreateFileA/GetFileAttributesA at C:\\ProgramData\\ReadyGame\\Saves, independent game/profile prefixes and prefix recreation"
   },
   "controllerPolicy": {
     "passed": true,

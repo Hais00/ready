@@ -23,6 +23,7 @@ provider_switch=read('provider-switch.json')
 controller=read('controller-navigation.json')
 frontend_lifecycle=read('frontend-lifecycle.json')
 rollback_crash=read('rollback-crash.json')
+custom_saves=read('custom-saves.json')
 store_log=(ROOT/'Evidence/stores-parent-tests.log').read_text()
 match=re.search(r'Ran (\d+) tests',store_log)
 assert core['pass'] and host['passed'] and manager['passed']
@@ -31,6 +32,7 @@ assert store_client['passed'] and migration_crash['passed']
 assert apple_gpu['dx12Verified'] and apple_overlay['passed'] and provider_switch['passed'] and controller['passed']
 assert frontend_lifecycle['passed']
 assert rollback_crash['passed']
+assert custom_saves['passed']
 assert apple_gpu['evaluationOnly'] and not apple_gpu['enabledForConsumerPlay']
 assert prefix['verified'] and canonical['verified'] and wine_overlay['passed'] and frontend['pass']
 gpu_paths=[path for path in overlay if 'architecture' in path]
@@ -44,6 +46,7 @@ report={
  'storeClient':{'passed':store_client['passed'],'checks':store_client['checks'],'realKeychainUsed':False},
  'migrationCrash':{'passed':migration_crash['passed'],'checks':migration_crash['checks'],'scope':migration_crash['scope']},
  'rollbackCrash':{'passed':True,'checks':rollback_crash['checks'],'realSIGKILLCount':rollback_crash['realSIGKILLCount'],'scope':rollback_crash['scope']},
+ 'customSaveFolders':{'passed':True,'checks':custom_saves['checks'],'scope':custom_saves['scope']},
  'controllerPolicy':{'passed':True,'checks':controller['checks'],'physicalDeviceVerified':False,'actualModalInteractionVerified':False},
  'appleEvaluation':{'dx12GPUVerified':True,'wineVersion':apple_gpu['reportedVersion'],
   'consumerPlayEnabled':False,'binaryRedistributionEnabled':False,'actualOverlayPaths':apple_overlay['actualOverlayPaths'],

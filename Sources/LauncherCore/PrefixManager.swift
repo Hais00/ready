@@ -6,8 +6,9 @@ public final class PrefixManager {
   public let paths: LauncherPaths
   public init(paths: LauncherPaths) { self.paths = paths }
   @discardableResult
-  public func prepare(profile: UUID, gameID: String, userName: String = NSUserName()) throws -> URL
-  {
+  public func prepare(
+    profile: UUID, gameID: String, userName: String = NSUserName(), saveRules: [SaveRule] = []
+  ) throws -> URL {
     try paths.prepare()
     let fm = FileManager.default
     let prefix = paths.prefix(profile: profile, gameID: gameID)
@@ -57,6 +58,8 @@ public final class PrefixManager {
     var registryData = Data([0xff, 0xfe])
     registryData.append(reg.data(using: .utf16LittleEndian)!)
     try AtomicFile.writePrivate(registryData, to: config.appendingPathComponent("folders.reg"))
+    try PersistentGameFolders.prepare(
+      rules: saveRules, profile: profile, gameID: gameID, paths: paths, prefix: prefix)
     return prefix
   }
   private func redirect(_ source: URL, to target: URL, prefix: URL) throws {
@@ -94,6 +97,7 @@ public final class PrefixManager {
     return try withExtendedLifetime(lease) {
       let prefix = paths.prefix(profile: profile, gameID: gameID)
       let fm = FileManager.default
+      let saveRules = try PersistentGameFolders.storedRules(prefix: prefix)
       var backup: URL?
       if fm.fileExists(atPath: prefix.path) {
         let b = paths.root.appendingPathComponent("Backups/prefix-" + UUID().uuidString)
@@ -102,7 +106,7 @@ public final class PrefixManager {
         backup = b
       }
       do {
-        try prepare(profile: profile, gameID: gameID)
+        try prepare(profile: profile, gameID: gameID, saveRules: saveRules)
         return backup
       } catch {
         if let backup {
