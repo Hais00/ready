@@ -367,3 +367,13 @@ earlier experiment requires explicit `--include-apple-compat`.
 
 Build caches may be removed after installed binaries and probes are verified.
 Do not remove source trees, active per-user prefixes, or unrelated workspace data.
+
+## Diagnostic XInput capture provider
+
+The Wine 11.20 XInput capture candidate is described in
+[XINPUT_CAPTURE.md](XINPUT_CAPTURE.md). All five builtin DLL versions pass PE32/
+PE64 deterministic device tests and two-session isolation; an additional actual
+Vulkan/Metal presentation test consumes the injected overlay's own status from
+the same native process. The provider remains diagnostic and the active runtime
+is unchanged. Physical controllers, WineCX, and non-XInput APIs remain unverified.
+Wine-derived changes and the native bridge retain LGPL-2.1-or-later licensing.

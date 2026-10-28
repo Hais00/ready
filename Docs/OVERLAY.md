@@ -94,9 +94,12 @@ event-driven and periodically sampled, rather than written every frame.
   game's installed controller handlers.
 
 **Not yet proved:** a physical controller was not available in the synthetic suite.
-Polling does not suppress a game's independent Wine XInput/SDL/RawInput path, so
-game input may also react to controller buttons. A Wine-side input arbitration hook
-remains necessary for a fully exclusive console-menu experience.
+The active runtime's polling does not suppress a game's independent Wine
+XInput/SDL/RawInput path, so game input may also react to controller buttons.
+A separate [diagnostic Wine XInput provider](XINPUT_CAPTURE.md) now passes neutral
+input, release-latch and two-session tests, including the actual injected Metal
+overlay's status. It is not activated by default; its device input is simulated.
+Physical controllers and other input APIs remain unverified.
 
 ## Build and verification
 
@@ -117,6 +120,9 @@ slices. The tests run native arm64 and x86_64 through Rosetta on the actual M1:
 - No hidden overlay GPU submissions; tracked overlay texture allocation returns to 0.
 - Keyboard toggle, quit request, resume, mouse quit selection, control-file show/hide,
   and rejection of a group/world-readable control file.
+- A capture epoch advances only when the overlay opens, so a game that misses an
+  entire open/close interval can still suppress held resume input. CPU-only
+  heartbeat updates during paused presentation add no GPU work or hidden textures.
 - Two simultaneous injected processes have independent controls and status. Sending
   quit/resume to one does not hide, quit, or modify the other's action state.
 

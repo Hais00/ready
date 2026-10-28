@@ -26,6 +26,7 @@ static _Thread_local BOOL RDEmitting;
 static dispatch_source_t RDControlWatch;
 static dispatch_source_t RDHeartbeat;
 static uint64_t RDHeartbeatSequence;
+static uint64_t RDInputCaptureEpoch;
 static __weak CAMetalLayer *RDLastLayer;
 static unsigned char RDDrawablesKey;
 static void RDWriteStatus(void);
@@ -76,7 +77,8 @@ static NSDictionary *RDStatus(void) {
         @"requestedAction":RDRequestedAction ?: @"",@"actionSequence":@(RDActionSequence),
         @"controlSequence":@(RDControlSequence),@"error":RDError ?: @"",
         @"controlWatchActive":@(RDControlWatch!=nil),@"controlReadCount":@(RDControlReadCount),
-        @"heartbeatActive":@(RDHeartbeat!=nil),@"heartbeatSequence":@(RDHeartbeatSequence),
+        @"heartbeatActive":RDHeartbeat ? @YES : @NO,@"heartbeatSequence":@(RDHeartbeatSequence),
+        @"inputCaptureEpoch":@(RDInputCaptureEpoch),
         @"separateWindowCount":@0,@"separateLayerCount":@0,
         @"directToDisplayVerified":@NO};
 }
@@ -100,6 +102,7 @@ char *ReadyOverlayCopyStatusJSON(void) {
     NSString *s=[[NSString alloc]initWithData:d encoding:NSUTF8StringEncoding];char *result=strdup((s ?: @"{}").UTF8String);[RDLock unlock];return result;
 }
 static void RDSetVisible(BOOL visible, NSInteger selection) {
+    if(visible && !RDVisible)RDInputCaptureEpoch++;
     RDVisible=visible;RDSelection=MAX(0,MIN(selection,1));
     // In-flight Metal commands retain their own resource references in completion handlers.
     // Drop ALL persistent overlay GPU resources immediately on hide; no hidden render loop.

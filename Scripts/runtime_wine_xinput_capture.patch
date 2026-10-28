@@ -1,0 +1,91 @@
+--- a/dlls/xinput1_3/main.c
++++ b/dlls/xinput1_3/main.c
+@@ -829,7 +829,7 @@
+     LeaveCriticalSection(&xinput_cs);
+ }
+ 
+-DWORD WINAPI DECLSPEC_HOTPATCH XInputSetState(DWORD index, XINPUT_VIBRATION *vibration)
++static DWORD ready_physical_set_state(DWORD index, XINPUT_VIBRATION *vibration)
+ {
+     DWORD ret;
+ 
+@@ -852,7 +852,7 @@
+ 
+ /* Some versions of SteamOverlayRenderer hot-patch XInputGetStateEx() and call
+  * XInputGetState() in the hook, so we need a wrapper. */
+-static DWORD xinput_get_state(DWORD index, XINPUT_STATE *state)
++static DWORD ready_physical_get_state(DWORD index, XINPUT_STATE *state)
+ {
+     DWORD ret;
+ 
+@@ -871,6 +871,8 @@
+     return ret;
+ }
+ 
++#include "runtime_xinput_gate.h"
++
+ DWORD WINAPI DECLSPEC_HOTPATCH XInputGetState(DWORD index, XINPUT_STATE *state)
+ {
+     DWORD ret;
+@@ -882,6 +884,7 @@
+ 
+     /* The main difference between this and the Ex version is the media guide button */
+     state->Gamepad.wButtons &= ~XINPUT_GAMEPAD_GUIDE;
++    ready_filter_state(index, state);
+ 
+     return ERROR_SUCCESS;
+ }
+@@ -890,7 +893,9 @@
+ {
+     TRACE("index %lu, state %p.\n", index, state);
+ 
+-    return xinput_get_state(index, state);
++    DWORD ret = xinput_get_state(index, state);
++    if (!ret) ready_filter_state(index, state);
++    return ret;
+ }
+ 
+ static const int JS_STATE_OFF = 0;
+@@ -987,10 +992,9 @@
+ 
+ static DWORD check_for_keystroke(const DWORD index, XINPUT_KEYSTROKE *keystroke)
+ {
+-    static XINPUT_GAMEPAD last_state[XUSER_MAX_COUNT];
+-    static SRWLOCK keystroke_lock = SRWLOCK_INIT;
+-
+-    XINPUT_GAMEPAD *last = last_state + index;
++
++    XINPUT_GAMEPAD filtered;
++    XINPUT_GAMEPAD *last = ready_last_key_state + index;
+     const XINPUT_GAMEPAD *cur;
+     DWORD ret = ERROR_EMPTY;
+     XINPUT_STATE state;
+@@ -1019,9 +1023,13 @@
+     };
+ 
+     if ((ret = xinput_get_state(index, &state))) return ret;
+-    AcquireSRWLockExclusive(&keystroke_lock);
++    AcquireSRWLockExclusive(&ready_keystroke_lock);
+ 
+     cur = &state.Gamepad;
++    if (ready_capture_player(index, cur)) { *last = *cur; ret = ERROR_EMPTY; goto done; }
++    filtered = *cur;
++    if (ready_capture.active) { filtered.wButtons &= ~XINPUT_GAMEPAD_START; last->wButtons &= ~XINPUT_GAMEPAD_START; }
++    cur = &filtered;
+ 
+     /*** buttons ***/
+     for (i = 0; i < ARRAY_SIZE(buttons); ++i)
+@@ -1086,11 +1094,11 @@
+         goto done;
+ 
+ done:
+-    ReleaseSRWLockExclusive(&keystroke_lock);
++    ReleaseSRWLockExclusive(&ready_keystroke_lock);
+     return ret;
+ }
+ 
+-DWORD WINAPI DECLSPEC_HOTPATCH XInputGetKeystroke(DWORD index, DWORD reserved, PXINPUT_KEYSTROKE keystroke)
++static DWORD ready_physical_get_keystroke(DWORD index, DWORD reserved, PXINPUT_KEYSTROKE keystroke)
+ {
+     TRACE("index %lu, reserved %lu, keystroke %p.\n", index, reserved, keystroke);
+ 
