@@ -125,10 +125,11 @@ int main(int argc,char **argv){
         for(uint32_t i=0;i<count;i++){if(i)putchar(',');printf("{\"name\":");json_string(extensions[i].extensionName);printf(",\"specVersion\":%u}",extensions[i].specVersion);}puts("]}");
         free(extensions);vkDestroyInstance(instance,NULL);return 0;
     }
+    VkPhysicalDeviceProperties2 *embedded=NULL; VkStructureType embeddedSType=0; void *embeddedNext=NULL;
     VkPhysicalDeviceProperties2 *properties=allocate_guarded(sizeof(*properties),VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2);
-    void *selected[COUNT];memset(selected,0,sizeof(selected));int matched=!strcmp(mode,"base")||!strcmp(mode,"core")||!strcmp(mode,"full");
+    void *selected[COUNT];memset(selected,0,sizeof(selected));int matched=!strcmp(mode,"base")||!strcmp(mode,"core")||!strcmp(mode,"full")||!strcmp(mode,"layered_props_list_initialized");
     for(size_t i=0;i<COUNT;i++){
-        int choose=(!strcmp(mode,"full")||(!strcmp(mode,"core")&&i<3)||!strcmp(mode,cases[i].name));
+        int choose=(!strcmp(mode,"full")||(!strcmp(mode,"core")&&i<3)||!strcmp(mode,cases[i].name)||(!strcmp(mode,"layered_props_list_initialized")&&!strcmp(cases[i].name,"layered_props_list")));
         if(!strcmp(mode,cases[i].name))matched=1;
         if(!choose||!supported(&cases[i],extensions,count))continue;
         VkBaseOutStructure *node=allocate_guarded(cases[i].size,cases[i].sType);selected[i]=node;
@@ -142,6 +143,8 @@ int main(int argc,char **argv){
             /* Exact vkd3d-proton source shape: embedded properties.sType stays 0
              * after memset. Do not silently repair it in this reproduction. */
             vulkan->properties.pNext=driver;
+            if(!strcmp(mode,"layered_props_list_initialized"))vulkan->properties.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+            embedded=&vulkan->properties;embeddedSType=embedded->sType;embeddedNext=embedded->pNext;
         }
     }
     if(!matched)return 64;
@@ -155,7 +158,8 @@ int main(int argc,char **argv){
     for(size_t i=0;i<guard_count;i++){if(i)putchar(',');printf("{\"sType\":%u,\"size\":%zu,\"pointer\":\"%p\",\"pNext\":\"%p\"}",(unsigned)guards[i].sType,guards[i].size,(void*)guards[i].payload,guards[i].next);}puts("]}");fflush(stdout);
     vkGetPhysicalDeviceProperties2(gpu,properties);
     int matches=!strcmp(properties->properties.deviceName,legacy.deviceName)&&properties->properties.vendorID==legacy.vendorID&&properties->properties.deviceID==legacy.deviceID&&properties->properties.apiVersion==legacy.apiVersion;
-    int guardIntact=intact(),valid=guardIntact&&matches;printf("{\"stage\":\"after-query\",\"case\":");json_string(mode);printf(",\"returned\":true,\"guardAndHeadersIntact\":%s,\"device\":",guardIntact?"true":"false");json_string(properties->properties.deviceName);
-    printf(",\"vendorID\":%u,\"apiVersion\":%u,\"baseMatchesLegacy\":%s,\"guardedStructCount\":%zu}\n",properties->properties.vendorID,properties->properties.apiVersion,matches?"true":"false",guard_count);
+    int embeddedIntact=!embedded||(embedded->sType==embeddedSType&&embedded->pNext==embeddedNext);
+    int guardIntact=intact()&&embeddedIntact,valid=guardIntact&&matches;printf("{\"stage\":\"after-query\",\"case\":");json_string(mode);printf(",\"returned\":true,\"guardAndHeadersIntact\":%s,\"device\":",guardIntact?"true":"false");json_string(properties->properties.deviceName);
+    printf(",\"vendorID\":%u,\"apiVersion\":%u,\"baseMatchesLegacy\":%s,\"embeddedHeaderIntact\":%s,\"pointerBytes\":%zu,\"guardedStructCount\":%zu}\n",properties->properties.vendorID,properties->properties.apiVersion,matches?"true":"false",embeddedIntact?"true":"false",sizeof(void*),guard_count);
     for(size_t i=0;i<guard_count;i++)free(guards[i].allocation);free(extensions);vkDestroyInstance(instance,NULL);return valid?0:4;
 }

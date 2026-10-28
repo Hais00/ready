@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Same public Vulkan property chain as the native diagnostic, through PE64 Wine.
+"""Public Vulkan property-chain compiler for PE64 and explicit PE32 controls.
 
 Pure Wine installations only. Fresh UUID prefixes, matching pure PE32 bootstrap,
 individual process per query, actual Wine Unix-call faults retained per case.
@@ -25,24 +25,25 @@ SHARED = ROOT/'Scripts/runtime_vulkan_properties_probe.c'
 OUTPUT = ROOT/'Build/VulkanPropertiesWindows'
 
 
-def compile_probe(wine):
-    OUTPUT.mkdir(parents=True, exist_ok=True)
+def compile_probe(wine, bits=64):
+    output = OUTPUT if bits == 64 else OUTPUT/'pe32'
+    output.mkdir(parents=True, exist_ok=True)
     headers = wine/'include/wine/windows'
     crt = ROOT/'Vendor/wine/include/msvcrt'
-    libraries = wine/'lib/wine/x86_64-windows'
+    libraries = wine/'lib/wine'/('x86_64-windows'if bits==64 else'i386-windows')
     for path in (headers/'windows.h', libraries/'libkernel32.a', libraries/'libucrtbase.a'):
         assert path.is_file(), str(path)
-    subprocess.run(['/opt/homebrew/opt/llvm/bin/clang', '--target=x86_64-windows',
+    subprocess.run(['/opt/homebrew/opt/llvm/bin/clang', '--target='+('x86_64-windows'if bits==64 else'i686-windows'),
                     '--no-default-config', '-D_UCRT', '-ffreestanding', '-fno-builtin',
                     '-fno-stack-protector', '-fshort-wchar', '-O0', '-g',
                     '-I', str(headers), '-I', str(crt), '-I', str(HEADERS),
-                    '-c', str(ENTRY), '-o', str(OUTPUT/'probe.obj')], check=True, cwd=ROOT)
-    temporary = OUTPUT/'probe.exe.pending'
+                    '-c', str(ENTRY), '-o', str(output/'probe.obj')], check=True, cwd=ROOT)
+    temporary = output/'probe.exe.pending'
     subprocess.run(['/opt/homebrew/opt/lld/bin/lld-link', '/entry:mainCRTStartup',
-                    '/subsystem:console', '/machine:x64', '/nodefaultlib', str(OUTPUT/'probe.obj'),
+                    '/subsystem:console', '/machine:'+('x64'if bits==64 else'x86'), '/nodefaultlib', str(output/'probe.obj'),
                     str(libraries/'libkernel32.a'), str(libraries/'libucrtbase.a'),
                     '/out:'+str(temporary)], check=True, cwd=ROOT)
-    executable = OUTPUT/'probe.exe'
+    executable = output/'probe.exe'
     temporary.replace(executable)
     return executable, {'windowsHeaderSHA256': digest(headers/'windows.h'),
                         'crtHeaderSHA256': digest(crt/'stdio.h'),

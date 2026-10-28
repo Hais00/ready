@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "wineVersion": "11.20",
+  "vendorInputs": {
+    "Vendor/wine/dlls/winevulkan/make_vulkan": "4c14b690bc351e45aa4817609835bcc4faf1643418ef9e65ad7d131eab06b25a",
+    "Vendor/wine/dlls/winevulkan/vulkan_thunks.c": "f2d2be281bd8b63486453be523e040934187b9a654715275302ef14df0978dea",
+    "Vendor/wine/dlls/winevulkan/winevk.xml": "f09da265b144d3bd58427b120bc2ca4e8aaf212df8663c744a6056007b21d59e"
+  },
+  "registryInputs": {
+    "vk.xml": {
+      "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Docs/v1.4.363/xml/vk.xml",
+      "sha256": "55ec60950cfb18c3575dcf5fd52741b2bb70eb1e466408f803a91049973ee6fb"
+    },
+    "video.xml": {
+      "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Docs/v1.4.363/xml/video.xml",
+      "sha256": "d018b914014c06605e367a3b929670511e6f6de2f225c405a8b5e2d912408b76"
+    }
+  },
+  "fixedGeneratedSHA256": "8d25e39333f9f5cccaa3ad172bca1605512a2b7252a02f7cf280a4603cf1b772",
+  "license": "LGPL-2.1-or-later for Wine generator changes and original recipe; generated original notices preserved",
+  "noXMLChanges": true
+}

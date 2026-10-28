@@ -98,18 +98,66 @@ provenance, inventories, stages, and per-case outcomes; ignored per-case files r
 raw output. Native and Windows evidence together occupy about 1.94 MB. No failing
 property query occurred, so no debugger backtrace was needed.
 
-## What remains unresolved
+## Generated Wine conversion defect isolated
 
-The strict vkd3d-proton run still records an exception in
-`vkGetPhysicalDeviceProperties2` in `Evidence/runtime-vkd3d-winecx-open.log`. Neither
-the native calls nor these isolated public Wine calls reproduce it. Therefore there
-is no evidence here for a generic Properties2 driver or Wine-thunk fix.
+The earlier native/PE64 matrices remain source-hash-bound controls. Subsequent capture of the **actual** VKD3D sequence identified a Wine-generated input conversion defect rather than a driver failure. This section supersedes the earlier inability to isolate that exception; it does not claim a full Vulkan conformance run or open D3D12 support.
 
-The remaining difference is the **actual vkd3d call input or preceding sequence**:
-its effective extension-filtered chain, physical-device/dispatch state, or earlier
-feature queries and memory state. The isolated probe uses guarded allocations and
-does not reproduce vkd3d's whole aggregate object or earlier Features2 sequence.
-Capturing those actual inputs is the next diagnostic step, before changing upstream
-code. This result does not establish open-source D3D12 device creation or shader
-support. No upstream source, default runtime configuration, or advertised hardware
-capability was changed.
+`VkPhysicalDeviceLayeredApiVulkanPropertiesKHR.properties` is an embedded extensible `VkPhysicalDeviceProperties2`. The [Khronos structure contract](https://docs.vulkan.org/refpages/latest/refpages/source/VkPhysicalDeviceLayeredApiVulkanPropertiesKHR.html) permits only driver-properties and device-ID-properties nodes in its embedded `pNext` chain (VUID `pNext-10011`). Its surrounding Vulkan-specific entry is [ignored for a non-Vulkan layered API](https://docs.vulkan.org/refpages/latest/refpages/source/VkPhysicalDeviceLayeredApiPropertiesKHR.html). Those rules do not justify passing an uninitialized host pointer into Wine's copyback traversal.
+
+Wine 11.20's generated W2H64/W2H32 code allocates the outer layered Vulkan node but originally initializes only its outer header. It leaves the entire embedded `properties` header/chain uninitialized. The recursive H2W converters already exist and traverse that uninitialized host chain after the driver returns. Actual caller pointer/structure captures and a deterministic scratch-poison control separate this converter defect from speculation about the hardware, ABI, or driver.
+
+### Paired deterministic control
+
+The diagnostic variants poison only the conversion context scratch buffer with `0xA5`; no caller input, hardware feature, returned capability, or production module is poisoned. The standalone control explicitly initializes the embedded `properties.sType` to `VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2` and supplies a valid driver-properties chain, compiled with real public headers and each guest ABI.
+
+| Guest | Original converter + poison | Recursive W2H fix + same poison |
+|---|---|---|
+| PE64 | FAIL, exit 3, Properties2 Unix-call exception after host return | PASS, exit 0; root/canary/header/base checks intact |
+| PE32 | FAIL, exit 3, `thunk32` host return then copyback exception | PASS, exit 0; `pointerBytes=4`, embedded header and all guards intact, base matches legacy |
+
+In the original host trace, embedded `sType=2779096485` and `pNext=0xa5a5a5a5a5a5a5a5`. With the fix, the host embedded header matches the input, its driver node is a readable converted host allocation, and caller headers/pointers survive copyback. PE32 uses the actual i386 Wine Kernel32/UCRT import archives and Khronos Windows calling convention. Host logging uses host types; guest sizes/guards are compiled into the actual PE program, with no handwritten layout or ABI approximation.
+
+Actual VKD3D's zero-initialized embedded `sType` remains **zero** in the captured upstream sequence. The fix transfers the caller header as supplied; it does not silently replace it. The initialized standalone control avoids blaming the converter failure on that zero header. No claim is made that zero would be valid if an implementation actually consumed that Vulkan-specific nested query.
+
+### Minimal generator and generated-code fix
+
+The generator incorrectly treats a returned-only embedded extensible structure as having no input requirements. Its payload is output, but its `sType` and `pNext` remain input state. The fix allows input conversion for such embedded chain-bearing structures and adds forward declarations for the resulting recursive Properties2 conversion cycle.
+
+Using **the generator's own pinned registry version 1.4.363**, unmodified regeneration matches the checked-in Wine `vulkan_thunks.c` byte-for-byte:
+`f2d2be281bd8b63486453be523e040934187b9a654715275302ef14df0978dea`.
+The fixed generator emits exactly the reviewed minimal C changes in both W2H64 and W2H32, plus their forward declarations; the other generated interfaces remain unchanged. Fixed generated C SHA256:
+`8d25e39333f9f5cccaa3ad172bca1605512a2b7252a02f7cf280a4603cf1b772`.
+No Khronos XML edit is needed; `returnedonly` was being interpreted too broadly by Wine.
+
+The public LGPL recipe and locked inputs are:
+
+- `Scripts/runtime_wine_layered_w2h.py`
+- `Scripts/runtime_wine_layered_w2h.lock.json`
+- `Scripts/runtime_wine_layered_w2h.patch` (generator and generated C)
+
+Original Wine/generated-code notices are retained. The observer and poison variants are diagnostic copies only. No upstream PR or external message was made.
+
+```sh
+# Regenerate and prove the original/fixed outputs in a private source layout.
+python3 Scripts/runtime_wine_layered_w2h.py
+
+# Rebuild only winevulkan.so in a same-level COW build clone; never install it.
+python3 Scripts/runtime_wine_layered_w2h.py --build
+
+# Deterministic paired controls (independent private prefixes).
+python3 Scripts/runtime_vkd3d_call_trace.py --variant poison --program layered-valid --icd kosmic
+python3 Scripts/runtime_vkd3d_call_trace.py --variant fixed-poison --program layered-valid --icd kosmic
+python3 Scripts/runtime_vkd3d_call_trace.py --variant poison --program layered-valid --icd kosmic --bits 32
+python3 Scripts/runtime_vkd3d_call_trace.py --variant fixed-poison --program layered-valid --icd kosmic --bits 32
+```
+
+### Uninstrumented asset and remaining device gates
+
+The uninstrumented candidate contains neither observer nor poison. Its exact module/recipe/config/source hashes and compile/link commands are retained in `Evidence/runtime-wine-layered-w2h-asset.json`. Current private build:
+`Runtime/build-layered-w2h-6b34f195d697/dlls/winevulkan/winevulkan.so`, module SHA256
+`d4453f2861468a66b61bf9ccafb751b586c0b52714de1fb73cf4bda54217faec`.
+It was copied only into diagnostic Wine COW clones. The uninstrumented asset also passes the initialized public property control in both PE32 and PE64, with embedded-header/canary/base checks intact.
+
+Actual VKD3D with that uninstrumented asset returns a clean unsupported-device result, with no Properties2 Unix-call exception. Its log reports missing **transform feedback** and warns that `VK_EXT_dynamic_rendering_unused_attachments` is absent. This is **not open-source D3D12 readiness** and no missing feature is advertised as supported. Other device/renderer requirements may remain after those gates.
+
+The paired reports are `Evidence/runtime-vkd3d-call-{poison,fixed-poison}-layered-valid-kosmic{,-pe32}.json` with exact traces/logs. The actual caller reports are `runtime-vkd3d-call-fixed-vkd3d-kosmic.json` and `runtime-vkd3d-call-fixed-asset-vkd3d-kosmic.json`. The asset is prepared for a future immutable runtime generation; no active provider, default config, vendor source, or hardware capability was modified. Promotion requires a separate immutable candidate with focused affected-API and real Wine/GPU regressions and an available rollback path. The previous 31-native/62-PE64 matrices are not relabelled as post-fix conformance results.
