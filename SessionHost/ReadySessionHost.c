@@ -4,6 +4,10 @@
 #include <sys/stat.h>
 #include <sys/file.h>
 #include <sys/wait.h>
+#include <sys/proc.h>
+#include <libproc.h>
+#include <limits.h>
+#include <time.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <spawn.h>
@@ -41,6 +45,97 @@ static int wait_for(pid_t pid) {
     do{result=waitpid(pid,&status,0);}while(result<0 && errno==EINTR);
     if(result<0){perror("ReadySessionHost: waitpid");return 71;}
     return normal_status(status);
+}
+// proc_listpids includes zombies. Request BSD info with arg=1 as required by
+// Darwin to inspect them too; arg=0 returns ESRCH for a waitable zombie.
+static int group_snapshot(pid_t group,pid_t **pids,size_t *count) {
+    errno=0;
+    int bytes=proc_listpids(PROC_PGRP_ONLY,(uint32_t)group,NULL,0);
+    if(bytes<=0)return -1;
+    int capacity=bytes>128?bytes:128;
+    for(;;){
+        pid_t *list=malloc((size_t)capacity);if(!list){errno=ENOMEM;return -1;}
+        errno=0;
+        int used=proc_listpids(PROC_PGRP_ONLY,(uint32_t)group,list,capacity);
+        if(used<0 || (used==0 && errno) || used%(int)sizeof(pid_t)){
+            free(list);if(!errno)errno=EIO;return -1;
+        }
+        // An exact fit may be truncated. Never infer completion from it.
+        if(used>=capacity){free(list);if(capacity>INT_MAX/2){errno=ENOMEM;return -1;}capacity*=2;continue;}
+        *pids=list;*count=(size_t)used/sizeof(pid_t);return 0;
+    }
+}
+static int group_has_only_zombies(pid_t group) {
+    pid_t *first=NULL,*second=NULL;size_t count=0,again=0;int result=0;
+    struct proc_bsdinfo *identities=NULL;
+    if(group_snapshot(group,&first,&count)<0)return -1;
+    if(count==0){errno=EAGAIN;result=-1;goto finish;}
+    identities=calloc(count,sizeof(*identities));
+    if(!identities){errno=ENOMEM;result=-1;goto finish;}
+    int anchored=0;
+    for(size_t i=0;i<count;i++){
+        struct proc_bsdinfo *info=&identities[i];
+        errno=0;
+        if(proc_pidinfo(first[i],PROC_PIDTBSDINFO,1,info,sizeof(*info))!=(int)sizeof(*info)){
+            result=errno==ESRCH?0:-1;goto finish;
+        }
+        if(info->pbi_pid!=(uint32_t)first[i] || info->pbi_pgid!=(uint32_t)group || info->pbi_status!=SZOMB)goto finish;
+        if(first[i]==group && info->pbi_ppid==(uint32_t)getpid())anchored=1;
+    }
+    if(!anchored){errno=EAGAIN;result=-1;goto finish;}
+    if(group_snapshot(group,&second,&again)<0){result=-1;goto finish;}
+    // A member may fork between list and BSD-info queries, then become a zombie.
+    // Every member in this second snapshot must be the SAME zombie observed
+    // before it: a zombie cannot fork or become live again. Start times prevent
+    // a reaped descendant's PID reuse from satisfying this comparison.
+    anchored=0;
+    for(size_t i=0;i<again;i++){
+        size_t j=0;while(j<count && first[j]!=second[i])j++;
+        if(j==count)goto finish;
+        struct proc_bsdinfo info;errno=0;
+        if(proc_pidinfo(second[i],PROC_PIDTBSDINFO,1,&info,sizeof(info))!=(int)sizeof(info)){
+            result=errno==ESRCH?0:-1;goto finish;
+        }
+        if(info.pbi_pid!=(uint32_t)second[i] || info.pbi_pgid!=(uint32_t)group || info.pbi_status!=SZOMB ||
+           info.pbi_start_tvsec!=identities[j].pbi_start_tvsec || info.pbi_start_tvusec!=identities[j].pbi_start_tvusec)goto finish;
+        if(second[i]==group && info.pbi_ppid==(uint32_t)getpid())anchored=1;
+    }
+    if(!anchored){errno=EAGAIN;result=-1;goto finish;}
+    result=1;
+finish:
+    free(identities);free(first);free(second);return result;
+}
+static void group_retry_pause(void) {
+    struct timespec remaining={0,50000000};
+    while(nanosleep(&remaining,&remaining)<0 && errno==EINTR){}
+}
+static int wait_for_game(pid_t child,int native,const sigset_t *blocked) {
+    siginfo_t exited;memset(&exited,0,sizeof(exited));int waited;
+    do{waited=waitid(P_PID,(id_t)child,&exited,WEXITED|WNOWAIT);}while(waited<0 && errno==EINTR);
+    if(waited<0 || exited.si_pid!=child){
+        // An unavailable anchor cannot safely be used for group signals. Keep
+        // the leases indefinitely rather than assert that a game has finished.
+        perror("ReadySessionHost: waitable game identity unavailable; retaining leases");
+        sigset_t mask;sigprocmask(SIG_BLOCK,blocked,&mask);child_group=0;sigprocmask(SIG_SETMASK,&mask,NULL);
+        for(;;)group_retry_pause();
+    }
+    // WNOWAIT pins the leader PID/PGID until all native group members are dead.
+    // Voluntary setpgid/setsid escape and LaunchServices-owned processes are not
+    // containment guarantees; this keeper supervises the original group only.
+    if(native){
+        int warned=0;
+        for(;;){
+            int state=group_has_only_zombies(child);if(state==1)break;
+            if(state<0 && !warned){perror("ReadySessionHost: native group uncertain; retaining leases");warned=1;}
+            group_retry_pause();
+        }
+    }
+    // Clear the signal target BEFORE reaping the reserved leader. A signal must
+    // never reach a later, unrelated group which reused this numeric identity.
+    sigset_t mask;sigprocmask(SIG_BLOCK,blocked,&mask);child_group=0;
+    int result=wait_for(child);
+    sigprocmask(SIG_SETMASK,&mask,NULL);
+    return result;
 }
 static pid_t spawn_program(char *const argv[],int game,const sigset_t *original_mask) {
     posix_spawnattr_t attr;posix_spawn_file_actions_t actions;pid_t pid=-1;
@@ -96,6 +191,10 @@ int main(int argc,char **argv) {
     if(prefix && setenv("WINEPREFIX",prefix,1)!=0){perror("ReadySessionHost: prefix environment");return 71;}
     struct sigaction action;memset(&action,0,sizeof(action));action.sa_handler=forward_signal;action.sa_flags=SA_RESTART;sigemptyset(&action.sa_mask);
     if(sigaction(SIGTERM,&action,NULL)!=0 || sigaction(SIGINT,&action,NULL)!=0){perror("ReadySessionHost: signal handlers");return 71;}
+    // An inherited SIG_IGN/SA_NOCLDWAIT would discard the leader's zombie and
+    // destroy the identity reservation required by WNOWAIT.
+    struct sigaction child_action;memset(&child_action,0,sizeof(child_action));child_action.sa_handler=SIG_DFL;sigemptyset(&child_action.sa_mask);
+    if(sigaction(SIGCHLD,&child_action,NULL)!=0){perror("ReadySessionHost: child status disposition");return 71;}
     struct sigaction ignore;memset(&ignore,0,sizeof(ignore));ignore.sa_handler=SIG_IGN;sigemptyset(&ignore.sa_mask);sigaction(SIGHUP,&ignore,NULL);
     sigset_t blocked,oldmask;sigemptyset(&blocked);sigaddset(&blocked,SIGTERM);sigaddset(&blocked,SIGINT);sigprocmask(SIG_BLOCK,&blocked,&oldmask);
     int *installation_fds=NULL;size_t installation_fd_count=0;
@@ -108,9 +207,7 @@ int main(int argc,char **argv) {
     child_group=(sig_atomic_t)child;
     sigprocmask(SIG_SETMASK,&oldmask,NULL);
     if(pending_signal)kill(-child,(int)pending_signal);
-    int result=wait_for(child);
-    // Do not risk signalling an unrelated future process group after the original leader is reaped.
-    child_group=0;
+    int result=wait_for_game(child,server==NULL,&blocked);
     if(server){
         char *server_args[]={(char *)server,"-w",NULL};
         sigprocmask(SIG_BLOCK,&blocked,&oldmask);

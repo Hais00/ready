@@ -22,7 +22,8 @@ a helper that may already be holding a live session's locks.
    The parent's destructor must **close without calling `flock(LOCK_UN)`**. An explicit
    unlock would remove the shared lock even while the helper still has fd0 open.
 5. Keep the helper's `Process` as the supervised session. Normal completion includes
-   waiting for the exact-prefix Wine server when configured.
+   waiting for the original native process group, or the exact-prefix Wine server
+   when configured.
 
 The helper validates that fd0 is a regular file owned by the current user and obtains
 or confirms its exclusive lock. It keeps fd0 until completion. The game child receives
@@ -46,7 +47,8 @@ absolute paths. A Wine server requires an explicit absolute prefix; the helper s
 default prefix.
 
 SIGTERM and SIGINT are forwarded only to the supervised game's process group. The
-helper reaps that child. SIGHUP is ignored by the helper: disappearance of the launcher
+helper keeps the group leader waitable until its supervised lifetime is complete,
+then reaps it. SIGHUP is ignored by the helper: disappearance of the launcher
 or its terminal is not a request to close the game.
 
 If `--wine-server` is provided, the helper then executes only that server with `-w`
@@ -58,6 +60,68 @@ or unscoped server shutdown exists in this helper.
 Exit status follows the main child (`128 + signal` when signalled). A Wine waiter's
 nonzero status is returned when the main child otherwise succeeded. Spawn failures
 are explicit errors (127 for a missing program, 126 for permission failure).
+
+## Native wrappers and group lifetime
+
+A native wrapper may fork the actual game and exit immediately. Without Wine,
+the keeper now waits for every live member of the original process group before
+releasing either the prefix lease or installation read lease. This includes a
+native `.app` bootstrap whose background child stays in that group.
+
+The keeper first uses `waitid(WEXITED | WNOWAIT)` to observe the leader's exit
+without reaping it. The waitable zombie reserves the original leader PID/PGID
+while descendants continue. SIGTERM/SIGINT therefore still target that group;
+there is no interval in which the helper signals a reused group number after
+reaping the leader. Immediately before the final reap, the keeper blocks those
+signals and clears its forwarding target. It resets inherited SIGCHLD ignore /
+`SA_NOCLDWAIT` dispositions before spawn so the reservation cannot disappear
+automatically.
+
+Group inspection uses system `libproc` APIs: `proc_listpids(PROC_PGRP_ONLY)` and
+`proc_pidinfo(PROC_PIDTBSDINFO, arg=1)`. Darwin requires the nonzero argument to
+return zombie information. This behavior was checked on the current macOS 27.0.1
+host. Compiling with a macOS 14 deployment target is not runtime proof for macOS
+14 or 15; unsupported/unavailable inspection retains the leases. Zombies do not
+count as live game processes. A second
+group snapshot must contain only the same zombie instances already observed,
+verified by PID and start time; a concurrent fork/exit cannot be mistaken for an
+empty live group. Both snapshots must include the keeper's own waitable zombie
+leader; an empty list or missing anchor is uncertain, never completion. Truncated
+lists are retried. If identity or process inspection
+is uncertain, the keeper retains its leases instead of declaring the session
+finished. No allocation, waiting or group enumeration runs in the signal handler.
+The helper still links only the macOS system runtime, with no AppKit/Metal dependency.
+
+The exit result remains the original wrapper/leader's status, including its
+original nonzero exit. Signalling descendants after a wrapper already exited does
+not rewrite that saved result. Wine continues to use its explicit exact-prefix
+server wait rather than this native group-completion rule.
+
+This is process-group supervision, not absolute containment. Processes that
+voluntarily call `setsid`/`setpgid`, or games launched through LaunchServices or a
+pre-existing service into another group, are outside this guarantee. The keeper
+neither discovers nor terminates unrelated processes to compensate. Such launch
+paths need their own explicit lifecycle integration; do not treat bootstrap exit
+as proof that an independently launched application has finished. Killing the
+keeper itself with SIGKILL remains outside the crash-survival guarantee.
+
+The isolated native fixture in `Scripts/test_session_host.py` compiles an original
+C executable into two temporary `.app` directories. Each wrapper exits while its
+same-group child writes a heartbeat. The test observes the zombie leader through
+libproc, verifies both real leases still block mutation, signals A after its leader exited while
+B continues, then lets B finish naturally with leader exit 23.
+A separate launcher shim crashes via `os._exit(19)`; keeper/child heartbeats and
+both leases survive that crash and SIGHUP, then release after targeted SIGTERM.
+That shim deliberately ignores SIGCHLD before spawning the keeper, verifying the
+keeper restores a waitable child disposition.
+The fixture never starts a GUI or a real game. Use
+`python3 Scripts/test_session_host.py --headless` to run these process/lease checks
+while explicitly skipping the optional existing Metal UI probe.
+
+Primary API implementation references: Apple's
+[waitid/reaping implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_exit.c)
+and [process inspection implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/proc_info.c).
+These are references for system behavior, not copied project code.
 
 ## Overlay environment
 
