@@ -137,7 +137,9 @@ public enum NativeBinaryProbe {
       interpreter.hasPrefix("/"), interpreter != "/",
       FileManager.default.isExecutableFile(atPath: String(interpreter))
     else { return false }
-    return true
+    var directory: ObjCBool = false
+    return FileManager.default.fileExists(atPath: String(interpreter), isDirectory: &directory)
+      && !directory.boolValue
   }
 
   /// Resolves only bundle-contained, executable files and rejects iOS-only bundle metadata.
