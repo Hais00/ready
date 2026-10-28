@@ -35,8 +35,8 @@ static void *serve(void *context){ReadySteamDiscovery *s=context;union {uint64_t
   int32_t status=KERN_NOT_SUPPORTED,value=0;
   /* Protocol version is software metadata, independent of auth lease. Never
    * advertise a false old version that would trigger the SDK legacy restart. */
-  if(operation==100001&&argument==104){status=0;value=104;reply->msgh_size=40;}
-  else if(live&&operation==14){status=0;value=s->owner;reply->msgh_size=552;memcpy(response.bytes+32,s->client,strlen(s->client)+1);}
+  if(operation==100001&&argument==104){status=0;value=104;reply->msgh_size=32;}
+  else if(live&&operation==14){status=0;value=s->owner;reply->msgh_size=544;memcpy(response.bytes+32,s->client,strlen(s->client)+1);}
   memcpy(response.bytes+24,&status,4);memcpy(response.bytes+28,&value,4);
   atomic_store(&s->last_reply_bytes,reply->msgh_size);atomic_store(&s->last_reply_status,status);k=mach_msg(reply,MACH_SEND_MSG|MACH_SEND_TIMEOUT,reply->msgh_size,0,MACH_PORT_NULL,100,MACH_PORT_NULL);atomic_store(&s->last_send_status,k);if(k!=KERN_SUCCESS){atomic_fetch_add(&s->send_failed,1);mach_msg_destroy(reply);}else atomic_fetch_add(&s->replies,1);mach_msg_destroy(request);
  }

@@ -20,13 +20,13 @@ def main():
   metadata=json.loads(ready.read_text());tests.update({k:metadata[k] for k in ['authFalseRejected','wrongOwnerRejected','globalNameRejected','collisionRejected']})
   profile=run/'client.sb';profile.write_text('(version 1)\n(allow default)\n(deny mach-lookup (global-name "com.valvesoftware.steam.ipctool"))\n(allow mach-lookup (global-name '+json.dumps(name)+'))\n(deny process-exec)\n(allow process-exec (literal "/usr/bin/env") (literal '+json.dumps(str(run/'mock'))+'))\n')
   def query(label,target,operation,redirect=True,malformed=False,namespace=name):
-   command=['/usr/bin/sandbox-exec','-f',str(profile),'/usr/bin/env']
+   command=['/usr/bin/sandbox-exec','-f',str(profile),'/usr/bin/env','READY_MOCK_EXACT_SDK_CAPACITY=1']
    if redirect:command+=['DYLD_INSERT_LIBRARIES='+str(run/'redirect.dylib'),'READY_STEAM_DISCOVERY_SERVICE='+namespace]
    command+=[str(run/'mock'),'--client',target,str(operation),*(['malformed'] if malformed else [])];p=subprocess.run(command,capture_output=True,text=True,timeout=3);items=[json.loads(line) for line in p.stdout.splitlines()];value=next(x for x in items if 'lookupStatus' in x);diagnostic=next((x for x in items if 'redirectLoaded' in x),None);
    if diagnostic:value['redirectStats']=diagnostic
    observations[label]=value;return value
-  fixed='com.valvesoftware.steam.ipctool';v=query('version',fixed,100001);tests['version104']=v.get('status')==0 and v.get('value')==104 and v.get('replyBytes')==40
-  v=query('metadata',fixed,14);tests['liveOwnPIDAndBoundedPath']=v.get('status')==0 and v.get('value')==host.pid and v.get('PIDAlive') and v.get('pathTerminated') and v.get('replyBytes')==552
+  fixed='com.valvesoftware.steam.ipctool';v=query('version',fixed,100001);tests['version104']=v.get('status')==0 and v.get('value')==104 and v.get('replyBytes')==32
+  v=query('metadata',fixed,14);tests['liveOwnPIDAndBoundedPath']=v.get('status')==0 and v.get('value')==host.pid and v.get('PIDAlive') and v.get('pathTerminated') and v.get('replyBytes')==544
   v=query('unknown-operation',fixed,9999);tests['unknownUnsupported']=v.get('status')!=0 and v.get('value')==0
   v=query('globalWithoutAdapter',fixed,14,redirect=False);tests['noGlobalSteamLookupPermitted']=v.get('lookupStatus')!=0
   v=query('invalidRedirectName',fixed,14,namespace='com.valvesoftware.steam.ipctool');tests['invalidRedirectFailsClosed']=v.get('lookupStatus')!=0

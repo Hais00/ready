@@ -28,6 +28,9 @@ static FILE *events;
 static ReadySteamAuthenticatedHostRecord *live_discovery_record;
 typedef struct {int32_t user,id;void *payload;int32_t size;} callback_message;
 _Static_assert(sizeof(callback_message)==24 && offsetof(callback_message,payload)==8 && offsetof(callback_message,size)==16,"Measured ARM64 callback layout");
+#ifdef READY_STEAM_HOST_SESSION
+#include "steam_native_host_session.h"
+#endif
 static void pump_callbacks(void *library,int pipe,unsigned long milliseconds) {
     typedef _Bool (*get_fn)(int,callback_message *);
     typedef void (*free_fn)(int);
@@ -57,7 +60,16 @@ static void pump_callbacks(void *library,int pipe,unsigned long milliseconds) {
 static void *checked_method(void *object,size_t slot,uintptr_t offset,void *image) {
     if(!object)return NULL;
     void *function=(*(void ***)object)[slot];Dl_info info={0};
+#ifdef READY_STEAM_HOST_SESSION_FIXTURE
+    /* Compile-time fake-image tests only; absent from the production helper. */
+    if(!dladdr(function,&info)||info.dli_fbase!=image)return NULL;
+    char symbol[80];snprintf(symbol,sizeof symbol,"ready_fixture_method_%lx",(unsigned long)offset);
+    void *handle=dlopen(info.dli_fname,RTLD_LAZY|RTLD_NOLOAD);
+    void *expected=handle?dlsym(handle,symbol):NULL;if(handle)dlclose(handle);
+    if(function!=expected)return NULL;
+#else
     if(!dladdr(function,&info)||info.dli_fbase!=image || (uintptr_t)function-(uintptr_t)image!=offset)return NULL;
+#endif
     return function;
 }
 
@@ -154,11 +166,17 @@ int main(int argc,char **argv) {
         setenv("READY_STEAM_NATIVE_REEXEC","1",1);
         execv(argv[0],argv);return 74;
     }
+#ifdef READY_STEAM_HOST_SESSION
+    /* Historical probe diagnostics include pre-login IDs/images. Production
+     * session output is exclusively the bounded safe FD protocol. */
+    events=fopen("/dev/null","w");if(!events)return 73;
+#else
     const char *event_path=getenv("READY_STEAM_EVENT_FILE");
     if(!event_path || event_path[0]!='/')return 64;
     int event_fd=open(event_path,O_WRONLY|O_APPEND|O_NOFOLLOW|O_CLOEXEC);
     if(event_fd<0 || !(events=fdopen(event_fd,"a")))return 73;
     alarm(40);
+#endif
     ready_steam_credential credential={0};
     if(real_auth && ready_steam_credential_read(STDIN_FILENO,&credential)) {
         fputs("{\"error\":\"invalid_private_credential_frame\",\"authenticated\":false}\n",events);fflush(events);return 65;
@@ -262,6 +280,9 @@ int main(int argc,char **argv) {
                 if(methods) {
                     uint64_t expected_id=real_auth?credential.steam_id:UINT64_C(76561197960265728);
                     uint32_t app_id=real_auth?credential.app_id:480;
+#ifdef READY_STEAM_HOST_SESSION
+                    ready_session_context=(ReadySteamSessionContext){public_user,public_apps,user_status,identity,subscription,expected_id,app_id};
+#endif
                     uint32_t result=0;_Bool logon_attempted=0;
                     if(cached_login) {
                         typedef _Bool (*account_name_fn)(void *,uint64_t,char *,int32_t);
@@ -304,19 +325,42 @@ int main(int argc,char **argv) {
                         get_callback_fn get=(get_callback_fn)dlsym(library,"Steam_BGetCallback");
                         free_callback_fn release=(free_callback_fn)dlsym(library,"Steam_FreeLastCallback");
                         unsigned callbacks=0;_Bool malformed=0;
-                        for(unsigned tick=0;logon_attempted&&get&&release&&tick<500;tick++) {
+                        typedef _Bool (*ownership_update_fn)(void *,uint32_t,_Bool);
+                        ownership_update_fn update_ticket=(ownership_update_fn)checked_method(internal,69,0x8a8000,module.dli_fbase);
+                        _Bool ticket_requested=0,ticket_dispatch=0;
+                        _Bool ticket_response=0;uint32_t ticket_result=0;
+                        for(unsigned tick=0;logon_attempted&&get&&release&&tick<
+#ifdef READY_STEAM_HOST_SESSION
+                            900 && !atomic_load(&ready_session_reason)
+#else
+                            500
+#endif
+                            ;tick++) {
                             callback_message message={0};
                             for(unsigned batch=0;batch<128&&get(pipe,&message);batch++) {
                                 callbacks++;malformed=message.size<0||message.size>1024*1024||(message.size>0&&!message.payload);
+                                if(!malformed&&message.id==1020028&&message.size==8&&message.payload) {
+                                    uint32_t fields[2];memcpy(fields,message.payload,sizeof fields);
+                                    if(fields[1]==app_id){ticket_response=1;ticket_result=fields[0];}
+                                }
+#ifdef READY_STEAM_HOST_SESSION
+                                if(malformed||message.id==103)ready_session_stop(malformed?45:43);
+#endif
                                 release(pipe);if(malformed)break;
                             }
                             authenticated=user_status(public_user)&&identity(public_user)==expected_id;
+                            if(authenticated&&!ticket_requested&&update_ticket) {
+                                ticket_requested=1;ticket_dispatch=update_ticket(internal,app_id,0);
+                            }
                             ownership=authenticated&&subscription&&subscription(public_apps,app_id);
                             if(malformed||(authenticated&&ownership))break;
                             usleep(50000);
                         }
-                        fprintf(events,",\"onlineCallbackCount\":%u,\"callbackMalformed\":%s,\"authenticatedIdentityMatches\":%s,\"genuineSubscriptionObserved\":%s,\"appID\":%u",
-                            callbacks,malformed?"true":"false",authenticated?"true":"false",ownership?"true":"false",app_id);
+#ifdef READY_STEAM_HOST_SESSION
+                        if(atomic_load(&ready_session_reason)){authenticated=0;ownership=0;}
+#endif
+                        fprintf(events,",\"onlineCallbackCount\":%u,\"callbackMalformed\":%s,\"authenticatedIdentityMatches\":%s,\"genuineSubscriptionObserved\":%s,\"ownershipUpdateRequested\":%s,\"ownershipUpdateDispatched\":%s,\"ownershipCallbackReceived\":%s,\"ownershipCallbackResult\":%u,\"appID\":%u",
+                            callbacks,malformed?"true":"false",authenticated?"true":"false",ownership?"true":"false",ticket_requested?"true":"false",ticket_dispatch?"true":"false",ticket_response?"true":"false",ticket_result,app_id);
                         if(malformed){authenticated=0;ownership=0;}
                     } else fprintf(events,",\"afterInvalidLoginLoggedOn\":%s,\"afterInvalidLoginSteamID\":%llu",
                         user_status(public_user)?"true":"false",(unsigned long long)identity(public_user));
@@ -348,7 +392,13 @@ int main(int argc,char **argv) {
             char *end=NULL;unsigned long candidate=strtoul(hold,&end,10);
             if(end&&!*end&&candidate<=30000)milliseconds=candidate;
         }
+#ifdef READY_STEAM_HOST_SESSION
+        (void)milliseconds;
+        if(authenticated&&ownership&&pipe>0)ready_session_lifetime(library,pipe,&discovery_record,discovery!=NULL);
+        else ready_session_stop(66);
+#else
         if(pipe>0)pump_callbacks(library,pipe,milliseconds);
+#endif
         if(discovery&&discovery_stats) {
             char safe_stats[4096]={0};size_t length=discovery_stats(discovery,safe_stats,sizeof safe_stats);
             if(length>0&&length<sizeof safe_stats&&safe_stats[0]=='{') {
@@ -358,6 +408,9 @@ int main(int argc,char **argv) {
         atomic_store(&discovery_record.authenticated,0);
         if(discovery&&stop_discovery)stop_discovery(discovery);
         live_discovery_record=NULL;
+#ifdef READY_STEAM_HOST_SESSION
+        atomic_store(&ready_session_record,NULL);
+#endif
         if(user>0 && pipe>0) {
             typedef void (*release_user_fn)(int,int);
             typedef _Bool (*release_pipe_fn)(int);
@@ -368,6 +421,9 @@ int main(int argc,char **argv) {
             if(release_user&&release_pipe) {
                 release_user(pipe,user);
                 _Bool released=release_pipe(pipe);
+#ifdef READY_STEAM_HOST_SESSION
+                ready_session_user_released=1;ready_session_pipe_released=released;
+#endif
                 fprintf(events,"{\"releasedUser\":true,\"releasedPipe\":%s}\n",released?"true":"false");fflush(events);
             }
         }
@@ -378,5 +434,10 @@ int main(int argc,char **argv) {
     ready_steam_credential_clear(&credential);
     /* Exiting the owned worker is the lifetime boundary. Avoid pretending an
      * unknown private singleton has a public destruction ABI. */
+#ifdef READY_STEAM_HOST_SESSION
+    int reason=atomic_load(&ready_session_reason);if(!reason)reason=66;
+    ready_session_emit("stopped",reason);_exit(reason);
+#else
     _exit(real_auth&&!(authenticated&&ownership)?5:0);
+#endif
 }

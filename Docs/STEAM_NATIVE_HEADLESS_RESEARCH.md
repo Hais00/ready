@@ -4,8 +4,9 @@ This work establishes a native ARM64 loader, interface and offline control
 prototype and a real offline host/peer connection using the user's genuine
 external Valve client. A later human-approved run also establishes native-client
 authentication and a genuine positive subscription check for the licensed test
-title. Working game-to-host SDK initialization and game compatibility remain
-unverified. No real account or token was used in the earlier offline controls;
+title. Later dedicated probes also establish genuine game-SDK initialization and
+authentication against the persistent native host. Commercial-game compatibility
+remains unverified. No real account or token was used in the earlier offline controls;
 later authenticated runs are explicitly distinguished below.
 
 Ready's independently authored host/adapter source is separate from proprietary
@@ -31,11 +32,51 @@ error -1202 becomes HTTP 200 and valid system trust with that single service.
 No certificate check, securityd permission or original account-data boundary is
 removed.
 
-The short-lived host exits after this proof. Production lifetime leases,
-persistent game supervision, successful Steam API initialization in a game and
-actual gameplay still require separate evidence. The encrypted private cache is
+The short-lived host exits after this proof. Later persistent-host/SDK evidence
+is described below; production game supervision and actual gameplay still
+require separate evidence. The encrypted private cache is
 not assumed to be a reusable login merely because it contains an entry; genuine
 cached-credential calls in later controls can still return unavailable.
+
+## Persistent host and genuine external SDK
+
+The subsequent dedicated test uses our `steam_native_host_session.c` worker,
+the unchanged genuine client image below and the unchanged installed ARM64
+`libsteam_api.dylib` (SHA-256
+`2cbe2533e09d1561051f417d7b8c784481a2efdc4fc9d1274704ee8a7ef50cb1`).
+It copies only the already approved private research cache; original Steam user
+state remains denied. No new QR, fresh SteamKit preflight or commercial-game
+executable is used. The mode sentinel is never passed as a Valve login token.
+
+The worker requests the genuine exact-app ownership update after native logon,
+then waits for the genuine response and subscription. A private Mach metadata
+service supplies only the authenticated host PID and selected SDK path; it does
+not implement ownership or ticket responses. Lookup redirection is confined to
+the fixed Steam metadata service name in the owned SDK child. The corrected
+metadata wire sizes are 32 and 544 bytes; the SDK receive capacities include an
+additional eight-byte Mach trailer. Neither the normal global Steam service nor
+Steam.app is started.
+
+`test_steam_native_host_session_cached_sdk.py --allow-genuine-cached-sdk` completed
+two SDK probes: immediately after ready and after over 40 seconds. Both returned
+`SteamAPI_InitFlat == 0`, genuine logged-on state, the expected identity and an
+owned subscription; callbacks and shutdown completed. The three startup adapters
+were observed. Closing the parent's separate anonymous lifeline produced exit
+42 and successful owned user/pipe release. The source cache remained unchanged,
+and full Steam process observations before/after were identical and empty.
+The retained report hash is
+`9ae9f0be53bed19b724a25116509e296e16343d74b1cc492ce026e36ecce6432`.
+
+The C lifetime worker separately passes 20 synthetic groups; the real Swift
+`SteamNativeHostProcess` supervisor passes 15 fixture groups covering descriptors,
+sandbox controls, concurrent hosts, cancellation, EOF and parent death. These
+fixture results do not substitute for a genuine account test of that Swift
+supervisor or SessionManager/game integration. See
+[the supervisor contract](STEAM_NATIVE_HOST_PROCESS.md) and
+[sanitized measurements](../Validation/steam-native-host-session-checkpoint.json).
+The launch gate remains in place. No binary redistribution permission, native
+save isolation, general game/SDK-version compatibility or Windows authentication
+follows from this measured native SDK result.
 
 ## Exact image and interface boundary
 

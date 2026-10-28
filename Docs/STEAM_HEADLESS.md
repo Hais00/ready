@@ -22,9 +22,13 @@ SteamKit QR/logon and exact-app ownership preflight complete, then the genuine
 ARM64 Valve host reports logged-on state, the expected account identity and a
 positive public subscription query. It releases user/pipe handles and exits 0.
 The earlier offline and failure reports below remain separate evidence. This
-result establishes native backend authentication and licence checks; game SDK
-initialization, commercial-game launch and production session integration remain
-open. Windows account authentication remains unverified.
+result establishes native backend authentication and licence checks. A later
+cached-login test also verifies genuine game-SDK initialization, logged-on identity
+and subscription against the persistent native host, both immediately and after
+more than 40 seconds. Closing its separate parent lifeline releases its own user
+and pipe. These are dedicated SDK probes; commercial-game launch and production
+session integration remain open. See [host supervision](STEAM_NATIVE_HOST_PROCESS.md).
+Windows account authentication remains unverified.
 
 Two source fixes were needed: SteamKit's persistent token login requires its
 remember flag, and the pinned SDK's WebSocket cleanup incorrectly tried to run an
@@ -68,7 +72,7 @@ See [native evidence](STEAM_NATIVE_HEADLESS_RESEARCH.md),
 [Windows evidence](STEAM_WINDOWS_HEADLESS_RESEARCH.md) and
 [ownership preflight](STEAM_OWNERSHIP_PREFLIGHT.md). Commercial-game launch,
 full native profile isolation, complete GUI exclusion
-during a real game, or general DRM/anti-cheat compatibility is claimed.
+during a real game, and general DRM/anti-cheat compatibility are not claimed.
 
 ## What the inspected source actually does
 

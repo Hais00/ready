@@ -28,11 +28,13 @@ def main():
     p.add_argument('--library',type=Path,required=True)
     p.add_argument('--state-fs-shim',type=Path,required=True)
     p.add_argument('--ipc-shim',type=Path,required=True)
-    p.add_argument('--live-ui',type=Path,required=True)
+    p.add_argument('--live-ui',type=Path)
+    p.add_argument('--headless-diagnostic',action='store_true')
     p.add_argument('--reference-report',type=Path)
     p.add_argument('--game-api-probe',type=Path)
     p.add_argument('--game-api-library',type=Path)
     a=p.parse_args()
+    if not a.live_ui and not a.headless_diagnostic:raise ValueError('Owned UI or explicit headless diagnostic required')
     if bool(a.game_api_probe)!=bool(a.game_api_library):raise ValueError('Provide both game SDK and owned probe')
     if processes():raise RuntimeError('Close the existing full Steam client before the independence test')
     library=a.library.resolve(strict=True)
@@ -67,19 +69,20 @@ def main():
     env={k:v for k,v in os.environ.items()if not k.startswith(('DYLD_','STEAM','Steam','SB_','M1L_','READY_'))}
     env.update(TMPDIR=str(run/'tmp')+'/',XDG_CACHE_HOME=str(run/'state'),READY_STEAM_STATE_FS_LIBRARY=str(a.state_fs_shim.resolve()),READY_STEAM_IPC_LIBRARY=str(a.ipc_shim.resolve()),READY_STEAM_IPC_NAMESPACE=namespace,READY_STEAM_ORIGINAL_STATE_ROOT=str(bundle.parent),READY_STEAM_PRIVATE_STATE_ROOT=str(run/'state/client'),steam_master_ipc_name_override='127.0.0.1:'+ports[0],SteamClientService='127.0.0.1:'+ports[1])
     live=LiveStatus(run);live.write('starting','Verifica dell’accesso privato già approvato. Nessun nuovo QR richiesto.')
-    frontend=a.live_ui.resolve(strict=True)
-    if frontend.stat().st_uid!=os.getuid()or not frontend.is_relative_to(WORK):raise ValueError('Owned diagnostic frontend required')
-    with(run/'frontend-stdout.log').open('w')as out,(run/'frontend-stderr.log').open('w')as err:
-        ui=subprocess.Popen([str(frontend),'--data-root',str(run/'frontend-data'),'--steam-auth-status',str(live.path)],cwd=run,env=dict(env,READY_RUNTIME_ROOT=str(ROOT/'Runtime')),stdin=subprocess.DEVNULL,stdout=out,stderr=err)
-    threading.Thread(target=live.watch_cancel,args=(cancel,stop,ui),daemon=True).start()
-    deadline=time.monotonic()+12;ready=False
-    while ui.poll()is None and time.monotonic()<deadline:
-        try:
-            value=json.loads((run/'live-ui-ready.json').read_text())
-            if value=={'schema':1,'generation':live.generation,'pid':ui.pid}:ready=True;break
-        except(FileNotFoundError,ValueError):pass
-        time.sleep(.1)
-    if not ready:context.handoff.clear();raise RuntimeError('Diagnostic frontend was not ready')
+    if not a.headless_diagnostic:
+        frontend=a.live_ui.resolve(strict=True)
+        if frontend.stat().st_uid!=os.getuid()or not frontend.is_relative_to(WORK):raise ValueError('Owned diagnostic frontend required')
+        with(run/'frontend-stdout.log').open('w')as out,(run/'frontend-stderr.log').open('w')as err:
+            ui=subprocess.Popen([str(frontend),'--data-root',str(run/'frontend-data'),'--steam-auth-status',str(live.path)],cwd=run,env=dict(env,READY_RUNTIME_ROOT=str(ROOT/'Runtime')),stdin=subprocess.DEVNULL,stdout=out,stderr=err)
+        threading.Thread(target=live.watch_cancel,args=(cancel,stop,ui),daemon=True).start()
+        deadline=time.monotonic()+12;ready=False
+        while ui.poll()is None and time.monotonic()<deadline:
+            try:
+                value=json.loads((run/'live-ui-ready.json').read_text())
+                if value=={'schema':1,'generation':live.generation,'pid':ui.pid}:ready=True;break
+            except(FileNotFoundError,ValueError):pass
+            time.sleep(.1)
+        if not ready:context.handoff.clear();raise RuntimeError('Diagnostic frontend was not ready')
     print(json.dumps({'type':'cached_native_attempt','status':str(live.path),'newQRRequired':False}),flush=True)
     live.write('starting_native','Riutilizzo della cache privata tramite le API autentiche Steam…')
     event=run/'cached-events.jsonl';event.touch(mode=0o600)
@@ -87,9 +90,9 @@ def main():
     command=['/usr/bin/sandbox-exec','-f',str(run/'offline.sb'),str(worker),str(library),'CLIENTENGINE_INTERFACE_VERSION005','--create-user','--cached-login']
     private_discovery=None;lookup_adapter=None
     if a.game_api_probe:
-        discovery_dir=WORK/'retained/research-steam-native/discovery-mock-67fb9ff8f143403ea8984840c4c40084'
+        discovery_dir=WORK/'retained/research-steam-native/discovery-mock-0e6c0e88bf534830b4d3f21183660926'
         discovery=discovery_dir/'production.dylib';lookup_adapter=discovery_dir/'redirect.dylib'
-        if sha(discovery)!='1ee14f5a41aa46aa7e30549840c9ad903bfa129dd6391ed114d3c6040233a366'or sha(lookup_adapter)!='7b1cd27872af639c2221e5af4dbef7e3a940bfd4093bdbbde579747e59039a26':raise ValueError('Unverified private metadata adapters')
+        if sha(discovery)!='f0a1699860c44f5c357cc23a9b3a354ffc965a1ec90f5388bdcc4bc4beeae484'or sha(lookup_adapter)!='167e9e7397229b0184c64d6794fdd0d87f3e623622dc1bf9fe73e06c8c7b989b':raise ValueError('Unverified private metadata adapters')
         private_discovery='app.ready.steam.ipctool.'+namespace
         env.update(READY_STEAM_PROBE_HOLD_MS='10000',READY_STEAM_DISCOVERY_LIBRARY=str(discovery),READY_STEAM_DISCOVERY_SERVICE=private_discovery,READY_STEAM_DISCOVERY_SDK=str(a.game_api_library.resolve()))
         host_policy=run/'cached-host-discovery.sb'
