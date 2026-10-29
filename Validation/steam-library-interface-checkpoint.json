@@ -433,7 +433,7 @@
     "preferenceValue": "privateFile",
     "selectedByRootInActualApplicationPreferences": true,
     "explicitUserConsentReceived": true,
-    "userConsentText": "S\u00ec usa il file privato",
+    "userConsentText": "Sì usa il file privato",
     "securityTradeoffAcceptedByUser": true,
     "currentSourcePolicyWired": true,
     "defaultForOtherStores": "macOS Keychain",
@@ -577,5 +577,65 @@
     "relocationScope": "headless relocated frontend only; no real GPU, game, account, or full-runtime validation",
     "gamesOrBenchmarksExecuted": false,
     "interactiveOnScreenReviewDeferredByUser": true
+  },
+  "completionAudit": {
+    "date": "2026-10-29",
+    "result": "interactive-launch-transition-review-deferred",
+    "sourceCommit": "2eca71c",
+    "requirements": [
+      {
+        "id": "1",
+        "scope": "Detail then Play; fullscreen artwork/banner fallback, continuously animated loading and inline errors",
+        "evidence": [
+          "Published bundle sources match current main/GameLaunchUI/GameLaunchSplash/GameArtwork",
+          "34 production-view checks including real Core Animation rotation progression, attach/reattach and error/cleanup",
+          "Actual public Steam artwork requests and proportional decoded poster/hero rendering"
+        ],
+        "implementationVerified": true,
+        "interactiveRunningAppTransitionVerified": false
+      },
+      {
+        "id": "2",
+        "scope": "Owned Steam library, icons/fallbacks, uninstalled grayscale, description/detail and download connection",
+        "evidence": [
+          "495 unique cached owned-membership records in the current application data",
+          "18 real-data-copy render checks including first/last rows and genuine public artwork",
+          "45 library/detail checks, exact variant Play/Install callbacks and inline download state",
+          "28 catalog/merge checks plus bounded metadata repair and real application persistence"
+        ],
+        "implementationAndCachedDataVerified": true,
+        "newPrivateFileSteamLoginVerified": false,
+        "realCDNDownloadPerformed": false
+      },
+      {
+        "id": "3",
+        "scope": "Apple Silicon and Windows availability in library/detail",
+        "evidence": [
+          "Current cached model:465 Windows-available and190 macOS-available records, one verified installed Apple Silicon title",
+          "Real-data rendering shows verified Apple Silicon and Windows options; redundant unknown Mac placeholder hidden",
+          "Architecture unknown retained for remote macOS availability"
+        ],
+        "verified": true
+      }
+    ],
+    "userConstraintsHonored": [
+      "Gameplay/benchmark/input-performance experiments remain suspended",
+      "User approved detail then Play",
+      "User deferred interactive Mac review",
+      "User explicitly approved private-file Steam token storage"
+    ],
+    "remainingRequiredVerification": [
+      "Interactive detail-to-loading/authorization transition in the running app; Mac review deferred by user."
+    ],
+    "separateUnperformedScopes": [
+      "First login into the newly selected private token file",
+      "Genuine game launch and performance experiments",
+      "Real installation/CDN download"
+    ],
+    "doesNotCertify": [
+      "495 playable base games",
+      "Publisher artwork/metadata for unavailable Steam entries",
+      "Interactive on-screen splash timing"
+    ]
   }
 }

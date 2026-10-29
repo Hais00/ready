@@ -109,7 +109,7 @@ image/icon placeholders remain. These URLs do not prove an asset exists.
 The detail and launch UI use hero/banner artwork first, then icon/artwork fallbacks. The
 selected artwork cache directory is `/Volumes/Dati APFS/Ready Cache/Artwork`;
 user-default/environment overrides and normalized-root rejection are covered by
-the current fixture source. The running binary predates this latest cache refinement.
+the current fixture source. The final published bundle includes this cache refinement and its source hashes were rechecked.
 
 The public catalog response for app 1091500 was checked independently of an
 account: Windows/macOS, description, developer/publisher, genre, release date and
@@ -251,3 +251,16 @@ deferred on-screen review remain distinct unverified scopes; Root controls the
 manual goal-completion audit. Hosted game input/performance testing remains suspended;
 [its separate checkpoint](HOSTED_PERFORMANCE_AUDIT.md) is not marked resolved by
 this catalog/UI work.
+
+## Final requirement audit
+
+The current bundle matches the current objective-related sources. The cached
+495-record library and its real-data-copy rendering, variant choices, detail
+content, grayscale and download action bindings are verified at their stated
+scopes. The production launch view has 34 scoped checks, including observed Core
+Animation rotation progression in an owned hidden window.
+
+Interactive detail-to-loading/authorization review in the running application
+remains deferred by the user. It has not been replaced with a claim of actual
+on-screen launch behavior. The goal therefore remains active. No gameplay or
+benchmark run was resumed.
