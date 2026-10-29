@@ -21,7 +21,7 @@ static BOOL fixtureBadIdentity;
 @end
 static void fixtureServer(mach_port_t port){for(;;){@autoreleasepool{
  RHGRequestReceive received={0};if(mach_msg(&received.message.h,MACH_RCV_MSG|MACH_RCV_TIMEOUT,0,sizeof received,port,5000,MACH_PORT_NULL))_exit(82);
- RHGRequest request=received.message;RHGReply reply={0};reply.h.msgh_bits=MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND_ONCE,0);reply.h.msgh_remote_port=request.h.msgh_remote_port;reply.h.msgh_size=sizeof reply;
+ RHGRequest request=received.message;RHGReply reply={0};static uint32_t depth=1;if(request.op==RHG_HELLO)depth=request.framesInFlight;reply.framesInFlight=depth;reply.configurationGeneration=request.configurationGeneration?request.configurationGeneration:1;reply.h.msgh_bits=MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND_ONCE,0);reply.h.msgh_remote_port=request.h.msgh_remote_port;reply.h.msgh_size=sizeof reply;
  reply.magic=RHG_MAGIC;reply.version=RHG_VERSION;reply.op=request.op;reply.requestID=request.requestID;reply.status=RHG_OK;
  reply.window=4242;reply.width=640;reply.height=360;reply.pixelFormat=80;reply.deviceRegistryID=1;reply.backingScale=2;reply.logicalWidth=320;reply.logicalHeight=180;reply.pointerX=reply.pointerY=.5;
  if(request.op==RHG_PRESENT){atomic_fetch_add(&fixturePresents,1);dispatch_semaphore_signal(fixtureArrived);if(dispatch_semaphore_wait(fixtureReply,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC)))_exit(83);reply.frameID=request.frameID+(fixtureBadIdentity?1:0);reply.surfaceID=request.surfaceID;}
@@ -35,7 +35,7 @@ int main(int argc,char **argv){@autoreleasepool{
  if(!name||mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&port)||mach_port_insert_right(mach_task_self(),port,port,MACH_MSG_TYPE_MAKE_SEND)||bootstrap_register(bootstrap_port,(char*)name,port))return 85;
  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE,0),^{fixtureServer(port);});
  rhgConnect();require(dispatch_semaphore_wait(rhgFrameAvailable,DISPATCH_TIME_NOW)==0);
- RHGDrawable *drawable=[RHGDrawable new];drawable.frameID=123;drawable.surfaceID=42;
+ RHGDrawable *drawable=[RHGDrawable new];drawable.frameID=0;drawable.surfaceID=42;drawable.generation=rhgConfigurationGeneration;rhgRegisterDrawable(drawable);
  RHGFixtureResidency *residency=[RHGFixtureResidency new];if(@available(macOS 15,*))drawable.importedResidency=(id<MTLResidencySet>)residency;
  RHGFixtureBuffer *buffer=[RHGFixtureBuffer new];buffer.status=badGPU?MTLCommandBufferStatusError:MTLCommandBufferStatusCompleted;
  rhgBufferPresent((id<MTLCommandBuffer>)buffer,drawable,RHG_PRESENT_NORMAL,0);
@@ -51,7 +51,7 @@ int main(int argc,char **argv){@autoreleasepool{
  require(dispatch_semaphore_wait(rhgFrameAvailable,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC))==0);
  require(atomic_load(&fixturePresents)==1);require(residency.ends==1);
  // Reverse arrival order: the GPU completed before presentRequested.
- RHGDrawable *late=[RHGDrawable new];late.frameID=124;late.surfaceID=43;late.fenceRegistered=YES;late.gpuComplete=YES;late.gpuCompletedTick=RHGPerfNow();
+ RHGDrawable *late=[RHGDrawable new];late.frameID=1;late.surfaceID=43;late.generation=rhgConfigurationGeneration;rhgRegisterDrawable(late);late.fenceRegistered=YES;late.gpuComplete=YES;late.gpuCompletedTick=RHGPerfNow();
  rhgTryPresent(late);require(atomic_load(&fixturePresents)==1);
  uint64_t began=mach_continuous_time();rhgRequestPresent(late,RHG_PRESENT_NORMAL,0);
  RHGPerfStats requestDuration={0};RHGPerfInterval(&requestDuration,began,mach_continuous_time());

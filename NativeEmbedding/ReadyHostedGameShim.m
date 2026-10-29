@@ -16,6 +16,7 @@
 #import <mach-o/dyld.h>
 #import <stdatomic.h>
 #import "ReadyHostedGameProtocol.h"
+#import "RHGScrollEvent.h"
 #import "RHGPerformance.h"
 
 typedef struct {
@@ -27,6 +28,7 @@ typedef struct {
 static RHGWindowMetadata rhgMetadata;
 static void rhgConnect(void);
 static void rhgInstallMetal(void);
+static void rhgStopRenderActivity(void);
 static IMP rhgOriginal(id object,SEL selector);
 static void rhgHook(Class type,SEL selector,IMP hook);
 static void rhgNoGestureProvider(void) {
@@ -65,6 +67,7 @@ static NSArray *rhgSafeCalleeStack(void) {
 }
 static void rhgFailSelector(NSString *reason,Class requested,SEL selector) __attribute__((noreturn));
 static void rhgFailSelector(NSString *reason,Class requested,SEL selector) {
+    rhgStopRenderActivity();
     NSMutableDictionary *value=[@{@"type":@"hosted-shim-refused",@"reason":reason?:@"unsupported",
         @"realGuestWindowInitializers":@0,@"hiddenGuestWindowFallback":@NO,@"GPUCopyFallback":@NO}mutableCopy];
     NSString *name=rhgSafeMetadata(selector?sel_getName(selector):NULL);
@@ -79,6 +82,7 @@ static void rhgFailSelector(NSString *reason,Class requested,SEL selector) {
     if(data){fwrite(data.bytes,1,data.length,stderr);fputc('\n',stderr);fflush(stderr);}_exit(77);
 }
 static void rhgFail(NSString *reason) {
+    rhgStopRenderActivity();
     NSDictionary *value=@{@"type":@"hosted-shim-refused",@"reason":reason?:@"unsupported",
         @"realGuestWindowInitializers":@0,@"hiddenGuestWindowFallback":@NO,@"GPUCopyFallback":@NO};
     NSData *data=[NSJSONSerialization dataWithJSONObject:value options:0 error:nil];
@@ -120,6 +124,34 @@ static unsigned rhgWindowCount;
 static char rhgViewWindowKey;
 static IMP rhgOriginalViewWindow;
 static BOOL rhgFocused=YES;
+// The real guest owns no visible WindowServer window. Tell Foundation about
+// this finite user-initiated rendering session without disabling idle sleep.
+// Only authenticated POLL focus edges can acquire a token; repeated edges are
+// idempotent. This state is independent of the logical window/Main run loop.
+static NSLock *rhgRenderActivityLock(void){
+    static NSLock *lock;static dispatch_once_t once;
+    dispatch_once(&once,^{lock=[NSLock new];});return lock;
+}
+static id<NSObject> rhgRenderActivityToken;
+static BOOL rhgRenderActivityStopped;
+static void rhgSetRenderActivity(BOOL focused){
+    NSLock *lock=rhgRenderActivityLock();[lock lock];
+    if(focused&&!rhgRenderActivityStopped){
+        if(!rhgRenderActivityToken)rhgRenderActivityToken=[NSProcessInfo.processInfo beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep reason:@"Hosted game active in Ready"];
+    }else if(rhgRenderActivityToken){
+        id<NSObject> token=rhgRenderActivityToken;rhgRenderActivityToken=nil;
+        [NSProcessInfo.processInfo endActivity:token];
+    }
+    [lock unlock];
+}
+static void rhgActivityForTrustedFocus(RHGInput input){
+    if(input.type==RHG_FOCUS&&input.keyCode<=1)rhgSetRenderActivity(input.keyCode==1);
+}
+static void rhgStopRenderActivity(void){
+    NSLock *lock=rhgRenderActivityLock();[lock lock];rhgRenderActivityStopped=YES;
+    if(rhgRenderActivityToken){id<NSObject> token=rhgRenderActivityToken;rhgRenderActivityToken=nil;[NSProcessInfo.processInfo endActivity:token];}
+    [lock unlock];
+}
 static NSApplicationPresentationOptions rhgLogicalPresentationOptions;
 static NSMenu *rhgLogicalMainMenu;
 static NSRect rhgContentRect(void) {
@@ -196,7 +228,7 @@ static NSRect rhgContentRect(void) {
 -(void)toggleWindowFullscreen:(BOOL)value{(void)value;self.m_isFullscreenMode=YES;}
 -(void)toggleWindowBorder:(BOOL)value{(void)value;}
 -(void)WaitForCompletion:(BOOL)value{(void)value;}
--(void)close{self.visible=NO;self.contentView=nil;if(rhgWindow==self)rhgWindow=nil;}
+-(void)close{rhgStopRenderActivity();self.visible=NO;self.contentView=nil;if(rhgWindow==self)rhgWindow=nil;}
 -(void)performClose:(id)sender{(void)sender;[self close];}
 -(id)touchBar{return nil;}
 -(id)makeTouchBar{return nil;}
@@ -310,6 +342,13 @@ static uint8_t rhgNonce[RHG_NONCE_BYTES];
 static uint64_t rhgRequestID;
 static pthread_mutex_t rhgRPCLock=PTHREAD_MUTEX_INITIALIZER;
 static dispatch_semaphore_t rhgFrameAvailable;
+@class RHGDrawable;
+static pthread_mutex_t rhgAcquisitionLock=PTHREAD_MUTEX_INITIALIZER;
+static NSLock *rhgRenderLock;
+static NSMutableArray<RHGDrawable*> *rhgOutstandingFrames;
+static BOOL rhgPresentWorkerScheduled;
+static uint32_t rhgFrameDepth;
+static uint64_t rhgConfigurationGeneration,rhgNextExpectedFrameID;
 static NSRecursiveLock *rhgHookLock;
 static NSMutableDictionary *rhgOriginals;
 static __weak CAMetalLayer *rhgGameLayer;
@@ -340,7 +379,7 @@ static void rhgPerfReport(uint64_t frames){
         for(unsigned op=0;op<RHG_PERF_OPERATIONS;op++)if(snapshot.rpcTotal[op].count){
             operations[RHGPerfOperationName(op)]=@{@"lockWait":RHGPerfStatsJSON(&snapshot.rpcLock[op]),@"total":RHGPerfStatsJSON(&snapshot.rpcTotal[op]),@"send":RHGPerfStatsJSON(&snapshot.rpcSend[op]),@"receive":RHGPerfStatsJSON(&snapshot.rpcReceive[op])};
         }
-        NSDictionary *value=@{@"type":@"hosted-guest-performance",@"schema":@1,@"framesAcknowledged":@(frames),@"unit":@"nanoseconds",@"clock":@"mach_continuous_time",@"quantiles":@"log2-bucket-upper-bounds",@"maximumOutstandingFrames":@1,@"guestLayerDisplaySyncEnabled":@(snapshot.guestLayerDisplaySyncEnabled),@"rpc":operations,
+        NSDictionary *value=@{@"type":@"hosted-guest-performance",@"schema":@1,@"framesAcknowledged":@(frames),@"unit":@"nanoseconds",@"clock":@"mach_continuous_time",@"quantiles":@"log2-bucket-upper-bounds",@"maximumOutstandingFrames":@(rhgFrameDepth),@"guestLayerDisplaySyncEnabled":@(snapshot.guestLayerDisplaySyncEnabled),@"rpc":operations,
             @"frameCredit":RHGPerfStatsJSON(&snapshot.frameCredit),@"surfaceImport":RHGPerfStatsJSON(&snapshot.importSurface),@"residencySetup":RHGPerfStatsJSON(&snapshot.residency),@"gpuCallbackToWorker":RHGPerfStatsJSON(&snapshot.completionToWorker),@"workerQueueWait":RHGPerfStatsJSON(&snapshot.workerQueue),@"gpuCallbackBody":RHGPerfStatsJSON(&snapshot.completionBody),@"hostGPUCommandBuffers":@0,@"applicationSurfaceCopies":@0};
         NSData *json=[NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingSortedKeys error:nil];
         if(json&&json.length<=65536){NSMutableData *line=[json mutableCopy];[line appendBytes:"\n" length:1];flockfile(stderr);fwrite(line.bytes,1,line.length,stderr);fflush(stderr);funlockfile(stderr);}
@@ -395,6 +434,7 @@ static RHGReply rhgExchange(uint32_t operation,RHGRequest fields) {
     uint64_t receivedAt=RHGPerfNow();
     if(result)rhgFail(@"host-reply-deadline");
     RHGReply reply=received.message;
+    if(reply.h.msgh_size==sizeof reply&&reply.magic==RHG_MAGIC&&reply.version==RHG_VERSION&&reply.op==operation&&reply.requestID==request.requestID&&reply.status==RHG_STOPPED)rhgStopRenderActivity();
     if(reply.h.msgh_size!=sizeof reply || reply.magic!=RHG_MAGIC || reply.version!=RHG_VERSION ||
        reply.op!=operation || reply.requestID!=request.requestID || reply.eventCount>RHG_MAX_EVENTS ||
        (reply.status!=RHG_OK && !(operation>=RHG_POINTER_ASSOCIATE&&operation<=RHG_POINTER_CURSOR))) {
@@ -408,6 +448,7 @@ static RHGReply rhgExchange(uint32_t operation,RHGRequest fields) {
         }
     } else if(complex) {mach_msg_destroy(&received.message.h);rhgFail(@"unexpected-host-descriptor");}
     if(reply.status==RHG_OK){
+        if(reply.framesInFlight<1||reply.framesInFlight>RHG_MAX_FRAMES_IN_FLIGHT||!reply.configurationGeneration||(operation!=RHG_HELLO&&reply.framesInFlight!=rhgFrameDepth))rhgFail(@"invalid-render-capability-ack");
         if(reply.pointerHideCount>1024||reply.pointerAssociated>1||reply.pointerCaptured>1||reply.pointerHiddenUntilMove>1)rhgFail(@"invalid-virtual-pointer-reply");
         if(!isfinite(reply.pointerX)||!isfinite(reply.pointerY)||reply.pointerX<0||reply.pointerX>1||reply.pointerY<0||reply.pointerY>1||
            !isfinite(reply.logicalWidth)||!isfinite(reply.logicalHeight)||reply.logicalWidth<=0||reply.logicalHeight<=0||reply.logicalWidth>16384||reply.logicalHeight>16384||
@@ -438,16 +479,72 @@ static BOOL rhgRunningApplicationActive(NSRunningApplication *app,SEL selector){
 static BOOL rhgRunningApplicationActivate(NSRunningApplication *app,SEL selector,NSApplicationActivationOptions options){(void)selector;(void)options;return app.processIdentifier==getpid();}
 static BOOL rhgRunningApplicationActivateFrom(NSRunningApplication *app,SEL selector,id source,NSApplicationActivationOptions options){(void)source;return rhgRunningApplicationActivate(app,selector,options);}
 static BOOL rhgRunningApplicationUnhide(NSRunningApplication *app,SEL selector){(void)selector;return app.processIdentifier==getpid();}
-static CGFloat rhgEventDelta(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input))return selector==@selector(deltaX)||selector==@selector(scrollingDeltaX)?input.deltaX:input.deltaY;return ((CGFloat(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
+static CGFloat rhgEventDelta(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input)){
+    BOOL x=selector==@selector(deltaX)||selector==@selector(scrollingDeltaX);
+    BOOL scroll=input.type==RHG_SCROLL&&(selector==@selector(scrollingDeltaX)||selector==@selector(scrollingDeltaY));
+    return scroll?(x?input.scrollingDeltaX:input.scrollingDeltaY):(x?input.deltaX:input.deltaY);
+ }return ((CGFloat(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
+static BOOL rhgEventScrollBool(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input)&&input.type==RHG_SCROLL)return selector==@selector(hasPreciseScrollingDeltas)?input.scrollPrecise:input.scrollInverted;return ((BOOL(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
+static NSEventPhase rhgEventScrollPhase(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input)&&input.type==RHG_SCROLL)return (NSEventPhase)(selector==@selector(phase)?input.scrollPhase:input.scrollMomentumPhase);return ((NSEventPhase(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
+static RHGInput rhgHeldKeys[256],rhgHeldButtons[32],rhgLastScroll;
+static BOOL rhgKeyHeld[256],rhgButtonHeld[32],rhgScrollActive;
+static uint64_t rhgHeldModifiers;
+static RHGInput rhgHeldFlags[256];static BOOL rhgFlagHeld[256];
+static void rhgDeliverInput(RHGInput input);
+static __weak NSResponder *rhgLatchedScrollTarget;
+static BOOL rhgScrollOverride(NSResponder *responder){
+    if(!responder || ![responder respondsToSelector:@selector(scrollWheel:)])return NO;
+    IMP method=[responder methodForSelector:@selector(scrollWheel:)];
+    return method!=class_getMethodImplementation(NSResponder.class,@selector(scrollWheel:)) && method!=class_getMethodImplementation(NSView.class,@selector(scrollWheel:));
+}
+static NSView *rhgScrollHit(NSView *view,NSPoint point,unsigned depth,unsigned *visited){
+    if(!view||depth>32||++*visited>1024||view.isHidden)return nil;
+    if(!NSPointInRect(point,view.bounds))return nil;
+    for(NSView *child in view.subviews.reverseObjectEnumerator){NSPoint local=[child convertPoint:point fromView:view];NSView *hit=rhgScrollHit(child,local,depth+1,visited);if(hit)return hit;}
+    return view;
+}
+static NSResponder *rhgScrollResponder(RHGLogicalWindow *window,RHGInput input){
+    BOOL gesture=(input.scrollPhase!=NSEventPhaseNone || input.scrollMomentumPhase!=NSEventPhaseNone);
+    if(gesture && !(input.scrollPhase&(NSEventPhaseBegan|NSEventPhaseMayBegin)) && rhgLatchedScrollTarget)return rhgLatchedScrollTarget;
+    NSView *root=window.contentView;NSRect bounds=root.bounds;
+    NSPoint point=NSMakePoint(NSMinX(bounds)+input.x*bounds.size.width,NSMinY(bounds)+(root.isFlipped?input.y:1-input.y)*bounds.size.height);
+    unsigned visited=0;NSView *hit=rhgScrollHit(root,point,0,&visited);NSResponder *target=nil;
+    for(NSView *view=hit;view;view=view.superview)if(rhgScrollOverride(view)){target=view;break;}
+    if(!target&&rhgScrollOverride(window.m_view))target=window.m_view;
+    if(!target&&rhgScrollOverride(root))target=root;
+    if(!target&&rhgScrollOverride(window.firstResponder))target=window.firstResponder;
+    if(!target)target=hit?:root;
+    if(gesture)rhgLatchedScrollTarget=target;
+    static BOOL reported=NO;
+    if(!reported&&target){reported=YES;NSDictionary *route=@{@"type":@"hosted-input-route",@"selector":@"scrollWheel:",@"targetClass":NSStringFromClass(object_getClass(target))?:@"unavailable",@"customHandler":@(rhgScrollOverride(target)),@"keyboardResponderUsed":@(target==window.firstResponder)};NSData *line=[NSJSONSerialization dataWithJSONObject:route options:0 error:nil];if(line){fwrite(line.bytes,1,line.length,stderr);fputc('\n',stderr);fflush(stderr);}}
+    return target;
+}
+
 static NSPoint rhgEventLocation(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input))return NSMakePoint(input.x,input.y);return ((NSPoint(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
 static id rhgEventWindow(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input))return rhgWindow;return ((id(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
 static NSInteger rhgEventWindowNumber(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input))return rhgMetadata.window;return ((NSInteger(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
 static void rhgDeliverInput(RHGInput input) {
     RHGLogicalWindow *window=rhgWindow;if(!window)return;
-    if(input.type==RHG_FOCUS){rhgFocused=input.keyCode!=0;window.m_isActive=rhgFocused;return;}
-    NSResponder *target=window.firstResponder ?: window.contentView;
+    if(input.type==RHG_FOCUS){
+        if(!input.keyCode){
+            for(unsigned key=0;key<256;key++)if(rhgKeyHeld[key]){RHGInput up=rhgHeldKeys[key];up.type=RHG_KEY_UP;up.repeat=0;up.modifiers=0;up.timestamp=input.timestamp;rhgDeliverInput(up);}
+            for(unsigned button=0;button<32;button++)if(rhgButtonHeld[button]){RHGInput up=rhgHeldButtons[button];up.type=RHG_MOUSE_UP;up.modifiers=0;up.timestamp=input.timestamp;rhgDeliverInput(up);}
+            if(rhgHeldModifiers){BOOL held[256];memcpy(held,rhgFlagHeld,sizeof held);memset(rhgFlagHeld,0,sizeof rhgFlagHeld);for(unsigned key=0;key<256;key++)if(held[key]){RHGInput flags=rhgHeldFlags[key];flags.modifiers=0;flags.timestamp=input.timestamp;rhgDeliverInput(flags);}rhgHeldModifiers=0;}
+            if(rhgScrollActive){RHGInput end=rhgLastScroll;end.scrollPhase=NSEventPhaseCancelled;end.scrollMomentumPhase=NSEventPhaseEnded;end.scrollCGPhase=kCGScrollPhaseCancelled;end.scrollCGMomentumPhase=kCGMomentumScrollPhaseEnd;end.deltaX=end.deltaY=end.scrollingDeltaX=end.scrollingDeltaY=end.scrollFixedX=end.scrollFixedY=0;end.scrollLineX=end.scrollLineY=end.scrollPointX=end.scrollPointY=0;end.timestamp=input.timestamp;rhgDeliverInput(end);rhgScrollActive=NO;}
+        }
+        if(!input.keyCode)rhgLatchedScrollTarget=nil;
+        rhgFocused=input.keyCode!=0;window.m_isActive=rhgFocused;return;
+    }
+    // Cocoa routes wheel events to the view under the pointer (latched for a
+    // gesture), not the keyboard first responder. An inherited NSResponder
+    // scrollWheel: can silently drop the event in our deliberately unbacked tree.
+    NSResponder *target=input.type==RHG_SCROLL?rhgScrollResponder(window,input):(window.firstResponder ?: window.contentView);
     if(!target)return;
     if(!isfinite(input.x)||!isfinite(input.y)||!isfinite(input.deltaX)||!isfinite(input.deltaY))rhgFail(@"invalid-input-coordinates");
+    if(input.type==RHG_KEY_DOWN||input.type==RHG_KEY_UP){if(input.keyCode>255)rhgFail(@"invalid-input-keycode");rhgHeldKeys[input.keyCode]=input;rhgKeyHeld[input.keyCode]=input.type==RHG_KEY_DOWN;}
+    if(input.type==RHG_MOUSE_DOWN||input.type==RHG_MOUSE_UP){if(input.button>31)rhgFail(@"unsupported-mouse-button");rhgHeldButtons[input.button]=input;rhgButtonHeld[input.button]=input.type==RHG_MOUSE_DOWN;}
+    if(input.type==RHG_FLAGS){rhgHeldModifiers=input.modifiers;if(input.keyCode<256){rhgHeldFlags[input.keyCode]=input;rhgFlagHeld[input.keyCode]=input.modifiers!=0;}if(!input.modifiers)memset(rhgFlagHeld,0,sizeof rhgFlagHeld);}
+    if(input.type==RHG_SCROLL){if(!RHGScrollInputValid(&input))rhgFail(@"invalid-scroll-input");rhgLastScroll=input;rhgScrollActive=(input.scrollPhase&(NSEventPhaseBegan|NSEventPhaseChanged|NSEventPhaseMayBegin)) || (input.scrollMomentumPhase&(NSEventPhaseBegan|NSEventPhaseChanged));}
     // The host sends normalized positions. Guest AppKit events use logical
     // content points, independently of host-view size or drawable pixel size.
     NSRect content=rhgContentRect();input.x*=content.size.width;
@@ -475,15 +572,18 @@ static void rhgDeliverInput(RHGInput input) {
             (input.button==0?@selector(mouseDown:):input.button==1?@selector(rightMouseDown:):@selector(otherMouseDown:)):
             (input.button==0?@selector(mouseUp:):input.button==1?@selector(rightMouseUp:):@selector(otherMouseUp:));
     } else if(input.type==RHG_SCROLL) {
-        CGEventRef cg=CGEventCreateScrollWheelEvent(NULL,kCGScrollEventUnitPixel,2,(int32_t)input.deltaY,(int32_t)input.deltaX);
-        if(!cg)rhgFail(@"scroll-event-unavailable");CGEventSetFlags(cg,(CGEventFlags)flags);event=[NSEvent eventWithCGEvent:cg];CFRelease(cg);selector=@selector(scrollWheel:);
+        CGEventRef cg=RHGCreateScrollEvent(&input);
+        if(!cg)rhgFail(@"scroll-event-unavailable");CGEventSetFlags(cg,(CGEventFlags)flags);CGEventSetLocation(cg,CGPointMake(input.x,input.y));if(isfinite(input.timestamp)&&input.timestamp>=0&&input.timestamp<1000000000)CGEventSetTimestamp(cg,(CGEventTimestamp)(input.timestamp*1e9));event=[NSEvent eventWithCGEvent:cg];CFRelease(cg);selector=@selector(scrollWheel:);
     } else {rhgFail(@"unknown-input-kind");}
     if(event)objc_setAssociatedObject(event,&rhgInputKey,[NSData dataWithBytes:&input length:sizeof input],OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if(event){Class type=object_getClass(event);rhgHook(type,@selector(deltaX),(IMP)rhgEventDelta);rhgHook(type,@selector(deltaY),(IMP)rhgEventDelta);
         rhgHook(type,@selector(scrollingDeltaX),(IMP)rhgEventDelta);rhgHook(type,@selector(scrollingDeltaY),(IMP)rhgEventDelta);
+        rhgHook(type,@selector(hasPreciseScrollingDeltas),(IMP)rhgEventScrollBool);rhgHook(type,@selector(isDirectionInvertedFromDevice),(IMP)rhgEventScrollBool);
+        rhgHook(type,@selector(phase),(IMP)rhgEventScrollPhase);rhgHook(type,@selector(momentumPhase),(IMP)rhgEventScrollPhase);
         rhgHook(type,@selector(locationInWindow),(IMP)rhgEventLocation);rhgHook(type,@selector(window),(IMP)rhgEventWindow);
         rhgHook(type,@selector(windowNumber),(IMP)rhgEventWindowNumber);}
     if(event&&selector&&[target respondsToSelector:selector])((void(*)(id,SEL,id))[target methodForSelector:selector])(target,selector,event);
+    if(input.type==RHG_SCROLL && (input.scrollPhase==NSEventPhaseCancelled || input.scrollMomentumPhase==NSEventPhaseEnded || input.scrollMomentumPhase==NSEventPhaseCancelled))rhgLatchedScrollTarget=nil;
 }
 static void rhgConnect(void) {
     static dispatch_once_t once;
@@ -492,10 +592,19 @@ static void rhgConnect(void) {
         if(!name || strncmp(name,RHG_SERVICE_PREFIX,strlen(RHG_SERVICE_PREFIX)) || !nonce || strlen(nonce)!=RHG_NONCE_BYTES*2)rhgFail(@"missing-owned-host-configuration");
         for(unsigned i=0;i<RHG_NONCE_BYTES;i++){int a=rhgHex(nonce[i*2]),b=rhgHex(nonce[i*2+1]);if(a<0||b<0)rhgFail(@"invalid-host-capability");rhgNonce[i]=(uint8_t)((a<<4)|b);}
         if(bootstrap_look_up(bootstrap_port,name,&rhgPeer) || mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&rhgReceive))rhgFail(@"host-lookup-failed");
-        rhgFrameAvailable=dispatch_semaphore_create(1);(void)rhgPresentationWorker();rhgMetadataFromReply(rhgExchange(RHG_HELLO,(RHGRequest){0}));
+        uint32_t wanted=RHG_MAX_FRAMES_IN_FLIGHT;const char *depth=getenv("READY_HOSTED_FRAMES_IN_FLIGHT");
+        if(depth){if(!strcmp(depth,"1"))wanted=1;else if(!strcmp(depth,"2"))wanted=2;else rhgFail(@"invalid-frame-depth-policy");}
+        (void)rhgPresentationWorker();rhgRenderLock=[NSLock new];rhgOutstandingFrames=[NSMutableArray new];
+        RHGReply hello=rhgExchange(RHG_HELLO,(RHGRequest){.framesInFlight=wanted});
+        if(hello.framesInFlight!=wanted)rhgFail(@"frame-depth-not-adopted");
+        rhgFrameDepth=hello.framesInFlight;rhgConfigurationGeneration=hello.configurationGeneration;
+        rhgFrameAvailable=dispatch_semaphore_create(rhgFrameDepth);rhgMetadataFromReply(hello);
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE,0),^{
             for(;;){@autoreleasepool{
                 RHGReply reply=rhgExchange(RHG_POLL,(RHGRequest){0});
+                // Apply the activity lease before dispatching input to Main:
+                // loading may block Main and the logical window may not exist.
+                for(unsigned i=0;i<reply.eventCount;i++)rhgActivityForTrustedFocus(reply.events[i]);
                 if(reply.eventCount)dispatch_async(dispatch_get_main_queue(),^{
                     for(unsigned i=0;i<reply.eventCount;i++)rhgDeliverInput(reply.events[i]);
                 });
@@ -607,7 +716,7 @@ static void rhgHook(Class type,SEL selector,IMP hook) {
 @property(strong)id<MTLTexture>texture;
 @property(strong)CAMetalLayer *layer;
 @property IOSurfaceRef importedSurface;
-@property uint64_t frameID;
+@property uint64_t frameID,generation;
 @property uint32_t surfaceID,presentMode;
 @property double presentTime,gpuSeconds;
 @property uint64_t gpuCompletedTick;
@@ -616,23 +725,37 @@ static void rhgHook(Class type,SEL selector,IMP hook) {
 @property BOOL residencyEnded;
 -(void)endImportedResidency;
 @end
+static void rhgRegisterDrawable(RHGDrawable *drawable){
+    [rhgRenderLock lock];
+    if(rhgOutstandingFrames.count>=rhgFrameDepth||drawable.frameID!=rhgNextExpectedFrameID||drawable.generation!=rhgConfigurationGeneration||rhgNextExpectedFrameID==UINT64_MAX)rhgFail(@"invalid-acquire-frame-identity");
+    rhgNextExpectedFrameID++;[rhgOutstandingFrames addObject:drawable];[rhgRenderLock unlock];
+}
+static BOOL rhgReadyForPresent(RHGDrawable*drawable){@synchronized(drawable){return drawable.gpuComplete&&drawable.presentRequested&&!drawable.presentSent;}}
 static void rhgTryPresent(RHGDrawable *drawable) {
-    @synchronized(drawable){if(!drawable.gpuComplete||!drawable.presentRequested||drawable.presentSent)return;drawable.presentSent=YES;}
-    uint64_t enqueued=RHGPerfNow();
-    // Retain this exact drawable/import until the genuine host PRESENT ACK.
-    // GPU callbacks never wait for a mutex-protected Mach transaction.
+    if(!rhgReadyForPresent(drawable))return;
+    [rhgRenderLock lock];
+    if(![rhgOutstandingFrames containsObject:drawable])rhgFail(@"unregistered-present-frame");
+    if(rhgPresentWorkerScheduled||!rhgReadyForPresent(rhgOutstandingFrames.firstObject)){[rhgRenderLock unlock];return;}
+    rhgPresentWorkerScheduled=YES;uint64_t enqueued=RHGPerfNow();[rhgRenderLock unlock];
+    // Never wait for an earlier fence on this worker. An incomplete head leaves
+    // the pump idle; its own later callback will restart it without a lost wakeup.
     dispatch_async(rhgPresentationWorker(),^{@autoreleasepool{
-        uint64_t entered=RHGPerfNow();
-        rhgPerfAdd(&rhgPerformance.workerQueue,enqueued,entered);
-        rhgPerfAdd(&rhgPerformance.completionToWorker,drawable.gpuCompletedTick,entered);
-        [drawable endImportedResidency]; // Fence completed before this task was eligible.
-        RHGRequest request={0};request.frameID=drawable.frameID;request.surfaceID=drawable.surfaceID;
-        request.presentMode=drawable.presentMode;request.presentTime=drawable.presentTime;request.gpuSeconds=drawable.gpuSeconds;
-        RHGReply reply=rhgExchange(RHG_PRESENT,request);
-        if(reply.frameID!=drawable.frameID||reply.surfaceID!=drawable.surfaceID)rhgFail(@"present-surface-identity-changed");
-        dispatch_semaphore_signal(rhgFrameAvailable);
-        static uint64_t acknowledged;acknowledged++;
-        if(acknowledged%120==0)rhgPerfReport(acknowledged);
+        BOOL first=YES;
+        for(;;){
+            [rhgRenderLock lock];RHGDrawable*frame=rhgOutstandingFrames.firstObject;
+            if(!frame||!rhgReadyForPresent(frame)){rhgPresentWorkerScheduled=NO;[rhgRenderLock unlock];return;}
+            RHGRequest request={0};
+            @synchronized(frame){frame.presentSent=YES;request.frameID=frame.frameID;request.surfaceID=frame.surfaceID;request.configurationGeneration=frame.generation;request.presentMode=frame.presentMode;request.presentTime=frame.presentTime;request.gpuSeconds=frame.gpuSeconds;}
+            [rhgRenderLock unlock];uint64_t entered=RHGPerfNow();
+            if(first){rhgPerfAdd(&rhgPerformance.workerQueue,enqueued,entered);first=NO;}
+            rhgPerfAdd(&rhgPerformance.completionToWorker,frame.gpuCompletedTick,entered);
+            [frame endImportedResidency]; // Only after this frame's genuine GPU fence.
+            RHGReply reply=rhgExchange(RHG_PRESENT,request);
+            if(reply.frameID!=frame.frameID||reply.surfaceID!=frame.surfaceID||reply.configurationGeneration!=frame.generation)rhgFail(@"present-surface-identity-changed");
+            [rhgRenderLock lock];if(rhgOutstandingFrames.firstObject!=frame)rhgFail(@"present-order-changed");[rhgOutstandingFrames removeObjectAtIndex:0];[rhgRenderLock unlock];
+            dispatch_semaphore_signal(rhgFrameAvailable); // This exact accepted frame, never an early fence-only credit.
+            static uint64_t acknowledged;acknowledged++;if(acknowledged%120==0)rhgPerfReport(acknowledged);
+        }
     }});
 }
 static void rhgRequestPresent(RHGDrawable *drawable,uint32_t mode,double time) {
@@ -688,20 +811,56 @@ static void rhgWaitDrawable(id<MTL4CommandQueue>queue,SEL selector,id value) {
     if(queue.device.registryID!=drawable.texture.device.registryID || drawable.presentSent)rhgFail(@"invalid-metal4-drawable-wait");
     // Host nextDrawable has already waited for the actual display allocation.
 }
+// One context per actual guest queue. No host queue/command buffer is created.
+// At most two pending notifications per queue; overall credits remain negotiated.
+@interface RHGMetal4FenceState:NSObject
+@property(nonatomic,strong)id<MTLSharedEvent> event;
+@property(nonatomic,strong)MTLSharedEventListener *listener;
+@property uint64_t deviceID,nextValue;
+@property(nonatomic,strong)NSMutableSet<NSNumber*> *pendingValues;
+@end
+@implementation RHGMetal4FenceState @end
+static char rhgMetal4FenceStateKey;
+static RHGMetal4FenceState *rhgMetal4FenceState(id<MTL4CommandQueue>queue) API_AVAILABLE(macos(26.0));
+static RHGMetal4FenceState *rhgMetal4FenceState(id<MTL4CommandQueue>queue) {
+    @synchronized(queue){
+        RHGMetal4FenceState *state=objc_getAssociatedObject(queue,&rhgMetal4FenceStateKey);
+        if(!state){
+            state=[RHGMetal4FenceState new];state.deviceID=queue.device.registryID;state.pendingValues=[NSMutableSet new];
+            state.event=[queue.device newSharedEvent];if(!state.event)rhgFail(@"metal4-shared-event-unavailable");
+            state.listener=[[MTLSharedEventListener alloc]initWithDispatchQueue:rhgPresentationWorker()];
+            if(!state.listener)rhgFail(@"metal4-event-listener-unavailable");
+            objc_setAssociatedObject(queue,&rhgMetal4FenceStateKey,state,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        if(state.deviceID!=queue.device.registryID)rhgFail(@"metal4-fence-device-changed");
+        return state;
+    }
+}
 static void rhgSignalDrawable(id<MTL4CommandQueue>queue,SEL selector,id value) API_AVAILABLE(macos(26.0));
 static void rhgSignalDrawable(id<MTL4CommandQueue>queue,SEL selector,id value) {
     (void)selector;RHGDrawable *drawable=rhgProxy(value);
     if(queue.device.registryID!=drawable.texture.device.registryID)rhgFail(@"metal4-device-mismatch");
     @synchronized(drawable){if(drawable.fenceRegistered)rhgFail(@"duplicate-metal4-drawable-signal");drawable.fenceRegistered=YES;}
-    id<MTLSharedEvent>event=[queue.device newSharedEvent];if(!event)rhgFail(@"metal4-shared-event-unavailable");
-    MTLSharedEventListener *listener=[[MTLSharedEventListener alloc]initWithDispatchQueue:rhgPresentationWorker()];
-    [event notifyListener:listener atValue:1 block:^(id<MTLSharedEvent>completed,uint64_t value){(void)completed;(void)value;
+    RHGMetal4FenceState *state=rhgMetal4FenceState(queue);uint64_t expected;
+    @synchronized(state){
+        if(state.pendingValues.count>=RHG_MAX_FRAMES_IN_FLIGHT)rhgFail(@"metal4-fence-overlap");
+        if(state.nextValue==UINT64_MAX)rhgFail(@"metal4-fence-sequence-exhausted");
+        expected=++state.nextValue;[state.pendingValues addObject:@(expected)];
+    // Serialize registration plus actual signal submission, not just counter
+    // allocation: concurrent producers must never signal value N+1 before N.
+    [state.event notifyListener:state.listener atValue:expected block:^(id<MTLSharedEvent>completed,uint64_t signaled){
         uint64_t entered=RHGPerfNow();
+        // The block retains this context/drawable until the genuine fence fires,
+        // including queue-owner teardown. Metal notifications are one-shot.
+        @synchronized(state){
+            if(completed!=state.event||signaled<expected||![state.pendingValues containsObject:@(expected)])rhgFail(@"metal4-fence-identity-changed");
+            [state.pendingValues removeObject:@(expected)];
+        }
         @synchronized(drawable){drawable.gpuCompletedTick=entered;drawable.gpuComplete=YES;}rhgTryPresent(drawable);
         rhgPerfAdd(&rhgPerformance.completionBody,entered,RHGPerfNow());
-        (void)event;(void)listener;
     }];
-    [queue signalEvent:event value:1]; // GPU fence only; no extra command buffer/pass/copy.
+    [queue signalEvent:state.event value:expected]; // Same guest GPU fence; no additional work or pixel copy.
+    }
 }
 static void rhgInstallQueue(id queue,BOOL metal4) {
     if(!queue)rhgFail(@"missing-guest-command-queue");Class type=object_getClass(queue);
@@ -739,6 +898,7 @@ static id<MTLDevice>rhgDefaultDevice(void){return rhgInstallDevice(MTLCreateSyst
 static NSArray<id<MTLDevice>>*rhgAllDevices(void) __attribute__((ns_returns_retained));
 static NSArray<id<MTLDevice>>*rhgAllDevices(void){NSArray *devices=MTLCopyAllDevices();for(id device in devices)rhgInstallDevice(device);return devices;}
 #define RHG_INTERPOSE(replacement,original) __attribute__((used))static struct{const void *replace,*original;}rhg_interpose_##original __attribute__((section("__DATA,__interpose")))={(const void *)&replacement,(const void *)&original}
+#import "RHGSessionScratch.h"
 RHG_INTERPOSE(rhgDefaultDevice,MTLCreateSystemDefaultDevice);
 RHG_INTERPOSE(rhgAllDevices,MTLCopyAllDevices);
 static CGError rhgPointerRequest(uint32_t operation,uint32_t action,double x,double y){
@@ -765,31 +925,43 @@ RHG_INTERPOSE(rhgWarpMouse,CGWarpMouseCursorPosition);
 RHG_INTERPOSE(rhgHideCursor,CGDisplayHideCursor);
 RHG_INTERPOSE(rhgShowCursor,CGDisplayShowCursor);
 
-static RHGRequest rhgAdoptLayerConfiguration(CAMetalLayer *layer){
+static RHGRequest rhgReadLayerConfiguration(CAMetalLayer *layer){
     CGSize size=layer.drawableSize;
     if(!isfinite(size.width)||!isfinite(size.height)||size.width<1||size.height<1||size.width>8192||size.height>8192)rhgFail(@"invalid-drawable-size");
     RHGRequest configure={0};configure.width=(uint32_t)size.width;configure.height=(uint32_t)size.height;
     configure.pixelFormat=(uint32_t)layer.pixelFormat;configure.deviceRegistryID=layer.device.registryID;
     configure.displaySyncEnabled=layer.displaySyncEnabled?1:0;
+    return configure;
+}
+static RHGRequest rhgAdoptConfiguration(RHGRequest configure){
+    configure.configurationGeneration=rhgConfigurationGeneration;
     if(!rhgConfigured || rhgConfiguredWidth!=configure.width || rhgConfiguredHeight!=configure.height ||
        rhgConfiguredFormat!=configure.pixelFormat || rhgConfiguredDevice!=configure.deviceRegistryID || rhgConfiguredDisplaySync!=configure.displaySyncEnabled) {
         RHGReply configuration=rhgExchange(RHG_CONFIGURE,configure);rhgMetadataFromReply(configuration);
-        if(configuration.width!=configure.width||configuration.height!=configure.height||configuration.pixelFormat!=configure.pixelFormat||configuration.deviceRegistryID!=configure.deviceRegistryID||configuration.displaySyncEnabled>1||configuration.displaySyncEnabled!=configure.displaySyncEnabled)rhgFail(@"host-did-not-adopt-layer-configuration");
+        if(configuration.width!=configure.width||configuration.height!=configure.height||configuration.pixelFormat!=configure.pixelFormat||configuration.deviceRegistryID!=configure.deviceRegistryID||configuration.displaySyncEnabled>1||configuration.displaySyncEnabled!=configure.displaySyncEnabled||configuration.configurationGeneration!=rhgConfigurationGeneration+1)rhgFail(@"host-did-not-adopt-layer-configuration");
+        rhgConfigurationGeneration=configuration.configurationGeneration;
         rhgConfiguredWidth=configure.width;rhgConfiguredHeight=configure.height;
         rhgConfiguredFormat=configure.pixelFormat;rhgConfiguredDevice=configure.deviceRegistryID;rhgConfiguredDisplaySync=configure.displaySyncEnabled;rhgConfigured=YES;
     }
-    return configure;
+    configure.configurationGeneration=rhgConfigurationGeneration;return configure;
 }
+static RHGRequest rhgAdoptLayerConfiguration(CAMetalLayer*layer){return rhgAdoptConfiguration(rhgReadLayerConfiguration(layer));}
 static id rhgNextDrawable(CAMetalLayer *layer,SEL selector) {
     (void)selector;rhgConnect();
     if(!layer.device || !rhgFormat(layer.pixelFormat))rhgFail(@"unsupported-layer-device-or-format");
     if(RHGPerfProfileEnabled()){pthread_mutex_lock(&rhgPerfLock);rhgPerformance.guestLayerDisplaySyncEnabled=layer.displaySyncEnabled;pthread_mutex_unlock(&rhgPerfLock);}
     if(rhgGameLayer && rhgGameLayer!=layer)rhgFail(@"multiple-swapchain-layers");rhgGameLayer=layer;rhgInstallDevice(layer.device);
-    uint64_t creditBegan=RHGPerfNow();
-    if(dispatch_semaphore_wait(rhgFrameAvailable,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC)))rhgFail(@"outstanding-frame-deadline");
+    pthread_mutex_lock(&rhgAcquisitionLock);
+    RHGRequest wanted=rhgReadLayerConfiguration(layer);
+    BOOL changed=!rhgConfigured||rhgConfiguredWidth!=wanted.width||rhgConfiguredHeight!=wanted.height||rhgConfiguredFormat!=wanted.pixelFormat||rhgConfiguredDevice!=wanted.deviceRegistryID||rhgConfiguredDisplaySync!=wanted.displaySyncEnabled;
+    uint64_t creditBegan=RHGPerfNow();dispatch_time_t deadline=dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC);
+    unsigned needed=changed?rhgFrameDepth:1;
+    for(unsigned i=0;i<needed;i++)if(dispatch_semaphore_wait(rhgFrameAvailable,deadline))rhgFail(@"outstanding-frame-deadline");
     rhgPerfAdd(&rhgPerformance.frameCredit,creditBegan,RHGPerfNow());
-    RHGRequest configure=rhgAdoptLayerConfiguration(layer);
-    RHGReply reply=rhgExchange(RHG_ACQUIRE,(RHGRequest){0});
+    RHGRequest configure=rhgAdoptConfiguration(wanted);
+    for(unsigned i=1;i<needed;i++)dispatch_semaphore_signal(rhgFrameAvailable);
+    RHGReply reply=rhgExchange(RHG_ACQUIRE,(RHGRequest){.configurationGeneration=rhgConfigurationGeneration});
+    if(reply.configurationGeneration!=rhgConfigurationGeneration)rhgFail(@"acquire-generation-changed");
     uint64_t importBegan=RHGPerfNow();
     IOSurfaceRef surface=IOSurfaceLookupFromMachPort(reply.port.name);mach_port_deallocate(mach_task_self(),reply.port.name);
     if(!surface||IOSurfaceGetID(surface)!=reply.surfaceID||reply.window!=rhgMetadata.window||reply.pixelFormat!=layer.pixelFormat||
@@ -812,7 +984,7 @@ static id rhgNextDrawable(CAMetalLayer *layer,SEL selector) {
         drawable.importedResidency=residency;
         rhgPerfAdd(&rhgPerformance.residency,residencyBegan,RHGPerfNow());
     }
-    drawable.frameID=reply.frameID;drawable.surfaceID=reply.surfaceID;rhgFrames++;return drawable;
+    drawable.frameID=reply.frameID;drawable.surfaceID=reply.surfaceID;drawable.generation=reply.configurationGeneration;rhgRegisterDrawable(drawable);rhgFrames++;pthread_mutex_unlock(&rhgAcquisitionLock);return drawable;
 }
 static void rhgInstallMetal(void) {
     rhgPrepareHookStorage();
@@ -840,5 +1012,5 @@ static void rhgInstallMetal(void) {
 __attribute__((constructor))static void rhgInstall(void) {@autoreleasepool{
     const char *service=getenv("READY_HOSTED_GAME_SERVICE"),*nonce=getenv("READY_HOSTED_GAME_NONCE");
     if(!service||!nonce)rhgFail(@"explicit-host-capability-required");
-    rhgInstallMetal();rhgInstallWindows();
+    rhgInstallSessionScratch();rhgInstallMetal();rhgInstallWindows();
 }}

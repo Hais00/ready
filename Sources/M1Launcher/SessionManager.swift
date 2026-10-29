@@ -31,15 +31,23 @@ extension SteamGameSessionLease {
 }
 
 /// Created by the launcher's explicit presentation experiment, never store JSON.
+struct SessionPresentationOverlay {
+  let toggle:()->Void
+  let move:(Int)->Void
+  let confirm:()->Void
+  let resume:()->Void
+}
 struct SessionGamePresentation {
   let environment:[String:String]
   let shim:URL
   let shimSHA256:String
   let keepLauncherWindow:Bool
   let stop:()->Void // Main queue; called once after producer/Steam cleanup.
+  let overlay:SessionPresentationOverlay?
   fileprivate let identity=UUID()
-  init(environment:[String:String],shim:URL,shimSHA256:String,keepLauncherWindow:Bool,stop:@escaping()->Void){
+  init(environment:[String:String],shim:URL,shimSHA256:String,keepLauncherWindow:Bool,stop:@escaping()->Void,overlay:SessionPresentationOverlay?=nil){
     self.environment=environment;self.shim=shim;self.shimSHA256=shimSHA256;self.keepLauncherWindow=keepLauncherWindow;self.stop=stop
+    self.overlay=overlay
   }
 }
 private final class PresentationReply {
@@ -468,6 +476,11 @@ final class SessionManager {
       gameEnvironment.removeValue(forKey:"READY_OVERLAY_LIBRARY")
       gameEnvironment.removeValue(forKey:"DYLD_INSERT_LIBRARIES")
     }
+    if ctx.variant.platform == .macOS {
+      // Applied last: transient/store environment cannot redirect the trusted
+      // session scratch area. Wine's Windows TEMP/profile semantics are kept.
+      gameEnvironment.merge(try SessionScratchDirectory.nativeEnvironment(sessionID:ctx.id)){_,trusted in trusted}
+    }
     // Initialization diagnostics must not poison classification of a later DRM/game failure.
     ctx.gameLogOffset = (try? ctx.log?.seekToEnd()) ?? 0
     let (task, input) = try configureHost(
@@ -677,24 +690,32 @@ final class SessionManager {
   func overlayToggle() {
     onMain { [self] in
       guard let ctx = currentContext(), ctx.reportedStart else { return }
+      if let overlay=ctx.presentation?.overlay{overlay.toggle();return}
       try? writeControl(ctx, visible: !visible)
     }
   }
   func overlayMove(_ delta: Int) {
     onMain { [self] in
-      guard let ctx = currentContext(), ctx.reportedStart, visible else { return }
+      guard let ctx = currentContext(), ctx.reportedStart else { return }
+      if let overlay=ctx.presentation?.overlay{overlay.move(delta);return}
+      guard visible else{return}
       selection = (selection + delta + 2) % 2
       try? writeControl(ctx, visible: true)
     }
   }
   func overlayConfirm() {
     onMain { [self] in
-      guard let ctx = currentContext(), ctx.reportedStart, visible else { return }
+      guard let ctx = currentContext(), ctx.reportedStart else { return }
+      if let overlay=ctx.presentation?.overlay{overlay.confirm();return}
+      guard visible else{return}
       if selection == 1 { quit() } else { try? writeControl(ctx, visible: false) }
     }
   }
   func resume() {
-    onMain { [self] in if let ctx = currentContext() { try? writeControl(ctx, visible: false) } }
+    onMain { [self] in if let ctx = currentContext() {
+      if let overlay=ctx.presentation?.overlay{overlay.resume();return}
+      try? writeControl(ctx, visible: false)
+    } }
   }
   private func writeControl(_ ctx: Context, visible: Bool) throws {
     self.visible = visible

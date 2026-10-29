@@ -6,7 +6,7 @@ ROOT=pathlib.Path(__file__).resolve().parents[1]
 WORK=pathlib.Path('/Volumes/Dati APFS/Codex-ready-01a17e79')
 FAKE=r'''
 import json,sys,time,pathlib
-run=pathlib.Path(sys.argv[1]);sequence=0;profile=generation=None;online=False;other=False;metadata_calls=0
+run=pathlib.Path(sys.argv[1]);sequence=0;profile=generation=None;online=False;other=False;metadata_calls=0;public_calls=0
 def send(kind,id=None,**fields):
  global sequence
  sequence+=1;print(json.dumps(dict(type=kind,id=id,profileID=profile,profileGeneration=generation,sequence=sequence,**fields)),flush=True)
@@ -18,6 +18,7 @@ def game(app):
  return dict(id='steam-'+str(app),store='steam',storeID=str(app),title='Fixture '+str(app),engine='automatic',saveRules=[],variants=[dict(id='remote-mac',platform='macOS',architecture='unknown',arguments=[],installed=True,executable='/not-trusted',verification='fixture'),dict(id='remote-win',platform='windows',architecture='unknown',arguments=[],installed=False,verification='fixture')])
 for line in sys.stdin:
  r=json.loads(line);profile=r['profileID'];generation=r['profileGeneration'];id=r['id'];op=r['operation']
+ if op in('library','catalog_metadata'):public_calls+=1;(run/'public-calls').write_text(str(public_calls))
  if op=='connect':connected(id)
  elif op=='snapshot':send('result',id,state='online'if online else'offline',account=account()if online else None,friends=[])
  elif op=='offline':online=False;send('state',state='offline');send('result',id)

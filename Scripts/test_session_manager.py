@@ -5,7 +5,7 @@ from swift_probe_support import prepare_core
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 products,module_dir,archive=prepare_core()
 subprocess.run(['sh',str(ROOT/'Scripts/build_session_host.sh')],check=True)
-command=['swiftc','-swift-version','5','-parse-as-library','-I',str(module_dir),str(ROOT/'Sources/M1Launcher/SessionManager.swift'),str(ROOT/'Synthetic/ReadySessionManagerProbe.swift')]
+command=['swiftc','-swift-version','5','-parse-as-library','-I',str(module_dir),str(ROOT/'Sources/M1Launcher/SessionScratchDirectory.swift'),str(ROOT/'Sources/M1Launcher/SessionManager.swift'),str(ROOT/'Synthetic/ReadySessionManagerProbe.swift')]
 command += [str(archive)]
 command += ['-framework','AppKit','-o',str(ROOT/'Build/ReadySessionManagerProbe')]
 subprocess.run(command,cwd=ROOT,check=True)

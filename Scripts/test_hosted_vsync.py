@@ -8,20 +8,20 @@ WORK=pathlib.Path('/Volumes/Dati APFS/Codex-ready-01a17e79')
 HOST_MAIN=r'''
 #define require(v) do{if(!(v)){fprintf(stderr,"host-config-fixture-line:%d\n",__LINE__);_exit(81);}checks++;}while(0)
 int main(void){@autoreleasepool{unsigned checks=0;
- RHGHost *host=[RHGHost new];host.metal=[CAMetalLayer layer];host.device=(id<MTLDevice>)[FixtureRegistryDevice new];
+ RHGHost *host=[RHGHost new];host.slots=[NSMutableArray new];host.configurationGeneration=1;host.metal=[CAMetalLayer layer];host.device=(id<MTLDevice>)[FixtureRegistryDevice new];
  RHGRequest request={0};request.width=640;request.height=360;request.pixelFormat=MTLPixelFormatBGRA8Unorm;request.deviceRegistryID=42;
- RHGReply reply={0};request.displaySyncEnabled=0;RHGConfigureLayer(host,&request,&reply);
+ RHGReply reply={0};request.displaySyncEnabled=0;request.configurationGeneration=host.configurationGeneration;RHGConfigureLayer(host,&request,&reply);
  require(reply.status==RHG_OK&&!host.metal.displaySyncEnabled&&reply.displaySyncEnabled==0&&host.configured);
  require(reply.width==640&&reply.height==360&&reply.pixelFormat==MTLPixelFormatBGRA8Unorm&&reply.deviceRegistryID==42);
- reply.displaySyncEnabled=UINT32_MAX;RHGConfigureLayer(host,&request,&reply);require(reply.displaySyncEnabled==0&&host.changes==1);
- request.displaySyncEnabled=1;RHGConfigureLayer(host,&request,&reply);require(reply.status==RHG_OK&&host.metal.displaySyncEnabled&&reply.displaySyncEnabled==1&&host.changes==2);
- reply.displaySyncEnabled=UINT32_MAX;RHGConfigureLayer(host,&request,&reply);require(reply.displaySyncEnabled==1&&host.changes==2);
- request.displaySyncEnabled=0;RHGConfigureLayer(host,&request,&reply);require(!host.metal.displaySyncEnabled&&reply.displaySyncEnabled==0&&host.changes==3);
- request.displaySyncEnabled=2;reply.status=0;RHGConfigureLayer(host,&request,&reply);require(reply.status==RHG_UNSUPPORTED&&!host.metal.displaySyncEnabled&&host.changes==3);
- request.displaySyncEnabled=1;reply.status=0;host.drawable=[NSObject new];RHGConfigureLayer(host,&request,&reply);require(reply.status==RHG_BUSY&&!host.metal.displaySyncEnabled&&host.changes==3);host.drawable=nil;
- request.deviceRegistryID=43;reply.status=0;RHGConfigureLayer(host,&request,&reply);require(reply.status==RHG_UNSUPPORTED&&!host.metal.displaySyncEnabled);
- request.deviceRegistryID=42;request.width=0;reply.status=0;RHGConfigureLayer(host,&request,&reply);require(reply.status==RHG_UNSUPPORTED&&!host.metal.displaySyncEnabled);
- require(RHG_VERSION==4);
+ reply.displaySyncEnabled=UINT32_MAX;request.configurationGeneration=host.configurationGeneration;RHGConfigureLayer(host,&request,&reply);require(reply.displaySyncEnabled==0&&host.changes==1);
+ request.displaySyncEnabled=1;request.configurationGeneration=host.configurationGeneration;RHGConfigureLayer(host,&request,&reply);require(reply.status==RHG_OK&&host.metal.displaySyncEnabled&&reply.displaySyncEnabled==1&&host.changes==2);
+ reply.displaySyncEnabled=UINT32_MAX;request.configurationGeneration=host.configurationGeneration;RHGConfigureLayer(host,&request,&reply);require(reply.displaySyncEnabled==1&&host.changes==2);
+ request.displaySyncEnabled=0;request.configurationGeneration=host.configurationGeneration;RHGConfigureLayer(host,&request,&reply);require(!host.metal.displaySyncEnabled&&reply.displaySyncEnabled==0&&host.changes==3);
+ request.displaySyncEnabled=2;reply.status=0;request.configurationGeneration=host.configurationGeneration;RHGConfigureLayer(host,&request,&reply);require(reply.status==RHG_UNSUPPORTED&&!host.metal.displaySyncEnabled&&host.changes==3);
+ request.displaySyncEnabled=1;reply.status=0;host.drawable=[NSObject new];request.configurationGeneration=host.configurationGeneration;RHGConfigureLayer(host,&request,&reply);require(reply.status==RHG_BUSY&&!host.metal.displaySyncEnabled&&host.changes==3);host.drawable=nil;
+ request.deviceRegistryID=43;reply.status=0;request.configurationGeneration=host.configurationGeneration;RHGConfigureLayer(host,&request,&reply);require(reply.status==RHG_UNSUPPORTED&&!host.metal.displaySyncEnabled);
+ request.deviceRegistryID=42;request.width=0;reply.status=0;request.configurationGeneration=host.configurationGeneration;RHGConfigureLayer(host,&request,&reply);require(reply.status==RHG_UNSUPPORTED&&!host.metal.displaySyncEnabled);
+ require(RHG_VERSION==6);
  printf("{\"passed\":true,\"checks\":%u,\"actualCAMetalLayerProperties\":true,\"GPUCommands\":0,\"windows\":0}\n",checks);return 0;}}
 '''
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
@@ -41,7 +41,7 @@ def main():
  (run/'host.m').write_text((ROOT/'Synthetic/ReadyHostedVSyncHostProbe.m').read_text()+functions+HOST_MAIN)
  marker='__attribute__((constructor))static void rhgInstall(void)';source=shim.read_text();assert source.count(marker)==1
  (run/'guest.m').write_text(source.replace(marker,'static void rhgInstall(void)')+'\n'+(ROOT/'Synthetic/ReadyHostedVSyncGuestProbe.m').read_text())
- env={k:v for k,v in os.environ.items()if not k.startswith(('DYLD_','READY_','Steam','STEAM','RHG_','MTL_HUD_'))};env.update(TMPDIR=str(WORK/'tmp')+'/',CLANG_MODULE_CACHE_PATH=str(WORK/'cache/hosted-performance'))
+ env={k:v for k,v in os.environ.items()if not k.startswith(('DYLD_','READY_','Steam','STEAM','RHG_','MTL_HUD_'))};env.update(TMPDIR=str(WORK/'tmp')+'/',CLANG_MODULE_CACHE_PATH=str(WORK/'cache/hosted-performance'),READY_HOSTED_FRAMES_IN_FLIGHT='1')
  flags=['xcrun','clang','-fobjc-arc','-fblocks','-std=gnu11','-O1','-Wno-deprecated-declarations','-I',include,'-framework','Cocoa','-framework','Metal','-framework','QuartzCore','-framework','IOSurface','-framework','CoreGraphics'];logs=[]
  def call(command,expected=0,environment=None):
   p=subprocess.run(list(map(str,command)),cwd=ROOT,env=environment or env,capture_output=True,text=True,timeout=15);logs.append(p.stdout+p.stderr);(run/'build.log').write_text('\n'.join(logs))
@@ -59,7 +59,7 @@ def main():
  # helper/format bodies so disjoint concurrent changes cannot falsify this test.
  current=host.read_text();assert functions=='\n'+extract_function(current,'static BOOL RHGFormat(')+'\n'+extract_function(current,'static void RHGConfigureLayer(')+'\n'
  assert all(before[str(p.relative_to(ROOT))]==sha(p)for p in files if p!=host)
- report={'passed':True,'host':host_result,'guest':guest_result,'negativeACKCases':negative,'sourceHashesAtStart':before,'hostConfigurationFunctionsSHA256':hashlib.sha256(functions.encode()).hexdigest(),'fixtureOnly':True,'GPUOrUIOrGameOrAccountUsed':False,'protocolVersion':4}
+ report={'passed':True,'host':host_result,'guest':guest_result,'negativeACKCases':negative,'sourceHashesAtStart':before,'hostConfigurationFunctionsSHA256':hashlib.sha256(functions.encode()).hexdigest(),'fixtureOnly':True,'GPUOrUIOrGameOrAccountUsed':False,'protocolVersion':6}
  path=run/'report.json';path.write_text(json.dumps(report,indent=2)+'\n');path.chmod(0o600)
  pointer={'passed':True,'hostChecks':host_result['checks'],'guestChecks':guest_result['checks'],'negativeACKCases':2,'retainedReport':str(path),'retainedReportSHA256':sha(path),'hostConfigurationFunctionsSHA256':report['hostConfigurationFunctionsSHA256'],'protocolSHA256':sha(include/'ReadyHostedGameProtocol.h'),'fixtureOnly':True,'GPUOrUIOrGameOrAccountUsed':False}
  (ROOT/'Evidence/hosted-vsync-tests.json').write_text(json.dumps(pointer,indent=2)+'\n');print(json.dumps(pointer,indent=2))

@@ -143,9 +143,12 @@ import QuartzCore
   private var onFirstFrame:(()->Void)?
   private var captureFacts=[String:Any]()
   private var previousCanvasInteraction:Bool?
+  private var overlay:HostedGameOverlay?
+  private var onQuit:()->Void
   var active:Bool { handle != nil }
-  init(window:NSWindow,canvas:MetalCanvas,placement:HostedWindowPlacement,onFailure:((Error)->Void)?=nil,onFirstFrame:(()->Void)?=nil){
+  init(window:NSWindow,canvas:MetalCanvas,placement:HostedWindowPlacement,onFailure:((Error)->Void)?=nil,onFirstFrame:(()->Void)?=nil,onQuit:@escaping()->Void={}){
     self.window=window;self.canvas=canvas;self.placement=placement;self.onFailure=onFailure;self.onFirstFrame=onFirstFrame
+    self.onQuit=onQuit
   }
 
   func prepare(executable:URL,shim:URL,diagnostics:URL,metalHUD:Bool,exclusive:Bool=false,
@@ -210,7 +213,12 @@ import QuartzCore
       let environment=["READY_HOSTED_GAME_SERVICE":String(cString:service),
         "READY_HOSTED_GAME_NONCE":String(cString:nonce),"MTL_HUD_ENABLED":"0"]
       let lease=SessionGamePresentation(environment:environment,shim:shim,shimSHA256:digest,
-        keepLauncherWindow:true,stop:{[weak self]in MainActor.assumeIsolated{self?.stop()}})
+        keepLauncherWindow:true,stop:{[weak self]in MainActor.assumeIsolated{self?.stop()}},
+        overlay:SessionPresentationOverlay(
+          toggle:{[weak self]in MainActor.assumeIsolated{self?.overlay?.toggle()}},
+          move:{[weak self]delta in MainActor.assumeIsolated{self?.overlay?.move(delta)}},
+          confirm:{[weak self]in MainActor.assumeIsolated{self?.overlay?.confirm()}},
+          resume:{[weak self]in MainActor.assumeIsolated{self?.overlay?.resume()}}))
       self.finish(.success(lease))
     }
     placementRequest=placement.enter{[weak self] result in
@@ -234,6 +242,14 @@ import QuartzCore
     onFirstFrame?();onFirstFrame=nil
     if let canvas,canvas.superview === hostView{canvas.removeFromSuperview()}
     if let hostView{window?.makeFirstResponder(hostView)}
+    if let window,let hostView {
+      overlay=HostedGameOverlay(window:window,container:hostView,gameResponder:hostView,
+        capture:{[weak self]visible in
+          guard let self,let handle=self.handle else{return}
+          RHGHostSetOverlayVisible(handle,visible)
+          self.updatePointer()
+        },quit:{[weak self]in self?.onQuit()})
+    }
     let generation=transitionGeneration
     DispatchQueue.main.async{[weak self] in
       guard let self,self.transitionGeneration==generation,self.handle != nil,!self.isLoading else{return}
@@ -258,8 +274,10 @@ import QuartzCore
   }
   func stop(preserveFullscreen:Bool=true){
     transitionGeneration=UUID()
+    fullscreenTransitioning=true
     placement.cancelPending(placementRequest);placementRequest=nil
     removePointerObservers()
+    overlay?.stop();overlay=nil
     restoreCanvasInteraction()
     if let canvas,canvas.superview === hostView{canvas.removeFromSuperview()}
     if let handle{
@@ -363,7 +381,7 @@ extension AppDelegate {
       hostedWindowPlacement=placement
       let controller=HostedGamePresentationController(window:window,canvas:canvas,placement:placement,
         onFailure:{[weak self] error in self?.showError(error);self?.session?.quit()},
-        onFirstFrame:{[weak self]in self?.finishLaunchSplash()})
+        onFirstFrame:{[weak self]in self?.finishLaunchSplash()},onQuit:{[weak self]in self?.session?.quit()})
       hostedPresentation=controller
       let shim:URL
       if let index=args.firstIndex(of:"--host-game-shim"),args.indices.contains(index+1),args[index+1].hasPrefix("/") {

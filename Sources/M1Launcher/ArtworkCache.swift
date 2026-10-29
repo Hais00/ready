@@ -26,6 +26,15 @@ final class ArtworkCache {
   private var diskLoading=Set<String>(),readOperations=[String:Operation](),viewportPriorities=[String:Int]()
   private var stagedData=[String:Data](),stagedCounts=[String:Int](),stagedBytes=0
   private var generation=UUID(),persisting=false,indexRevision:UInt64=0
+  private let maintenanceLock=NSLock()
+  private var maintenancePaused=false,workGeneration=UUID()
+  var maintenanceSuspended:Bool{maintenanceLock.lock();defer{maintenanceLock.unlock()};return maintenancePaused}
+  func setMaintenanceSuspended(_ value:Bool){
+    maintenanceLock.lock();let changed=maintenancePaused != value;maintenancePaused=value;maintenanceLock.unlock()
+    if changed && value{purge()}else if changed{persist()}
+  }
+  private func readEpoch()->UUID{maintenanceLock.lock();defer{maintenanceLock.unlock()};return workGeneration}
+  private func workAllowed(_ epoch:UUID)->Bool{maintenanceLock.lock();defer{maintenanceLock.unlock()};return !maintenancePaused && workGeneration==epoch}
   init(directory:URL?=ArtworkCache.defaultDirectory,session:URLSession = ArtworkCache.publicSession,networkEnabled:Bool=true,maximumPixelSize:Int=2048,backgroundWriteGate:(()->Void)?=nil,indexStore:ArtworkIndexStore?=nil){
     self.directory=directory;self.session=session;store=indexStore ?? ArtworkIndexStore(directory);self.networkEnabled=networkEnabled
     self.maximumPixelSize=min(2048,max(128,maximumPixelSize));self.backgroundWriteGate=backgroundWriteGate
@@ -90,6 +99,7 @@ final class ArtworkCache {
   func hasCachedImage(gameID:String,role:GameArtwork.Role)->Bool{index.roles[key(gameID,role)]?.hash != nil}
   func revision(gameID:String,role:GameArtwork.Role)->UInt64{revisions[key(gameID,role)] ?? 0}
   func image(for game:Game,role:GameArtwork.Role,refresh:@escaping()->Void)->CGImage?{
+    guard !maintenanceSuspended else{return nil}
     let id=key(game.id,role)
     guard loaded else{whenLoaded{[weak self]in _=self?.image(for:game,role:role,refresh:refresh)};return nil}
     bind(game,role:role)
@@ -98,6 +108,7 @@ final class ArtworkCache {
   }
   func image(_ address:String?,refresh:@escaping()->Void)->CGImage?{image(addresses:[address],refresh:refresh)}
   func image(addresses:[String?],refresh:@escaping()->Void)->CGImage?{
+    guard !maintenanceSuspended else{return nil}
     let candidates=addresses.compactMap{$0}.filter(Self.validURL),gameID="legacy:"+ArtworkIndexStore.hash(Data(candidates.joined(separator:"\n").utf8)),id=key(gameID,.card)
     guard !candidates.isEmpty else{return nil};guard loaded else{whenLoaded{[weak self]in _=self?.image(addresses:addresses,refresh:refresh)};return nil}
     if index.roles[id]==nil{index.roles[id]=ArtworkRoleRecord(gameID:gameID,role:.card,candidates:candidates);changedIndex()}
@@ -106,11 +117,12 @@ final class ArtworkCache {
   }
   /// Disk objects, receipts and bindings survive session/RAM cleanup.
   func purge(){
+    maintenanceLock.lock();workGeneration=UUID();maintenanceLock.unlock()
     generation=UUID();tasks.values.forEach{$0.cancel()};tasks.removeAll();readers.cancelAllOperations();readOperations.removeAll()
     pending.removeAll();active.removeAll();jobs.removeAll();deferred.removeAll();refreshers.removeAll();warmFinished.removeAll();diskLoading.removeAll();startup.removeAll();viewportPriorities.removeAll()
     cardMemory.removeAllObjects();detailMemory.removeAllObjects()
   }
-  private func whenLoaded(_ action:@escaping()->Void){if loaded{action()}else{startup.append(action)}}
+  private func whenLoaded(_ action:@escaping()->Void){guard !maintenanceSuspended else{return};if loaded{action()}else{startup.append(action)}}
   private func key(_ game:String,_ role:GameArtwork.Role)->String{game+"\u{1f}"+role.rawValue}
   private func size(_ role:GameArtwork.Role)->Int{switch role{case .icon:return 128;case .card:return min(maximumPixelSize,512);case .banner:return maximumPixelSize}}
   private func memory(_ role:GameArtwork.Role)->NSCache<NSString,CachedArtwork>{role == .card ? cardMemory:detailMemory}
@@ -151,9 +163,10 @@ final class ArtworkCache {
     }
     jobs[id]=job;pending.append(id);drain()
   }
-  private func valid(_ job:Job,_ epoch:UUID)->Bool{generation==epoch && jobs[job.key]?.token==job.token}
+  private func valid(_ job:Job,_ epoch:UUID)->Bool{!maintenanceSuspended && generation==epoch && jobs[job.key]?.token==job.token}
   private func lane(_ priority:Int)->Int{priority>=2 ? 2:priority==1 ? 1:0}
   private func drain(){
+    guard !maintenanceSuspended else{return}
     while active.count<5{
       pending.removeAll{jobs[$0]==nil || active.contains($0)}
       let counts=Dictionary(grouping:active.compactMap{jobs[$0]}){lane($0.priority)}.mapValues(\.count)
@@ -226,24 +239,26 @@ final class ArtworkCache {
   }
   private func stage(_ data:Data,hash:String,address:String,image:CGImage,role:GameArtwork.Role,etag:String?,lastModified:String?){
     if stagedData[hash]==nil{stagedData[hash]=data;stagedBytes+=data.count};stagedCounts[hash,default:0]+=1
-    let maximum=size(role)
+    let maximum=size(role),epoch=readEpoch()
     io.async{[self]in
       _=store.saveURLObject(data,hash:hash,address:address,etag:etag,lastModified:lastModified)
-      if let png=Self.png(image){store.saveThumbnail(png,hash:hash,size:maximum)}
+      if workAllowed(epoch),let png=Self.png(image){store.saveThumbnail(png,hash:hash,size:maximum)}
       Self.publish{[weak self]in guard let self else{return};self.stagedCounts[hash,default:1]-=1;if self.stagedCounts[hash]==0{self.stagedCounts.removeValue(forKey:hash);if let data=self.stagedData.removeValue(forKey:hash){self.stagedBytes-=data.count}};self.drain()}
     }
   }
   private func read<T>(priority:Int,binding:String?=nil,_ work:@escaping()->T,completion:@escaping(T)->Void){
-    if priority==0{io.async{let value=autoreleasepool(invoking:work);Self.publish{completion(value)}};return}
+    let epoch=readEpoch()
+    guard workAllowed(epoch) else{return}
+    if priority==0{io.async{[weak self]in guard let self,self.workAllowed(epoch)else{return};let value=autoreleasepool(invoking:work);Self.publish{[weak self]in guard let self,self.workAllowed(epoch)else{return};completion(value)}};return}
     let operation=BlockOperation();operation.queuePriority=priority>=2 ? .veryHigh:.normal
     if let binding{readOperations[binding]=operation}
     operation.addExecutionBlock{[weak self,weak operation]in
-      guard let operation,!operation.isCancelled else{return};let value=autoreleasepool(invoking:work)
-      Self.publish{[weak self]in guard let self,!operation.isCancelled else{return};if let binding,self.readOperations[binding]===operation{self.readOperations.removeValue(forKey:binding)};completion(value)}
+      guard let self,let operation,!operation.isCancelled,self.workAllowed(epoch) else{return};let value=autoreleasepool(invoking:work)
+      Self.publish{[weak self]in guard let self,!operation.isCancelled,self.workAllowed(epoch) else{return};if let binding,self.readOperations[binding]===operation{self.readOperations.removeValue(forKey:binding)};completion(value)}
     };readers.addOperation(operation)
   }
   private func load(hash:String,role:GameArtwork.Role,priority:Int,binding:String?=nil,completion:@escaping(CGImage?)->Void){
-    let maximum=size(role),directory=self.directory,staged=stagedData[hash]
+    let maximum=size(role),directory=self.directory,staged=stagedData[hash],epoch=readEpoch()
     read(priority:priority,binding:binding){()->(CGImage?,Bool) in
       let reader=ArtworkIndexStore(directory)
       if let image=reader.thumbnail(hash,size:maximum).flatMap({Self.decode($0,maximumPixelSize:maximum)}){return(image,false)}
@@ -252,7 +267,7 @@ final class ArtworkCache {
     } completion:{[weak self]image,needsThumbnail in
       // Publish before encoding or fsync. The old larger thumbnail remains valid.
       completion(image)
-      if let self,let image,needsThumbnail{self.io.async{if let png=Self.png(image){self.store.saveThumbnail(png,hash:hash,size:maximum)}}}
+      if let self,let image,needsThumbnail{self.io.async{guard self.workAllowed(epoch)else{return};if let png=Self.png(image){self.store.saveThumbnail(png,hash:hash,size:maximum)}}}
     }
   }
   private func finish(_ job:Job,url:String?,hash:String?,image:CGImage?,epoch:UUID){
@@ -274,7 +289,7 @@ final class ArtworkCache {
   }
   private func changedIndex(){indexRevision &+= 1;persist()}
   private func persist(){
-    guard loaded,!persisting else{return};persisting=true;let snapshot=index,version=indexRevision
+    guard !maintenanceSuspended,loaded,!persisting else{return};persisting=true;let snapshot=index,version=indexRevision
     io.async{[weak self]in
       guard let self else{return};self.backgroundWriteGate?();_=self.store.save(snapshot)
       Self.publish{[weak self]in guard let self else{return};self.persisting=false

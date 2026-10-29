@@ -53,7 +53,7 @@ def build(work, modules, archive):
     cache.mkdir(mode=0o700, exist_ok=True)
     common = ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', '-module-cache-path', cache, '-I', modules]
     harness = directory / 'ReadyInstalledRuntimeProbe'
-    run_command([*common, ROOT / 'Sources/M1Launcher/SessionManager.swift', ROOT / 'Synthetic/ReadyInstalledRuntimeProbe.swift', archive, '-framework', 'AppKit', '-o', harness], commands)
+    run_command([*common, ROOT / 'Sources/M1Launcher/SessionScratchDirectory.swift', ROOT / 'Sources/M1Launcher/SessionManager.swift', ROOT / 'Synthetic/ReadyInstalledRuntimeProbe.swift', archive, '-framework', 'AppKit', '-o', harness], commands)
     adapter = directory / 'ReadyInstalledRuntimeConfigurationProbe'
     run_command([*common, ROOT / 'Synthetic/ReadyInstalledRuntimeConfigurationProbe.swift', archive, '-o', adapter], commands)
     # Two different bytes at the same Windows path prove actual profile isolation.
@@ -64,7 +64,7 @@ def build(work, modules, archive):
     finally:
         projection_test.WINAPI_SOURCE = original
     # Keep the exact generated C, and bind its bytes alongside the compiler inputs.
-    sources = [Path(__file__), ROOT / 'Scripts/test_controller_policy_e2e.py', ROOT / 'Scripts/test_runtime_projection.py', ROOT / 'Scripts/runtime_native_audit.c', ROOT / 'Scripts/runtime_native_renderer_probe.m', ROOT / 'Sources/M1Launcher/SessionManager.swift', ROOT / 'Synthetic/ReadyInstalledRuntimeProbe.swift', ROOT / 'Synthetic/ReadyInstalledRuntimeConfigurationProbe.swift', ROOT / 'Scripts/runtime_controller_policy_windows_probe.c', ROOT / 'Scripts/runtime_controller_private_xinput_fixture.c', ROOT / 'Scripts/runtime_vulkan_present.c', ROOT / 'Scripts/runtime_d3d11_present.c']
+    sources = [Path(__file__), ROOT / 'Scripts/test_controller_policy_e2e.py', ROOT / 'Scripts/test_runtime_projection.py', ROOT / 'Scripts/runtime_native_audit.c', ROOT / 'Scripts/runtime_native_renderer_probe.m', ROOT / 'Sources/M1Launcher/SessionScratchDirectory.swift', ROOT / 'Sources/M1Launcher/SessionManager.swift', ROOT / 'Synthetic/ReadyInstalledRuntimeProbe.swift', ROOT / 'Synthetic/ReadyInstalledRuntimeConfigurationProbe.swift', ROOT / 'Scripts/runtime_controller_policy_windows_probe.c', ROOT / 'Scripts/runtime_controller_private_xinput_fixture.c', ROOT / 'Scripts/runtime_vulkan_present.c', ROOT / 'Scripts/runtime_d3d11_present.c']
     for arch in ['x86_64', 'arm64']:
         run_command(['xcrun', 'clang', '-arch', arch, '-mmacosx-version-min=27.0', '-O2', '-dynamiclib', ROOT / 'Scripts/runtime_native_audit.c', '-o', directory / ('audit-' + arch + '.dylib')], commands)
     run_command(['xcrun', 'clang', '-arch', 'arm64', '-mmacosx-version-min=27.0', '-O2', '-fobjc-arc', '-I' + str(ROOT / 'Runtime/vulkan-headers-1.4.366/include'), ROOT / 'Scripts/runtime_native_renderer_probe.m', '-framework', 'AppKit', '-framework', 'Metal', '-framework', 'QuartzCore', '-o', directory / 'native-shader-present'], commands)

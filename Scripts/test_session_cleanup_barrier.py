@@ -16,7 +16,7 @@ def main():
  env={k:v for k,v in os.environ.items()if not k.startswith(('READY_','DYLD_','Steam','STEAM'))};env['TMPDIR']=str(WORK/'tmp')+'/'
  common=['xcrun','swiftc','-swift-version','5','-parse-as-library','-module-cache-path',str(WORK/'cache/swift-session-cleanup')]
  commands=[[*common,'-emit-library','-static','-emit-module','-module-name','LauncherCore','-emit-module-path',str(core/'LauncherCore.swiftmodule'),*map(str,sorted((ROOT/'Sources/LauncherCore').glob('*.swift'))),'-o',str(core/'libLauncherCore.a')],
-  [*common,'-I',str(core),str(generated),str(core/'libLauncherCore.a'),'-framework','AppKit','-o',str(run/'probe')]]
+  [*common,'-I',str(core),str(generated),str(ROOT/'Sources/M1Launcher/SessionScratchDirectory.swift'),str(core/'libLauncherCore.a'),'-framework','AppKit','-o',str(run/'probe')]]
  for index,command in enumerate(commands):
   result=subprocess.run(command,env=env,capture_output=True,text=True,timeout=120);(run/f'build-{index}.log').write_text(result.stdout+result.stderr)
   if result.returncode:raise RuntimeError('Cleanup barrier fixture compilation failed: '+result.stderr[-6500:])
@@ -24,6 +24,6 @@ def main():
  (run/'stdout.log').write_text(result.stdout);(run/'stderr.log').write_text(result.stderr)
  if result.returncode:raise RuntimeError('Cleanup barrier fixture failed: '+result.stderr[-5000:]+' Retained '+str(run))
  data=json.loads((run/'report.json').read_text());assert data['passed']and before==sha(production)
- data.update(sourceSHA256=before,fixtureSHA256=sha(fixture),retainedRoot=str(run));(run/'report.json').write_text(json.dumps(data,indent=2)+'\n')
+ data.update(sourceSHA256=before,scratchSourceSHA256=sha(ROOT/'Sources/M1Launcher/SessionScratchDirectory.swift'),fixtureSHA256=sha(fixture),retainedRoot=str(run));(run/'report.json').write_text(json.dumps(data,indent=2)+'\n')
  print(json.dumps({'passed':True,'count':data['count'],'report':str(run/'report.json'),'sourceSHA256':before},indent=2))
 if __name__=='__main__':main()

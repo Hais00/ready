@@ -17,12 +17,20 @@
 #import "ReadyHostedView.h"
 #import "ReadyHostedGameProtocol.h"
 #import "RHGInputMotion.h"
+#import "RHGScrollEvent.h"
 #import "RHGPerformance.h"
 typedef struct {
  RHGPerfStats mainDispatch[RHG_PERF_OPERATIONS],service[RHG_PERF_OPERATIONS];
  RHGPerfStats nextDrawable,presentCall,eligibility;
  RHGPerfPresentation presentation;
 } RHGHostPerformance;
+@interface RHGRenderSlot:NSObject
+@property(nonatomic,strong)id<CAMetalDrawable> drawable;
+@property(nonatomic,strong)CAMetalLayer *layer;
+@property uint64_t frameID,generation;
+@property uint32_t surfaceID;
+@end
+@implementation RHGRenderSlot @end
 @class RHGHost;
 @interface RHGView:NSView
 @property(nonatomic,weak)RHGHost *owner;
@@ -40,10 +48,15 @@ typedef struct {
 @property(nonatomic,strong)RHGView *view;
 @property(nonatomic,strong)CAMetalLayer *metal;
 @property(nonatomic,strong)id<MTLDevice> device;
-@property(nonatomic,strong)id<CAMetalDrawable> drawable;
+@property(nonatomic,strong)id<CAMetalDrawable> drawable; // Alias only during present/legacy inspection.
+@property(nonatomic,strong)NSMutableArray<RHGRenderSlot*> *slots;
+@property(nonatomic)uint32_t pipelineDepth;
+@property(nonatomic)uint64_t configurationGeneration;
+@property(nonatomic)BOOL renderNegotiated;
 @property(nonatomic,copy)NSString *service,*nonceString,*expectedExecutable;
 @property(atomic)mach_port_t port;
 @property(atomic)pid_t guestPID;
+@property(nonatomic)uint64_t guestBirthSeconds,guestBirthMicroseconds;
 @property(nonatomic)uint64_t frameID;
 @property(nonatomic)uint32_t surfaceID;
 @property(nonatomic)NSUInteger frames,acquires,requests;
@@ -53,6 +66,7 @@ typedef struct {
 @property(nonatomic)int diagnosticFD;
 @property(nonatomic,strong)NSLock *diagnosticLock;
 @property(nonatomic)double began;
+@property(nonatomic)BOOL overlayVisible,cursorRepairPending,cursorGestureRepairPending;
 @property(nonatomic)BOOL pointerEnabled,pointerSuspended,pointerFullscreenSuspended,pointerRetryBlocked,virtualAssociated,virtualInitialized,virtualHiddenUntilMove;
 @property(nonatomic)uint32_t virtualHideCount;
 @property(nonatomic)double virtualX,virtualY;
@@ -70,6 +84,64 @@ typedef struct {
 -(void)reconcilePointerWithEligibility:(BOOL)eligible;
 -(void)releasePointer;
 @end
+// Retired drawable pools cannot be reused while the authenticated producer may
+// still have GPU writes in flight. This path runs only after stop, never per frame.
+static BOOL RHGReadPeerBirth(pid_t pid,uint64_t *seconds,uint64_t *microseconds){
+ struct proc_bsdinfo info={0};int size=proc_pidinfo(pid,PROC_PIDTBSDINFO,0,&info,sizeof info);
+ if(size!=sizeof info||!info.pbi_start_tvsec)return NO;
+ *seconds=info.pbi_start_tvsec;*microseconds=info.pbi_start_tvusec;return YES;
+}
+typedef NS_ENUM(uint32_t,RHGPeerLife){RHGPeerUnknown,RHGPeerSame,RHGPeerGone};
+static RHGPeerLife RHGPeerLifeState(pid_t pid,uint64_t seconds,uint64_t microseconds){
+ if(pid<=0||!seconds)return RHGPeerUnknown;
+ struct proc_bsdinfo info={0};errno=0;int size=proc_pidinfo(pid,PROC_PIDTBSDINFO,0,&info,sizeof info);
+ if(size==sizeof info)return info.pbi_start_tvsec==seconds&&info.pbi_start_tvusec==microseconds?RHGPeerSame:RHGPeerGone;
+ return errno==ESRCH||errno==ENOENT?RHGPeerGone:RHGPeerUnknown;
+}
+@interface RHGRetiredRenderPool:NSObject
+@property(nonatomic,strong)NSArray<RHGRenderSlot*> *resources;
+@property(nonatomic,strong)dispatch_source_t processExit,timer;
+@property(nonatomic)pid_t peer;
+@property(nonatomic)uint64_t birthSeconds,birthMicroseconds;
+@property(nonatomic)BOOL finished;
+-(void)finish;
+@end
+static NSMutableSet<RHGRetiredRenderPool*> *RHGRetiredPools;
+static dispatch_queue_t RHGRetirementQueue(void){
+ static dispatch_queue_t queue;static dispatch_once_t once;
+ dispatch_once(&once,^{queue=dispatch_queue_create("app.ready.hosted.retired-pools",DISPATCH_QUEUE_SERIAL);});return queue;
+}
+@implementation RHGRetiredRenderPool
+-(void)finish{
+ if(!NSThread.isMainThread){dispatch_async(dispatch_get_main_queue(),^{[self finish];});return;}
+ if(self.finished)return;self.finished=YES;
+ if(self.processExit){dispatch_source_cancel(self.processExit);self.processExit=nil;}
+ if(self.timer){dispatch_source_cancel(self.timer);self.timer=nil;}
+ // The layer is retained by each slot, so releasing retired drawables cannot
+ // return their surfaces to any active/new host's pool.
+ self.resources=nil;[RHGRetiredPools removeObject:self];
+}
+@end
+static NSUInteger RHGRetiredSlotCount(void){NSUInteger count=0;for(RHGRetiredRenderPool *pool in RHGRetiredPools)count+=pool.resources.count;return count;}
+static BOOL RHGHasRetiredPool(void){return RHGRetiredPools.count>0;}
+static void RHGRetireRenderSlots(NSArray<RHGRenderSlot*> *slots,pid_t peer,uint64_t seconds,uint64_t microseconds){
+ if(!slots.count||RHGPeerLifeState(peer,seconds,microseconds)==RHGPeerGone)return;
+ // Normal use has one session. Refuse another host while this bounded pool is
+ // awaiting its producer's exit rather than accumulating retained GPU pools.
+ if(!RHGRetiredPools)RHGRetiredPools=[NSMutableSet new];
+ RHGRetiredRenderPool *pool=[RHGRetiredRenderPool new];pool.resources=[slots copy];pool.peer=peer;pool.birthSeconds=seconds;pool.birthMicroseconds=microseconds;
+ [RHGRetiredPools addObject:pool];dispatch_queue_t queue=RHGRetirementQueue();
+ if(peer>0){
+  pool.processExit=dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC,(uintptr_t)peer,DISPATCH_PROC_EXIT,queue);
+  if(pool.processExit){dispatch_source_set_event_handler(pool.processExit,^{[pool finish];});dispatch_resume(pool.processExit);}
+ }
+ // Covers an exit during registration/PID reuse; unknown errors conservatively
+ // retain the pool. Polling exists only for a stopped, outstanding session.
+ pool.timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,queue);
+ dispatch_source_set_timer(pool.timer,dispatch_time(DISPATCH_TIME_NOW,0),250*NSEC_PER_MSEC,25*NSEC_PER_MSEC);
+ dispatch_source_set_event_handler(pool.timer,^{if(RHGPeerLifeState(pool.peer,pool.birthSeconds,pool.birthMicroseconds)==RHGPeerGone)[pool finish];});dispatch_resume(pool.timer);
+}
+
 static RHGHost *RHGPointerOwner;
 static int32_t RHGAssociate(bool connected,void*context){(void)context;return CGAssociateMouseAndMouseCursorPosition(connected);}
 static int32_t RHGHide(void*context){(void)context;return CGDisplayHideCursor(kCGDirectMainDisplay);}
@@ -104,12 +176,13 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
 -(void)scrollWheel:(NSEvent*)e{[self.owner input:e type:RHG_SCROLL];}
 @end
 @implementation RHGHost
--(instancetype)init{if((self=[super init])){atomic_init(&stopped,false);atomic_init(&perfWritePending,false);perfLock=(os_unfair_lock)OS_UNFAIR_LOCK_INIT;_diagnosticFD=-1;_diagnosticLock=[NSLock new];_pointerObservers=[NSMutableArray new];_virtualAssociated=YES;_virtualX=_virtualY=.5;_began=CACurrentMediaTime();}return self;}
+-(instancetype)init{if((self=[super init])){atomic_init(&stopped,false);atomic_init(&perfWritePending,false);perfLock=(os_unfair_lock)OS_UNFAIR_LOCK_INIT;_diagnosticFD=-1;_diagnosticLock=[NSLock new];_slots=[NSMutableArray new];_pipelineDepth=RHG_MAX_FRAMES_IN_FLIGHT;_configurationGeneration=1;_pointerObservers=[NSMutableArray new];_virtualAssociated=YES;_virtualX=_virtualY=.5;_began=CACurrentMediaTime();}return self;}
 -(void)dealloc{[_pointerTimer invalidate];for(NSArray*pair in _pointerObservers)[pair[0]removeObserver:pair[1]];if(_diagnosticFD>=0)close(_diagnosticFD);if(_port)mach_port_destroy(mach_task_self(),_port);}
 -(void)record:(NSString*)phase reason:(NSString*)reason{
  if(self.diagnosticFD<0)return;
  NSMutableDictionary*v=[@{@"schema":@1,@"phase":phase,@"elapsedMilliseconds":@((CACurrentMediaTime()-self.began)*1000),@"hostPID":@(getpid()),@"guestPID":@(self.guestPID),@"window":@(self.window.windowNumber),@"frames":@(self.frames),@"acquires":@(self.acquires),@"requests":@(self.requests),@"hostCommandQueues":@0,@"hostCommandBuffers":@0,@"hostEncoders":@0,@"applicationSurfaceCopies":@0,@"pixelReadbacks":@0,@"metalHUDRequested":@(self.metalHUD),@"presentsWithTransaction":@(self.metal.presentsWithTransaction)}mutableCopy];
  if(reason)v[@"reason"]=reason;
+ v[@"outstandingFrames"]=@(self.slots.count);v[@"maximumFramesInFlight"]=@(self.pipelineDepth);
  if(self.surfaceID)v[@"surfaceID"]=@(self.surfaceID);
  v[@"pointerEnabled"]=@(self.pointerEnabled);v[@"pointerCaptured"]=@(self->pointer.captured);v[@"pointerCleanupPending"]=@(self->pointer.detached||self->pointer.hidden);
  v[@"pointerError"]=@(self->pointer.error);
@@ -139,7 +212,7 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
  dispatch_async(writer,^{@autoreleasepool{
   NSMutableDictionary *operations=[NSMutableDictionary new];
   for(unsigned op=0;op<RHG_PERF_OPERATIONS;op++)if(snapshot.service[op].count){operations[RHGPerfOperationName(op)]=@{@"mainDispatchWait":RHGPerfStatsJSON(&snapshot.mainDispatch[op]),@"service":RHGPerfStatsJSON(&snapshot.service[op])};}
-  NSDictionary *value=@{@"type":@"hosted-host-performance",@"schema":@1,@"presentCalls":@(frameCount),@"elapsedMilliseconds":@(elapsedMilliseconds),@"hostPID":@(getpid()),@"guestPID":@(guestPID),@"unit":@"nanoseconds",@"clock":@"mach_continuous_time",@"quantiles":@"log2-bucket-upper-bounds",@"maximumOutstandingFrames":@1,@"hostLayerDisplaySyncEnabled":@(displaySync),@"operations":operations,
+  NSDictionary *value=@{@"type":@"hosted-host-performance",@"schema":@1,@"presentCalls":@(frameCount),@"elapsedMilliseconds":@(elapsedMilliseconds),@"hostPID":@(getpid()),@"guestPID":@(guestPID),@"unit":@"nanoseconds",@"clock":@"mach_continuous_time",@"quantiles":@"log2-bucket-upper-bounds",@"maximumOutstandingFrames":@(self.pipelineDepth),@"hostLayerDisplaySyncEnabled":@(displaySync),@"operations":operations,
    @"nextDrawable":RHGPerfStatsJSON(&snapshot.nextDrawable),@"presentCall":RHGPerfStatsJSON(&snapshot.presentCall),@"foregroundEligibility":RHGPerfStatsJSON(&snapshot.eligibility),@"displayPresentation":RHGPerfPresentationJSON(&snapshot.presentation),@"hostGPUCommandBuffers":@0,@"applicationSurfaceCopies":@0,@"hostCommandQueues":@0,@"hostCommandBuffers":@0,@"hostEncoders":@0,@"pixelReadbacks":@0,@"presentsWithTransaction":@(usesTransaction)};
   NSData *json=[NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingSortedKeys error:nil];
   if(json&&json.length<=65536){NSMutableData *line=[json mutableCopy];[line appendBytes:"\n" length:1];[self writeDiagnostic:line];}
@@ -148,7 +221,7 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
 }
 -(BOOL)foregroundEligible {
  uint64_t began=RHGPerfNow();@try{
- if(atomic_load(&stopped)||self.pointerSuspended||self.pointerFullscreenSuspended||!self.window||self.view.window!=self.window||self.view.isHiddenOrHasHiddenAncestor||!NSApp.isActive||NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier!=getpid()||!self.window.isKeyWindow||!self.window.isOnActiveSpace||self.window.isMiniaturized||!(self.window.occlusionState&NSWindowOcclusionStateVisible))return NO;
+ if(atomic_load(&stopped)||self.overlayVisible||self.pointerSuspended||self.pointerFullscreenSuspended||!self.window||self.view.window!=self.window||self.view.isHiddenOrHasHiddenAncestor||!NSApp.isActive||NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier!=getpid()||!self.window.isKeyWindow||!self.window.isOnActiveSpace||self.window.isMiniaturized||!(self.window.occlusionState&NSWindowOcclusionStateVisible))return NO;
  if(self.guestPID>0){char path[PROC_PIDPATHINFO_MAXSIZE]={0};if(proc_pidpath(self.guestPID,path,sizeof path)<=0||strcmp(path,self.expectedExecutable.fileSystemRepresentation))return NO;}
  CFDictionaryRef session=CGSessionCopyCurrentDictionary();if(!session)return NO;
  CFTypeRef console=CFDictionaryGetValue(session,kCGSessionOnConsoleKey),login=CFDictionaryGetValue(session,kCGSessionLoginDoneKey),user=CFDictionaryGetValue(session,kCGSessionUserIDKey);
@@ -172,6 +245,10 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
  if(RHGPointerOwner&&RHGPointerOwner!=self){[RHGPointerOwner releasePointer];if(RHGPointerOwner)return;}
  if(!self.virtualInitialized){NSPoint p=[self.view convertPoint:self.window.mouseLocationOutsideOfEventStream fromView:nil];self.virtualX=fmax(0,fmin(1,p.x/fmax(1,self.view.bounds.size.width)));self.virtualY=fmax(0,fmin(1,p.y/fmax(1,self.view.bounds.size.height)));self.virtualInitialized=YES;}
  BOOL was=self->pointer.captured;RHGPointerReconcile(&self->pointer,RHGOps(self),true);
+ if(self->pointer.captured && CGCursorIsVisible()){
+  if(!RHGPointerRehideIfVisible(&self->pointer,RHGOps(self),true)){self.pointerRetryBlocked=YES;[self record:@"pointer-rehide-failed" reason:nil];}
+  else [self record:@"pointer-rehidden" reason:nil];
+ }
  if(self->pointer.detached||self->pointer.hidden)RHGPointerOwner=self;
  if(!was&&self->pointer.captured){
   [self record:@"pointer-captured" reason:nil];
@@ -187,10 +264,17 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
    if(!RHGInputPointerMove(&virtual,input.deltaX,input.deltaY,self.view.bounds.size.width,self.view.bounds.size.height))return;
    self.virtualX=virtual.x;self.virtualY=virtual.y;self.virtualHiddenUntilMove=virtual.hiddenUntilMove;
   }input.x=self.virtualX;input.y=self.virtualY;}}
+ if(type==RHG_SCROLL && !RHGCaptureScrollEvent(e,&input)){[self record:@"input-rejected" reason:@"invalid-scroll-input"];return;}
  if(!RHGInputQueuePush(&self->inputQueue,input)){
   // A bounded queue must not silently lose a release and leave held controls.
   [self record:@"input-rejected" reason:@"input-control-queue-overflow"];[self shutdown];
  }
+ if(type==RHG_SCROLL)self.cursorGestureRepairPending=YES;
+ if(!self.cursorRepairPending){self.cursorRepairPending=YES;__weak RHGHost*weak=self;dispatch_async(dispatch_get_main_queue(),^{RHGHost*host=weak;if(!host)return;BOOL gesture=host.cursorGestureRepairPending;host.cursorGestureRepairPending=NO;host.cursorRepairPending=NO;[host reconcilePointer];
+  // AppKit may unhide after scroll dispatch. Re-arm our existing hide once,
+  // without depending on the deprecated visibility query for this path.
+  if(gesture&&host->pointer.captured){if(!RHGPointerRehideIfVisible(&host->pointer,RHGOps(host),true)){host.pointerRetryBlocked=YES;[host record:@"pointer-rehide-failed" reason:nil];}else[host record:@"pointer-rehidden" reason:@"post-scroll"];}
+ });}
 }
 -(void)shutdown{
  if(atomic_exchange(&stopped,true))return;
@@ -199,6 +283,8 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
  self.firstFrameCallback=NULL;self.firstFrameContext=NULL;
  [self record:@"stopped" reason:nil];
  mach_port_t port=self.port;self.port=MACH_PORT_NULL;if(port)mach_port_destroy(mach_task_self(),port);
+ NSArray<RHGRenderSlot*> *retired=[self.slots copy];[self.slots removeAllObjects];
+ RHGRetireRenderSlots(retired,self.guestPID,self.guestBirthSeconds,self.guestBirthMicroseconds);
  self.drawable=nil;self.metal.developerHUDProperties=@{@"mode":@"disabled"};
 }
 @end
@@ -207,6 +293,7 @@ static void RHGFill(RHGHost*host,RHGReply*reply){
  // enabled changes, notifications and the independent timer do so freshly.
  BOOL focus=NO;
  if(reply->op==RHG_POLL){focus=[host foregroundEligible];[host reconcilePointerWithEligibility:focus];}
+ reply->framesInFlight=host.pipelineDepth;reply->configurationGeneration=host.configurationGeneration;
  reply->magic=RHG_MAGIC;reply->version=RHG_VERSION;reply->window=(uint32_t)host.window.windowNumber;
  reply->width=(uint32_t)host.metal.drawableSize.width;reply->height=(uint32_t)host.metal.drawableSize.height;reply->pixelFormat=(uint32_t)host.metal.pixelFormat;reply->deviceRegistryID=host.device.registryID;reply->backingScale=host.window.backingScaleFactor;
  reply->pointerCaptured=host->pointer.captured;reply->pointerAssociated=host.virtualAssociated;reply->pointerHideCount=host.virtualHideCount;reply->pointerHiddenUntilMove=host.virtualHiddenUntilMove;reply->pointerError=host->pointer.error;
@@ -221,10 +308,12 @@ static void RHGFill(RHGHost*host,RHGReply*reply){
 }
 static void RHGConfigureLayer(RHGHost*host,const RHGRequest*q,RHGReply*reply){
  uint64_t pixels=(uint64_t)q->width*q->height;
- if(host.drawable){reply->status=RHG_BUSY;return;}
+ if(host.slots.count||host.drawable){reply->status=RHG_BUSY;return;}
+ if(q->configurationGeneration!=host.configurationGeneration){reply->status=RHG_REJECTED;return;}
  if(!q->width||!q->height||q->width>8192||q->height>8192||pixels>33554432||!RHGFormat(q->pixelFormat)||q->deviceRegistryID!=host.device.registryID||q->displaySyncEnabled>1){reply->status=RHG_UNSUPPORTED;return;}
  BOOL sync=q->displaySyncEnabled!=0;
  if(host.configured&&host.metal.pixelFormat==q->pixelFormat&&host.metal.drawableSize.width==q->width&&host.metal.drawableSize.height==q->height&&host.metal.displaySyncEnabled==sync){reply->displaySyncEnabled=host.metal.displaySyncEnabled?1:0;return;}
+ if(host.configurationGeneration==UINT64_MAX){reply->status=RHG_UNSUPPORTED;return;}host.configurationGeneration++;
  host.metal.pixelFormat=(MTLPixelFormat)q->pixelFormat;host.metal.drawableSize=CGSizeMake(q->width,q->height);host.metal.displaySyncEnabled=sync;host.configured=YES;
  RHGFill(host,reply);reply->displaySyncEnabled=host.metal.displaySyncEnabled?1:0;[host record:@"configured" reason:nil];
 }
@@ -240,7 +329,7 @@ static void RHGServe(RHGHost*host){
   mach_msg_audit_trailer_t*t=(void*)((uint8_t*)q+round_msg(q->h.msgh_size));
   BOOL valid=q->magic==RHG_MAGIC&&q->version==RHG_VERSION&&t->msgh_trailer_type==MACH_MSG_TRAILER_FORMAT_0&&t->msgh_trailer_size>=sizeof(*t)&&audit_token_to_euid(t->msgh_audit)==geteuid()&&timingsafe_bcmp(q->nonce,host->nonce,RHG_NONCE_BYTES)==0;
   pid_t pid=valid?audit_token_to_pid(t->msgh_audit):0;
-  if(valid&&host.guestPID==0){char path[PROC_PIDPATHINFO_MAXSIZE]={0};valid=q->op==RHG_HELLO&&proc_pidpath(pid,path,sizeof path)>0&&host.expectedExecutable.length&&strcmp(path,host.expectedExecutable.fileSystemRepresentation)==0;if(valid)host.guestPID=pid;}
+  if(valid&&host.guestPID==0){char path[PROC_PIDPATHINFO_MAXSIZE]={0};valid=q->op==RHG_HELLO&&proc_pidpath(pid,path,sizeof path)>0&&host.expectedExecutable.length&&strcmp(path,host.expectedExecutable.fileSystemRepresentation)==0;if(valid){uint64_t seconds=0,microseconds=0;valid=RHGReadPeerBirth(pid,&seconds,&microseconds);if(valid){host.guestBirthSeconds=seconds;host.guestBirthMicroseconds=microseconds;host.guestPID=pid;}}}
   valid=valid&&pid>0&&host.guestPID==pid;
   if(!valid){reply.status=RHG_REJECTED;reply.magic=RHG_MAGIC;reply.version=RHG_VERSION;}
   else {uint64_t dispatchBegan=RHGPerfNow();RHGMainSync(^{
@@ -249,20 +338,33 @@ static void RHGServe(RHGHost*host){
    @try{
    host.requests++;RHGFill(host,&reply);
    if(atomic_load(&host->stopped)){reply.status=RHG_STOPPED;return;}
-   if(q->op==RHG_HELLO||q->op==RHG_POLL){if(q->op==RHG_HELLO)[host record:@"guest-connected" reason:nil];}
+   if(q->op==RHG_HELLO){
+    if(q->framesInFlight<1||q->framesInFlight>RHG_MAX_FRAMES_IN_FLIGHT||(host.renderNegotiated&&q->framesInFlight!=host.pipelineDepth)){reply.status=RHG_REJECTED;return;}
+    host.pipelineDepth=q->framesInFlight;host.renderNegotiated=YES;reply.framesInFlight=host.pipelineDepth;[host record:@"guest-connected" reason:nil];
+   }else if(!host.renderNegotiated){reply.status=RHG_REJECTED;return;}
+   else if(q->op==RHG_POLL){}
    else if(q->op==RHG_CONFIGURE){
     RHGConfigureLayer(host,q,&reply);
    }else if(q->op==RHG_ACQUIRE){
-    if(!host.configured){reply.status=RHG_UNSUPPORTED;return;}if(host.drawable){reply.status=RHG_BUSY;return;}
-    uint64_t drawableBegan=RHGPerfNow();host.drawable=[host.metal nextDrawable];
+    if(!host.configured){reply.status=RHG_UNSUPPORTED;return;}
+    if(q->configurationGeneration!=host.configurationGeneration){reply.status=RHG_REJECTED;return;}
+    if(host.slots.count>=host.pipelineDepth){reply.status=RHG_BUSY;return;}
+    if(host.frameID==UINT64_MAX){reply.status=RHG_UNSUPPORTED;return;}
+    uint64_t drawableBegan=RHGPerfNow();id<CAMetalDrawable>drawable=[host.metal nextDrawable];
     [host perfInterval:&host->performance.nextDrawable begin:drawableBegan end:RHGPerfNow()];
-    IOSurfaceRef surface=host.drawable.texture.iosurface;
-    if(!surface){host.drawable=nil;reply.status=RHG_UNSUPPORTED;[host record:@"rejected" reason:@"drawable-has-no-exportable-surface"];return;}
-    mach_port_t surfacePort=IOSurfaceCreateMachPort(surface);if(!surfacePort){host.drawable=nil;reply.status=RHG_REJECTED;return;}
-    host.surfaceID=IOSurfaceGetID(surface);host.acquires++;reply.frameID=host.frameID;reply.surfaceID=host.surfaceID;
+    IOSurfaceRef surface=drawable.texture.iosurface;
+    if(!surface){reply.status=RHG_UNSUPPORTED;[host record:@"rejected" reason:@"drawable-has-no-exportable-surface"];return;}
+    if(atomic_load(&host->stopped)){reply.status=RHG_STOPPED;return;}
+    uint32_t surfaceID=IOSurfaceGetID(surface);if(!surfaceID){reply.status=RHG_REJECTED;return;}
+    for(RHGRenderSlot*held in host.slots)if(held.surfaceID==surfaceID){reply.status=RHG_REJECTED;return;}
+    mach_port_t surfacePort=IOSurfaceCreateMachPort(surface);if(!surfacePort){reply.status=RHG_REJECTED;return;}
+    RHGRenderSlot*slot=[RHGRenderSlot new];slot.drawable=drawable;slot.layer=host.metal;slot.surfaceID=surfaceID;slot.frameID=host.frameID++;slot.generation=host.configurationGeneration;
+    [host.slots addObject:slot];host.surfaceID=slot.surfaceID;host.acquires++;reply.frameID=slot.frameID;reply.surfaceID=slot.surfaceID;reply.configurationGeneration=slot.generation;
     reply.h.msgh_bits|=MACH_MSGH_BITS_COMPLEX;reply.body.msgh_descriptor_count=1;reply.port=(mach_msg_port_descriptor_t){.name=surfacePort,.disposition=MACH_MSG_TYPE_MOVE_SEND,.type=MACH_MSG_PORT_DESCRIPTOR};
    }else if(q->op==RHG_PRESENT){
-    if(!host.drawable||q->frameID!=host.frameID||q->surfaceID!=host.surfaceID||!isfinite(q->presentTime)||!isfinite(q->gpuSeconds)||q->gpuSeconds<0||q->gpuSeconds>600){reply.status=RHG_REJECTED;return;}
+    RHGRenderSlot*slot=host.slots.firstObject;
+    if(!slot||q->frameID!=slot.frameID||q->surfaceID!=slot.surfaceID||q->configurationGeneration!=slot.generation||slot.generation!=host.configurationGeneration||!isfinite(q->presentTime)||!isfinite(q->gpuSeconds)||q->gpuSeconds<0||q->gpuSeconds>600){reply.status=RHG_REJECTED;return;}
+    host.drawable=slot.drawable;host.surfaceID=slot.surfaceID;
     if(q->presentMode>RHG_PRESENT_MIN_DURATION){reply.status=RHG_UNSUPPORTED;return;}
     if(RHGPerfProfileEnabled()){
       __weak RHGHost *weak=host;
@@ -290,8 +392,13 @@ static void RHGServe(RHGHost*host){
       [CATransaction commit];host.metal.presentsWithTransaction=NO;
       [host record:@"first-gpu-complete-transition" reason:nil];
     }else host.firstFrameAnnounced=YES;
-    reply.frameID=host.frameID;reply.surfaceID=host.surfaceID;host.frames++;
-    if(host.frames==1||host.frames%120==0)[host record:@"present-call" reason:nil];host.drawable=nil;host.frameID++;
+    // The public first-frame callback may stop/destroy its owned presentation.
+    // Retirement then owns the cleared slots; never remove from that empty list
+    // or acknowledge a frame as belonging to a still-live host.
+    if(atomic_load(&host->stopped)){reply.status=RHG_STOPPED;return;}
+    if(host.slots.firstObject!=slot){reply.status=RHG_REJECTED;return;}
+    reply.frameID=slot.frameID;reply.surfaceID=slot.surfaceID;reply.configurationGeneration=slot.generation;host.frames++;
+    if(host.frames==1||host.frames%120==0)[host record:@"present-call" reason:nil];host.drawable=nil;[host.slots removeObjectAtIndex:0];
    }else if(q->op==RHG_POINTER_ASSOCIATE||q->op==RHG_POINTER_WARP||q->op==RHG_POINTER_CURSOR){
     if(![host foregroundEligible]){reply.status=RHG_REJECTED;reply.pointerError=kCGErrorInvalidOperation;return;}
     RHGVirtualPointer virtual={host.virtualAssociated,host.virtualInitialized,host.virtualHiddenUntilMove,host.virtualHideCount,host.virtualX,host.virtualY};
@@ -301,7 +408,7 @@ static void RHGServe(RHGHost*host){
     if(q->op==RHG_POINTER_WARP||host.virtualAssociated!=virtual.associated)RHGInputQueueBarrier(&host->inputQueue);
     host.virtualAssociated=virtual.associated;host.virtualInitialized=virtual.initialized;host.virtualHiddenUntilMove=virtual.hiddenUntilMove;host.virtualHideCount=virtual.hideCount;host.virtualX=virtual.x;host.virtualY=virtual.y;
     [host reconcilePointer];RHGFill(host,&reply);reply.pointerError=0;if(policyChanged)[host record:@"pointer-virtual-policy" reason:host.firstFrameAnnounced&&host.pointerEnabled?@"physical-owner-independent":@"physical-capture-deferred"];
-   }else if(q->op==RHG_DONE){host.pointerEnabled=NO;[host releasePointer];[host record:@"guest-done" reason:nil];host.drawable=nil;}
+   }else if(q->op==RHG_DONE){if(host.slots.count){reply.status=RHG_BUSY;return;}host.pointerEnabled=NO;[host releasePointer];[host record:@"guest-done" reason:nil];host.drawable=nil;}
    else reply.status=RHG_UNSUPPORTED;
    }@finally{
     [host perfInterval:&host->performance.service[perfOp] begin:serviceBegan end:RHGPerfNow()];
@@ -312,7 +419,7 @@ static void RHGServe(RHGHost*host){
  }}
 }
 RHGHostRef RHGHostCreate(void*windowPointer,bool hud,const char*expectedExecutable,const char*diagnosticPath){
- if(!NSThread.isMainThread||!windowPointer||!expectedExecutable||!diagnosticPath)return NULL;
+ if(!NSThread.isMainThread||!windowPointer||!expectedExecutable||!diagnosticPath||RHGHasRetiredPool())return NULL;
  NSWindow*window=(__bridge NSWindow*)windowPointer;RHGHost*host=[RHGHost new];host.window=window;host.expectedExecutable=[NSString stringWithUTF8String:expectedExecutable];host.metalHUD=hud;
  host.diagnosticFD=open(diagnosticPath,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);if(host.diagnosticFD<0)return NULL;
  host.device=MTLCreateSystemDefaultDevice();if(!host.device)return NULL;
@@ -342,6 +449,7 @@ const char*RHGHostService(RHGHostRef ref){return ref?((__bridge RHGHost*)ref).se
 const char*RHGHostNonce(RHGHostRef ref){return ref?((__bridge RHGHost*)ref).nonceString.UTF8String:NULL;}
 void RHGHostSetFirstFrameCallback(RHGHostRef ref,void*context,RHGHostFirstFrameCallback callback){if(ref)RHGMainSync(^{RHGHost*host=(__bridge RHGHost*)ref;host.firstFrameContext=context;host.firstFrameCallback=callback;});}
 void RHGHostSetPointerEnabled(RHGHostRef ref,bool enabled){if(ref)RHGMainSync(^{RHGHost*host=(__bridge RHGHost*)ref;if(host.pointerEnabled!=enabled)host.pointerRetryBlocked=NO;if(enabled&&(host.window.styleMask&NSWindowStyleMaskFullScreen)&&host.window.isOnActiveSpace)host.pointerFullscreenSuspended=NO;host.pointerEnabled=enabled;[host reconcilePointer];});}
+void RHGHostSetOverlayVisible(RHGHostRef ref,bool visible){if(ref)RHGMainSync(^{RHGHost*host=(__bridge RHGHost*)ref;if(host.overlayVisible==visible)return;host.overlayVisible=visible;RHGInputQueueClear(&host->inputQueue);RHGInput focus={0};focus.type=RHG_FOCUS;focus.keyCode=0;focus.timestamp=CACurrentMediaTime();RHGInputQueuePush(&host->inputQueue,focus);host.lastFocus=NO;if(visible)[host releasePointer];else[host reconcilePointer];});}
 bool RHGHostPointerCaptured(RHGHostRef ref){return ref&&NSThread.isMainThread?((__bridge RHGHost*)ref)->pointer.captured:false;}
 void RHGHostStop(RHGHostRef ref){if(ref)RHGMainSync(^{[((__bridge RHGHost*)ref)shutdown];});}
 void RHGHostDestroy(RHGHostRef ref){if(ref){RHGHostStop(ref);CFRelease((CFTypeRef)ref);}}

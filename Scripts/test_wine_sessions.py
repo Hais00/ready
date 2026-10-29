@@ -51,7 +51,7 @@ def build():
     run(['/opt/homebrew/opt/lld/bin/lld-link','/entry:mainCRTStartup','/subsystem:console','/machine:x64','/nodefaultlib',out/'heartbeat.obj',out/'kernel32.lib','/out:'+str(executable)])
     products,modules,archive=prepare_core()
     run(['sh',ROOT/'Scripts/build_session_host.sh'])
-    command=['swiftc','-swift-version','5','-parse-as-library','-I',modules,ROOT/'Sources/M1Launcher/SessionManager.swift',ROOT/'Synthetic/ReadyWineSessionProbe.swift']
+    command=['swiftc','-swift-version','5','-parse-as-library','-I',modules,ROOT/'Sources/M1Launcher/SessionScratchDirectory.swift',ROOT/'Sources/M1Launcher/SessionManager.swift',ROOT/'Synthetic/ReadyWineSessionProbe.swift']
     command += [archive]
     command+=['-framework','AppKit','-o',ROOT/'Build/ReadyWineSessionProbe']
     run(command)

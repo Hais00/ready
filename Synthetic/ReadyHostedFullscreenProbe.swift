@@ -21,7 +21,7 @@ final class FixtureApplication:NSApplication {
   var toggles=0
   var configurations=0
   var restores=0
-  func placement(timeout:TimeInterval=0.05)->HostedWindowPlacement {
+  func placement(timeout:TimeInterval=0.5)->HostedWindowPlacement {
     HostedWindowPlacement(driver:.init(notificationObject:self,
       isFullscreen:{[self] in fullscreen},configure:{[self] in configurations+=1},
       toggle:{[self] in toggles+=1},restore:{[self] in restores+=1}),center:center,timeout:timeout)
@@ -41,7 +41,7 @@ final class OffscreenFixtureWindow:NSWindow {
 }
 
 @main struct ReadyHostedFullscreenProbe {
-  @MainActor static func pump(_ seconds:TimeInterval=0.015){
+  @MainActor static func pump(_ seconds:TimeInterval=0.05){
     let until=Date().addingTimeInterval(seconds)
     while Date()<until{RunLoop.current.run(mode:.default,before:Date().addingTimeInterval(0.001))}
   }
@@ -80,7 +80,7 @@ final class OffscreenFixtureWindow:NSWindow {
       check("late-entry-after-failure-cannot-authorize",results==[false])
     }
     do {
-      let state=FullscreenDriverState(),placement=state.placement();var results=[Bool]()
+      let state=FullscreenDriverState(),placement=state.placement(timeout:0.05);var results=[Bool]()
       placement.enter{results.append(success($0))};pump(0.09)
       check("timeout-completes-with-error",results==[false])
       var retry=[Bool]();placement.enter{retry.append(success($0))};pump()

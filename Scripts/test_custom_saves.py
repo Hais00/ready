@@ -20,7 +20,7 @@ def main():
     helper=build/'custom-save.exe'
     run(['/opt/homebrew/opt/lld/bin/lld-link','/entry:mainCRTStartup','/subsystem:console','/machine:x64','/nodefaultlib',build/'probe.obj',build/'kernel32.lib','/out:'+str(helper)],capture_output=True)
     executable=build/'ReadyCustomSaveProbe'
-    run(['xcrun','swiftc','-swift-version','5','-parse-as-library','-I',modules,ROOT/'Sources/M1Launcher/SessionManager.swift',ROOT/'Synthetic/ReadyCustomSaveProbe.swift',archive,'-framework','AppKit','-o',executable],capture_output=True)
+    run(['xcrun','swiftc','-swift-version','5','-parse-as-library','-I',modules,ROOT/'Sources/M1Launcher/SessionScratchDirectory.swift',ROOT/'Sources/M1Launcher/SessionManager.swift',ROOT/'Synthetic/ReadyCustomSaveProbe.swift',archive,'-framework','AppKit','-o',executable],capture_output=True)
     scratch=ROOT/'Runtime/TestPrefixes'/('custom-saves-'+uuid.uuid4().hex)
     scratch.mkdir(parents=True,mode=0o700)
     (scratch/'.ready-custom-save-fixture').write_text('Synthetic saves only\n')

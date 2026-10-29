@@ -204,6 +204,7 @@ final class SteamLibraryCoordinator {
   private var metadataRevisions=[String:Int](),metadataJobRevisions=[String:Int]()
   private var metadataCooldown:DispatchWorkItem?
   private var metadataResumeAfter=Date.distantPast
+  private(set) var maintenanceSuspended=false
   private(set) var lastMembershipComplete=true
   private var knownNetworkGeneration:UUID
   var onScopeChanged:(()->Void)?
@@ -211,6 +212,18 @@ final class SteamLibraryCoordinator {
   var onGames: (([Game], String) -> Void)?
   var onError: ((String) -> Void)?
   init(profile: UUID, network: SteamClientSession) { self.profile = profile; self.network = network;knownNetworkGeneration=network.generation }
+  /// Only public library/catalog work is suspended; the authenticated service,
+  /// heartbeat, activity and independent user download queue remain untouched.
+  func setMaintenanceSuspended(_ value:Bool){
+    guard maintenanceSuspended != value else{return};maintenanceSuspended=value
+    if value {
+      metadataCooldown?.cancel();metadataCooldown=nil
+      if let id=libraryRequest{libraryRequest=nil;libraryFlight=nil;refreshRequested=true;network.cancel(id)}
+    }else{
+      if !synced || refreshRequested{sync()}
+      pumpMetadata()
+    }
+  }
   func observe(_ state: SteamClientState) {
     if knownNetworkGeneration != network.generation {
       knownNetworkGeneration=network.generation;invalidateRequests();account=nil;synced=false;if network.serviceRunning{onScopeChanged?()}
@@ -230,6 +243,7 @@ final class SteamLibraryCoordinator {
     if !synced || refreshRequested { sync() }
   }
   func sync() {
+    guard !maintenanceSuspended else{refreshRequested=true;return}
     guard online else { return }
     guard network.accountReadyForGame(),let account,network.state.steamID==account else{refreshRequested=true;return}
     guard libraryFlight==nil else{return}
@@ -277,7 +291,7 @@ final class SteamLibraryCoordinator {
   }
   func metadata(gameID: String, refresh: Bool = false, priority: Bool = false, completion: @escaping Event) {
     guard let value = UInt32(gameID), value > 0, String(value) == gameID else { completion(["type":"error", "code":"invalid_game_id"]); return }
-    network.start()
+    if !maintenanceSuspended{network.start()}
     guard network.serviceRunning else{completion(["type":"error","code":"service_unavailable"]);return}
     if !refresh,details[gameID+"|refresh"] != nil {details[gameID+"|refresh"]?.append(completion);return}
     if !refresh, let cached = cachedDetails[gameID] { completion(cached); return }
@@ -296,6 +310,7 @@ final class SteamLibraryCoordinator {
   /// Warm every incomplete visible record once per service generation. Public
   /// lookups never infer ownership; the queue limits concurrency and rate limits.
   func repairCached(games:[Game],prepare:([String])->Void,event:@escaping(String,[String:Any])->Void) {
+    guard !maintenanceSuspended else{prepare([]);return}
     guard network.serviceRunning else{prepare([]);return}
     var selected=[String]()
     for game in games.prefix(20000) {
@@ -306,7 +321,7 @@ final class SteamLibraryCoordinator {
     for id in selected {metadata(gameID:id){value in event(id,value)}}
   }
   private func pumpMetadata() {
-    guard network.serviceRunning else{return}
+    guard !maintenanceSuspended,network.serviceRunning else{return}
     guard Date() >= metadataResumeAfter else {
       if metadataCooldown == nil {
         let work=DispatchWorkItem{[weak self] in self?.metadataCooldown=nil;self?.pumpMetadata()}

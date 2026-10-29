@@ -17,6 +17,8 @@ void RHGHostSetFirstFrameCallback(RHGHostRef host, void *context, RHGHostFirstFr
 /* Physical pointer ownership remains in Ready. Enable only for the active
  * hosted session; focus/Space/console loss releases independently of guest IPC. */
 void RHGHostSetPointerEnabled(RHGHostRef host, bool enabled);
+/* In-window overlay gates guest input and releases only this host's pointer. */
+void RHGHostSetOverlayVisible(RHGHostRef host, bool visible);
 bool RHGHostPointerCaptured(RHGHostRef host);
 void RHGHostStop(RHGHostRef host);
 void RHGHostDestroy(RHGHostRef host);

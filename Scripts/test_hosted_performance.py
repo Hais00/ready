@@ -31,7 +31,7 @@ def main():
  call(flags+[tested,'-o',run/'completion'])
  results={}
  for name,expected in [('positive',0),('bad-identity',77),('bad-gpu',77)]:
-  child={**env,'READY_HOSTED_GAME_SERVICE':'local.ready.hostedgame.fixture.'+uuid.uuid4().hex,'READY_HOSTED_GAME_NONCE':'a1'*32}
+  child={**env,'READY_HOSTED_FRAMES_IN_FLIGHT':'1','READY_HOSTED_GAME_SERVICE':'local.ready.hostedgame.fixture.'+uuid.uuid4().hex,'READY_HOSTED_GAME_NONCE':'a1'*32}
   p=call([run/'completion',name],expected=expected,environment=child)
   (run/(name+'.stdout')).write_text(p.stdout);(run/(name+'.stderr')).write_text(p.stderr)
   if expected==0:

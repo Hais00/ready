@@ -67,10 +67,10 @@ def main():
     result=json.loads(report.read_text());checks['steam-bootstrap-preserves-adapters-and-presentation-without-overlay']=p.returncode==0 and result['presentation']and result['adapters']and not result['overlay']
     swift=['xcrun','swiftc','-swift-version','5','-module-cache-path',str(WORK/'cache/swift-session-presentation')]
     call(swift+['-emit-module','-emit-library','-module-name','LauncherCore',*sorted((ROOT/'Sources/LauncherCore').glob('*.swift')),'-emit-module-path',run/'LauncherCore.swiftmodule','-o',run/'libLauncherCore.dylib'])
-    call(swift+['-parse-as-library','-I',run,ROOT/'Sources/M1Launcher/SessionManager.swift',ROOT/'Synthetic/ReadySessionPresentationProbe.swift','-L',run,'-lLauncherCore','-Xlinker','-rpath','-Xlinker',run,'-framework','AppKit','-o',run/'probe'])
+    call(swift+['-parse-as-library','-I',run,ROOT/'Sources/M1Launcher/SessionScratchDirectory.swift',ROOT/'Sources/M1Launcher/SessionManager.swift',ROOT/'Synthetic/ReadySessionPresentationProbe.swift','-L',run,'-lLauncherCore','-Xlinker','-rpath','-Xlinker',run,'-framework','AppKit','-o',run/'probe'])
     p=call([run/'probe',run,digest],timeout=30);report=json.loads(p.stdout)
     checks.update(report['checks']);assert all(checks.values())
-    sources=[ROOT/'Sources/M1Launcher/SessionManager.swift',ROOT/'SessionHost/ReadySessionHost.c',ROOT/'Synthetic/ReadySessionPresentationProbe.swift',pathlib.Path(__file__)]
+    sources=[ROOT/'Sources/M1Launcher/SessionScratchDirectory.swift',ROOT/'Sources/M1Launcher/SessionManager.swift',ROOT/'SessionHost/ReadySessionHost.c',ROOT/'Synthetic/ReadySessionPresentationProbe.swift',pathlib.Path(__file__)]
     final={'passed':True,'count':len(checks),'checks':checks,'sourceHashes':{str(p.relative_to(ROOT)):sha(p)for p in sources},'fixtureOnly':True,'actualGameAccountOrSDKUsed':False,'realWindowOrFullscreenUsed':False}
     retained=run/'report.json';retained.write_text(json.dumps(final,indent=2)+'\n');retained.chmod(0o600)
     pointer={'passed':True,'count':len(checks),'retainedReport':str(retained),'retainedReportSHA256':sha(retained),'sourceHashes':final['sourceHashes'],'fixtureOnly':True}

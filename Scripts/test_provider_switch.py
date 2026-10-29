@@ -45,7 +45,7 @@ def main():
     subprocess.run(['swift','build','--product','M1Launcher','--jobs','2'],cwd=ROOT,check=True,capture_output=True)
     subprocess.run(['sh',str(ROOT/'Scripts/build_session_host.sh')],cwd=ROOT,check=True,capture_output=True)
     directory,modules,archive=prepare_core()
-    command=['xcrun','swiftc','-swift-version','5','-parse-as-library','-I',str(modules),str(ROOT/'Sources/M1Launcher/SessionManager.swift'),str(ROOT/'Synthetic/ReadyProviderSwitchProbe.swift')]
+    command=['xcrun','swiftc','-swift-version','5','-parse-as-library','-I',str(modules),str(ROOT/'Sources/M1Launcher/SessionScratchDirectory.swift'),str(ROOT/'Sources/M1Launcher/SessionManager.swift'),str(ROOT/'Synthetic/ReadyProviderSwitchProbe.swift')]
     command+=[str(archive)]
     executable=ROOT/'Build/ReadyProviderSwitchProbe'
     command+=['-framework','AppKit','-o',str(executable)]

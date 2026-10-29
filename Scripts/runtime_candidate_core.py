@@ -19,7 +19,7 @@ def main():
     subprocess.run(['swift','build','--product','M1Launcher','--jobs','2'],cwd=ROOT,check=True,capture_output=True)
     subprocess.run(['sh',str(ROOT/'Scripts/build_session_host.sh')],cwd=ROOT,check=True,capture_output=True)
     _,modules,archive=prepare_core();exe=ROOT/'Build/ReadyProviderSwitchProbe'
-    subprocess.run(['xcrun','swiftc','-swift-version','5','-parse-as-library','-I',str(modules),str(ROOT/'Sources/M1Launcher/SessionManager.swift'),str(ROOT/'Synthetic/ReadyProviderSwitchProbe.swift'),str(archive),'-framework','AppKit','-o',str(exe)],cwd=ROOT,check=True,capture_output=True)
+    subprocess.run(['xcrun','swiftc','-swift-version','5','-parse-as-library','-I',str(modules),str(ROOT/'Sources/M1Launcher/SessionScratchDirectory.swift'),str(ROOT/'Sources/M1Launcher/SessionManager.swift'),str(ROOT/'Synthetic/ReadyProviderSwitchProbe.swift'),str(archive),'-framework','AppKit','-o',str(exe)],cwd=ROOT,check=True,capture_output=True)
     scratch=ROOT/'Runtime/TestPrefixes'/('source-core-switch-'+uuid.uuid4().hex);scratch.mkdir();(scratch/'.ready-provider-switch').write_text('Disposable synthetic provider-switch fixture\n');project=scratch/'project';(project/'Runtime').mkdir(parents=True);(project/'Build').symlink_to(ROOT/'Build',target_is_directory=True);(project/'Runtime/Probes').symlink_to(ROOT/'Runtime/Probes',target_is_directory=True)
     normal=ROOT/'Runtime/candidate-runtime.json';evaluation=ROOT/'Runtime/candidate-evaluation-runtime.json';(project/'Runtime/runtime.json').write_bytes(normal.read_bytes());(project/'Runtime/evaluation-runtime.json').write_bytes(evaluation.read_bytes());passed=False
     try:

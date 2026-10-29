@@ -171,9 +171,9 @@ def main():
         build['runOnlyDriver']={'sha256':sha(__file__),'compilersInvoked':False};write_json(receipt,build)
     else:
         exe,private,dxmt_exe,commands=build_windows()
-        command=['xcrun','swiftc','-swift-version','5','-parse-as-library','-module-cache-path',str(module_cache),'-I',str(modules),str(ROOT/'Sources/M1Launcher/SessionManager.swift'),str(ROOT/'Synthetic/ReadyControllerPolicyProbe.swift'),str(archive),'-framework','AppKit','-o',str(harness)]
+        command=['xcrun','swiftc','-swift-version','5','-parse-as-library','-module-cache-path',str(module_cache),'-I',str(modules),str(ROOT/'Sources/M1Launcher/SessionScratchDirectory.swift'),str(ROOT/'Sources/M1Launcher/SessionManager.swift'),str(ROOT/'Synthetic/ReadyControllerPolicyProbe.swift'),str(archive),'-framework','AppKit','-o',str(harness)]
         run(command);commands.append(command)
-        sources=[Path(__file__),ROOT/'Synthetic/ReadyControllerPolicyProbe.swift',ROOT/'Sources/M1Launcher/SessionManager.swift',ROOT/'Sources/LauncherCore/ControllerInputPolicy.swift',ROOT/'Scripts/runtime_controller_policy_windows_probe.c',ROOT/'Scripts/runtime_controller_private_xinput_fixture.c',ROOT/'Scripts/runtime_vulkan_present.c',ROOT/'Scripts/runtime_d3d11_present.c']
+        sources=[Path(__file__),ROOT/'Synthetic/ReadyControllerPolicyProbe.swift',ROOT/'Sources/M1Launcher/SessionScratchDirectory.swift',ROOT/'Sources/M1Launcher/SessionManager.swift',ROOT/'Sources/LauncherCore/ControllerInputPolicy.swift',ROOT/'Scripts/runtime_controller_policy_windows_probe.c',ROOT/'Scripts/runtime_controller_private_xinput_fixture.c',ROOT/'Scripts/runtime_vulkan_present.c',ROOT/'Scripts/runtime_d3d11_present.c']
         snapshot=OUTPUT/('compile-driver-'+sha(__file__)+'.py');snapshot.write_bytes(Path(__file__).read_bytes())
         build={'commands':commands,'sources':{str(p.relative_to(ROOT)):sha(p) for p in sources},'coreArchiveSHA256':sha(archive),'coreModuleHashes':{str(p):sha(p) for p in importable},'harnessSHA256':sha(harness),'windowsProbeSHA256':sha(exe),'privateAppDLLFixtureSHA256':sha(private),'dxmtWindowsProbeSHA256':sha(dxmt_exe),'compileDriverSnapshot':{'path':str(snapshot),'sha256':sha(snapshot)},'workRoot':str(WORK),'testControllerDeviceBackendUsed':False,'privateDisconnectedAppDLLFixture':True}
         write_json(receipt,build)

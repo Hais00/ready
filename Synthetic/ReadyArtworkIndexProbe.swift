@@ -156,6 +156,21 @@ private final class ImageProtocol:URLProtocol {
     try check(indexMode==0o600 && (try FileManager.default.attributesOfItem(atPath:directory.path)[.posixPermissions]as!NSNumber).intValue==0o700,"indexAndDirectoryRemainOwnerPrivate")
     let sentinel=directory.appendingPathComponent("unrelated-cache-file");try Data("keep".utf8).write(to:sentinel)
     offline.purge();try check((try Data(contentsOf:sentinel))==Data("keep".utf8) && FileManager.default.fileExists(atPath:directory.appendingPathComponent("index.json").path),"purgeDoesNotScanDeleteOrEvictDiskEntries")
+    let suspended=ArtworkCache(directory:directory,session:session)
+    try spin{suspended.hasCachedImage(gameID:first.id,role:.card)}
+    suspended.setMaintenanceSuspended(true);ImageProtocol.clear();var suspendedCallbacks=0
+    suspended.prepare(games:[game(90)]);suspended.prefetch(game:game(91));suspended.revalidate(game:first)
+    suspended.prepareViewport(games:[first],visibleGameIDs:[first.id],lookAheadGameIDs:[])
+    let pausedImage=suspended.image(for:first,role:.card,refresh:{suspendedCallbacks+=1})
+    let pausedLegacy=suspended.image("https://artwork.invalid/92/card.png",refresh:{suspendedCallbacks+=1})
+    settle(0.2)
+    let fields=Dictionary(uniqueKeysWithValues:Mirror(reflecting:suspended).children.compactMap{child in child.label.map{($0,child.value)}})
+    let scheduledReads=(fields["readers"]as?OperationQueue)?.operationCount ?? -1
+    try check(suspended.maintenanceSuspended && pausedImage==nil && pausedLegacy==nil && ImageProtocol.calls.isEmpty && suspendedCallbacks==0 && scheduledReads==0 && Mirror(reflecting:fields["jobs"]!).children.isEmpty,"maintenanceSuspendedPreparePrefetchViewportRevalidateAndImageCannotScheduleNetworkOrDecode")
+    suspended.setMaintenanceSuspended(false);suspended.prepareViewport(games:[first],visibleGameIDs:[first.id],lookAheadGameIDs:[])
+    try spin{suspended.image(for:first,role:.card,refresh:{}) != nil}
+    try check(ImageProtocol.calls.isEmpty,"maintenanceResumeReloadsExistingDiskArtworkWithoutRefetch")
+    suspended.purge()
     let unsafe=root.appendingPathComponent("unsafe"),outside=root.appendingPathComponent("outside");try FileManager.default.createDirectory(at:outside,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700]);try FileManager.default.createSymbolicLink(at:unsafe,withDestinationURL:outside)
     let store=ArtworkIndexStore(unsafe);store.save(ArtworkDiskIndex())
     try check(!FileManager.default.fileExists(atPath:outside.appendingPathComponent("index.json").path),"aliasedCacheDirectoryCannotReceiveIndexWrites")

@@ -285,6 +285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     session.onWillLaunch = { [weak self] in
       guard let self else { return }
+      MainActor.assumeIsolated{self.setSteamMaintenanceSuspended(true)}
       // Authentication is excluded by launchGame and all pending/session input gates.
       let notices = self.pages.detachForSession() + self.dialogs.detachForSession()
       self.canvas.section = .library
@@ -307,6 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     session.onFinish = { [weak self] message in
       self?.steamNativeGame?.stop(); self?.steamNativeGame = nil
       self?.restoreLauncher(message)
+      if let self{MainActor.assumeIsolated{self.setSteamMaintenanceSuspended(false)}}
       self?.dialogs.attach()
       if let self,let destination=self.launchReturnGame {
         self.launchReturnGame=nil

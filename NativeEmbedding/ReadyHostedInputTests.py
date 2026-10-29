@@ -9,6 +9,8 @@ SOURCE=r'''
 #include <float.h>
 #include <stdio.h>
 #include "RHGInputMotion.h"
+_Static_assert(RHG_VERSION==6,"CPU input proof is for protocol V6");
+#include "RHGScrollEvent.h"
 int main(void){unsigned count=0;RHGVirtualPointer v={.associated=false,.x=.4,.y=.6,.hiddenUntilMove=true};
  assert(RHGInputPointerMove(&v,12,-8,100,100)&&v.x==.4&&v.y==.6&&!v.hiddenUntilMove);count++;
  assert(!RHGVirtualPointerRequest(&v,RHG_POINTER_WARP,0,.2,.8,true));assert(v.x==.2&&v.y==.8);
@@ -33,11 +35,13 @@ int main(void){unsigned count=0;RHGVirtualPointer v={.associated=false,.x=.4,.y=
  assert(RHGInputQueuePush(&q,keyUp)&&q.count==RHG_INPUT_QUEUE_CAPACITY&&q.events[0].keyCode==1&&q.events[q.count-1].type==RHG_KEY_UP);count++;
  assert(!RHGInputQueuePush(&q,up)&&q.count==RHG_INPUT_QUEUE_CAPACITY);count++;
  unsigned delivered=0;while(q.count){unsigned n=RHGInputQueuePop(&q,out,8);for(unsigned i=0;i<n;i++){if(delivered<127)assert(out[i].keyCode==delivered+1);else assert(out[i].type==RHG_KEY_UP);delivered++;}}assert(delivered==128);count++;
+ RHGInput scroll={.type=RHG_SCROLL,.scrollingDeltaX=.125,.scrollingDeltaY=-.375,.scrollFixedX=.125,.scrollFixedY=-.375,.scrollPrecise=1,.scrollInverted=1,.scrollPhase=1};assert(RHGScrollInputValid(&scroll));RHGInputQueueClear(&q);assert(RHGInputQueuePush(&q,scroll));scroll.scrollPhase=4;assert(RHGInputQueuePush(&q,scroll));scroll.scrollPhase=8;scroll.scrollingDeltaX=scroll.scrollingDeltaY=0;assert(RHGInputQueuePush(&q,scroll));assert(q.count==3&&RHGInputQueuePop(&q,out,8)==3&&out[0].scrollingDeltaY==-.375&&out[2].scrollPhase==8);count++;
+ scroll.scrollPrecise=2;assert(!RHGScrollInputValid(&scroll));scroll.scrollPrecise=1;scroll.scrollPhase=64;assert(!RHGScrollInputValid(&scroll));scroll.scrollPhase=0;scroll.scrollFixedY=NAN;assert(!RHGScrollInputValid(&scroll));count++;
  printf("{\"passed\":true,\"count\":%u,\"physicalCGCalls\":0,\"accountOrGameUsed\":false}\n",count);return 0;}
 '''
 def main():
  run=pathlib.Path(tempfile.mkdtemp(prefix='hosted-input-cpu-',dir=WORK/'tests'));run.chmod(0o700)
- paths=[ROOT/'Sources/ReadyHostedView/RHGInputMotion.h',ROOT/'Sources/ReadyHostedView/RHGPointerState.h',ROOT/'Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h',pathlib.Path(__file__).resolve()]
+ paths=[ROOT/'Sources/ReadyHostedView/RHGInputMotion.h',ROOT/'Sources/ReadyHostedView/include/RHGScrollEvent.h',ROOT/'Sources/ReadyHostedView/RHGPointerState.h',ROOT/'Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h',pathlib.Path(__file__).resolve()]
  digest=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
  before={str(p.relative_to(ROOT)):digest(p)for p in paths}
  source=run/'input.c';source.write_text(SOURCE);binary=run/'probe'

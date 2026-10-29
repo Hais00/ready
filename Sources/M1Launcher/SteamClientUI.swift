@@ -27,6 +27,7 @@ extension AppDelegate {
     let network = SteamClientSession(profile: profile, command: command, credentialAccess: .persistent(stateRoot: paths.root))
     steamNetwork = network
     let library = SteamLibraryCoordinator(profile: profile, network: network)
+    library.setMaintenanceSuspended(canvas.artworkCache.maintenanceSuspended || session.running)
     steamLibrary = library
     library.onAccountChanged = { [weak self, weak library] account in
       guard let self, let library, self.steamLibrary === library, self.state.activeProfile == profile else { return }
@@ -174,6 +175,7 @@ extension AppDelegate {
   }
   @MainActor func requestSteamLibrary(profile:UUID, event:@escaping ([String:Any])->Void) {
     guard profile == state.activeProfile else { return }
+    guard !canvas.artworkCache.maintenanceSuspended else{event(["type":"error","code":"maintenance_suspended"]);return}
     if steamNetwork == nil { configureSteamNetwork() }
     guard let network = steamNetwork else { event(["type":"error","message":"Servizio Steam non installato."]); return }
     network.request("library",event:event)
@@ -226,6 +228,9 @@ extension AppDelegate {
   /// Metadata arrives in batches. Keep serialization and fsync off the input
   /// thread and coalesce model publication rather than rebuild on every reply.
   @MainActor func scheduleSteamCatalogUpdate(gameID:String?=nil) {
+    // Replies from the two already-active metadata requests may enrich the
+    // model. Publication/artwork warming waits until the game has finished.
+    guard !canvas.artworkCache.maintenanceSuspended else{return}
     if let gameID,let game=state.games.first(where:{$0.store == .steam && $0.storeID==gameID}) {
       canvas.artworkCache.prepare(games:[game])
       if gameDetailID==game.id{refreshGameDetails()}
@@ -233,6 +238,7 @@ extension AppDelegate {
     guard steamCatalogUpdate==nil else{return}
     let work=DispatchWorkItem{[weak self]in
       guard let self else{return};self.steamCatalogUpdate=nil
+      guard !self.canvas.artworkCache.maintenanceSuspended else{return}
       let snapshot=self.state
       self.repository.saveAsync(snapshot){[weak self]result in
         if case .failure = result{self?.canvas.message="Impossibile salvare la cache della libreria."}
@@ -241,6 +247,18 @@ extension AppDelegate {
       if !self.session.running{self.canvas.refresh()}
     }
     steamCatalogUpdate=work;DispatchQueue.main.asyncAfter(deadline:.now()+0.6,execute:work)
+  }
+
+  @MainActor func setSteamMaintenanceSuspended(_ value:Bool){
+    canvas.artworkCache.setMaintenanceSuspended(value)
+    steamLibrary?.setMaintenanceSuspended(value)
+    if value {
+      steamCatalogUpdate?.cancel();steamCatalogUpdate=nil
+    }else{
+      repairSteamLibraryCache()
+      canvas.artworkCache.prepare(games:canvas.allProfileGames,visibleGameIDs:canvas.visibleGames.prefix(24).map(\.id))
+      scheduleSteamCatalogUpdate()
+    }
   }
 
 }

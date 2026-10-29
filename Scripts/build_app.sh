@@ -69,7 +69,22 @@ python3 Scripts/frontend_snapshot.py verify "$snapshot" >/dev/null
 /usr/bin/codesign --verify --strict "$app"
 if [ -e "$final" ]; then
   mkdir -p "$PWD/Build/AppBackups"
-  previous="$PWD/Build/AppBackups/ready-$(date +%Y%m%d%H%M%S)-$$.ready-backup"
+  # The user may keep backup storage on an external volume. Resolve that
+  # configured directory once; the backup itself still requires a normal,
+  # owned parent and an alias-free, fully inventoried bundle below.
+  backup_parent=$(python3 - "$PWD/Build/AppBackups" <<'PYBACKUP'
+import os, stat, sys
+from pathlib import Path
+parent = Path(sys.argv[1]).resolve(strict=True)
+info = parent.lstat()
+if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+    raise ValueError('Owned non-writable-by-others backup directory required')
+if any(c in str(parent) for c in ('\n', '\r')):
+    raise ValueError('Invalid backup directory path')
+print(parent)
+PYBACKUP
+  )
+  previous="$backup_parent/ready-$(date +%Y%m%d%H%M%S)-$$.ready-backup"
   # Inventory is a sibling, so changing the extension preserves every bundle byte.
   python3 - "$final" "$previous" <<'PY'
 import hashlib, os, stat, sys

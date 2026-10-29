@@ -153,6 +153,26 @@ private final class LibraryVault {
     try check(callbacks==[1,2,3] && allMain && (try fifo.load()).games[0].title=="4","asyncCompletionsFIFOAndSyncSaveOrdersAfterAllSubmittedSnapshots")
     var valueSnapshot=older;fifo.saveAsync(valueSnapshot){_ in};valueSnapshot.games[0].title="Mutated after enqueue"
     try check((try fifo.load()).games[0].title=="Older async","loadWaitsForPriorAsyncAndSnapshotIsIndependentOfLaterMutation")
+    let pausedRoot=run.appendingPathComponent("paused-public-maintenance")
+    try FileManager.default.createDirectory(at:pausedRoot,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+    vault.replace("fixture_account")
+    let pausedSession=SteamClientSession(profile:UUID(),command:[CommandLine.arguments[1],CommandLine.arguments[2],pausedRoot.path],credentialAccess:vault.access)
+    let paused=SteamLibraryCoordinator(profile:pausedSession.profile,network:pausedSession)
+    var pausedMerges=0,pausedDetails=0
+    paused.onGames={_,_ in pausedMerges+=1};pausedSession.onChange={paused.observe($0)}
+    paused.setMaintenanceSuspended(true);pausedSession.start();try spin{pausedSession.accountReadyForGame()}
+    func publicCalls()->Int{(try?String(contentsOf:pausedRoot.appendingPathComponent("public-calls"),encoding:.utf8)).flatMap(Int.init) ?? 0}
+    for id in ["810","811","812"]{paused.metadata(gameID:id){if $0["type"]as?String=="result"{pausedDetails+=1}}}
+    paused.sync();settle(0.15)
+    try check(publicCalls()==0 && pausedSession.accountReadyForGame(),"publicMaintenancePauseDefersLibraryAndMetadataWithoutStoppingAuthenticatedService")
+    paused.setMaintenanceSuspended(false);paused.setMaintenanceSuspended(true);settle(0.45)
+    try check(publicCalls()==3 && pausedDetails==2 && pausedMerges==0,"pauseAllowsTwoActiveMetadataRepliesButDoesNotPumpQueuedWorkOrCommitCancelledLibrary")
+    paused.metadata(gameID:"813"){if $0["type"]as?String=="result"{pausedDetails+=1}}
+    paused.sync();paused.observe(pausedSession.state);settle(0.1)
+    try check(publicCalls()==3 && pausedSession.accountReadyForGame(),"lateRepliesAndOnlineSnapshotsCannotRestartPublicMaintenanceWhilePaused")
+    paused.setMaintenanceSuspended(false);try spin{pausedDetails==4 && pausedMerges==1}
+    try check(publicCalls()==6,"resumePublishesFreshLibraryAndDrainsOnlyDeferredMetadata")
+    paused.stop();pausedSession.stop()
     checks["allPassed"]=checks.values.allSatisfy{$0}
     print(String(data:try JSONSerialization.data(withJSONObject:checks,options:[.sortedKeys]),encoding:.utf8)!)
   }

@@ -23,6 +23,16 @@ static inline void RHGPointerReconcile(RHGPointerState*s,RHGPointerOps ops,bool 
  if(anchor){RHGPointerRelease(s,ops);s->error=anchor;return;}
  s->anchored=true;s->captured=true;
 }
+/* AppKit can unhide its process cursor after a gesture. Re-arm our ONE owned
+ * hide by balancing it first; repeated gestures never accumulate hide counts. */
+static inline bool RHGPointerRehideIfVisible(RHGPointerState*s,RHGPointerOps ops,bool visible){
+ if(!visible||!s->captured||!s->hidden)return true;
+ int32_t error=ops.show(ops.context);
+ if(error){RHGPointerRelease(s,ops);s->error=error;return false;}
+ s->hidden=false;error=ops.hide(ops.context);
+ if(error){RHGPointerRelease(s,ops);s->error=error;return false;}
+ s->hidden=true;s->error=0;return true;
+}
 typedef struct {bool associated,initialized,hiddenUntilMove;uint32_t hideCount;double x,y;} RHGVirtualPointer;
 static inline int32_t RHGVirtualPointerRequest(RHGVirtualPointer*v,uint32_t op,uint32_t action,double x,double y,bool foreground){
  if(!foreground)return kCGErrorInvalidOperation;

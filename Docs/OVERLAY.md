@@ -86,6 +86,36 @@ event-driven and periodically sampled, rather than written every frame.
 
 ## Input
 
+### Hosted native games
+
+The hosted path deliberately omits `libReadyOverlay.dylib` from the guest's
+injection list. Its overlay is instead `HostedGameOverlay.swift`, an AppKit
+subview above Ready's existing hosted Metal surface in the same NSWindow.
+Ctrl+Shift+Space is consumed by a window-scoped local event monitor before the
+host forwards input to the game. The panel provides **Riprendi gioco** and
+**Esci dal gioco**; arrows/Tab, Enter, Escape and native buttons use those same
+actions. `SessionGamePresentation.overlay` routes session/controller commands to
+this panel rather than to the guest overlay's control file.
+
+Opening the panel calls `RHGHostSetOverlayVisible`, which suspends guest input and
+physical pointer ownership. Hiding restores the host responder; the host's
+foreground, active Space and console checks still decide pointer eligibility.
+The panel is removed on hide/stop, with no overlay timer, frame observer,
+offscreen launcher rendering, extra Metal command buffer or game-image copy.
+AppKit/WindowServer composition while visible is separate from the in-drawable
+overlay described below; direct display eligibility is not asserted.
+
+`Scripts/test_hosted_overlay.py` verifies the actual local event monitor and
+AppKit panel in a finite owned Metal application, including GPU render/present
+and readback, same-window composition, native button/keyboard actions and
+cleanup. `Evidence/hosted-overlay-tests.json` records 17 checks. The controlled
+fullscreen lifecycle suite records 47 checks in
+`Evidence/hosted-fullscreen-tests.json`. Neither receipt proves the commercial
+game or a physical controller: the actual hosted-game shortcut/input check is a
+separate integration gate.
+
+### Games using the injected overlay
+
 - Ctrl+Shift+Space toggles the overlay inside the game process.
 - Up/Down, Enter, and Escape navigate/resume; mouse can select either button.
 - Key/button releases are matched to consumed presses, so a key held before opening

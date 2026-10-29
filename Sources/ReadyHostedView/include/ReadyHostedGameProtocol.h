@@ -4,7 +4,8 @@
 #include <mach/mach.h>
 #include <stdint.h>
 #define RHG_MAGIC UINT32_C(0x52484731)
-#define RHG_VERSION 4
+#define RHG_VERSION 6
+#define RHG_MAX_FRAMES_IN_FLIGHT 2
 #define RHG_MAX_EVENTS 8
 #define RHG_NONCE_BYTES 32
 #define RHG_SERVICE_PREFIX "local.ready.hostedgame."
@@ -16,12 +17,17 @@ enum {RHG_KEY_DOWN=1,RHG_KEY_UP=2,RHG_MOUSE_MOVE=3,RHG_MOUSE_DOWN=4,RHG_MOUSE_UP
 typedef struct {
  uint32_t type,keyCode,button,clickCount;uint64_t modifiers;
  double x,y,deltaX,deltaY,timestamp;uint32_t repeat,charactersLength;char characters[32];
+ /* Preserve AppKit point precision, gesture phases and native CG fields. */
+ double scrollingDeltaX,scrollingDeltaY,scrollFixedX,scrollFixedY;
+ int64_t scrollLineX,scrollLineY,scrollPointX,scrollPointY;
+ uint32_t scrollPrecise,scrollInverted,scrollPhase,scrollMomentumPhase,scrollCGPhase,scrollCGMomentumPhase;
 } RHGInput;
 typedef struct {
  mach_msg_header_t h;uint32_t magic,version,op,reserved;uint64_t requestID;
  uint8_t nonce[RHG_NONCE_BYTES];uint64_t frameID;uint32_t surfaceID,width,height,pixelFormat;
  uint64_t deviceRegistryID;uint32_t presentMode,displaySyncEnabled;double presentTime,gpuSeconds;
  uint32_t pointerAction,reserved3;double pointerX,pointerY;
+ uint64_t configurationGeneration;uint32_t framesInFlight;
 } RHGRequest;
 typedef struct {
  mach_msg_header_t h;mach_msg_body_t body;mach_msg_port_descriptor_t port;
@@ -36,6 +42,7 @@ typedef struct {
  double pointerX,pointerY;
  /* CONFIGURE ACK: the host's adopted displaySyncEnabled, strictly 0 or 1. */
  uint32_t displaySyncEnabled;
+ uint64_t configurationGeneration;uint32_t framesInFlight;
 } RHGReply;
 typedef struct {RHGRequest message;mach_msg_audit_trailer_t trailer;} RHGRequestReceive;
 typedef struct {RHGReply message;mach_msg_max_trailer_t trailer;} RHGReplyReceive;

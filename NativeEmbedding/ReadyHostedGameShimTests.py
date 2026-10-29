@@ -11,18 +11,41 @@ DRIVER=r'''
 #import "ReadyHostedGameProtocol.h"
 #include <unistd.h>
 #include <dlfcn.h>
+_Static_assert(RHG_VERSION==6,"Own CPU fixture must track protocol V6");
+@interface ScrollRecorder:NSView
+@property(nonatomic,strong)NSEvent *lastScroll;
+@property(nonatomic)unsigned downs,ups,mouseDowns,mouseUps,flags,scrolls;
+@end
+@implementation ScrollRecorder
+-(BOOL)acceptsFirstResponder{return YES;}
+-(void)scrollWheel:(NSEvent*)event{self.lastScroll=event;self.scrolls++;}
+-(void)keyDown:(NSEvent*)event{(void)event;self.downs++;}
+-(void)keyUp:(NSEvent*)event{(void)event;self.ups++;}
+-(void)mouseDown:(NSEvent*)event{(void)event;self.mouseDowns++;}
+-(void)mouseUp:(NSEvent*)event{(void)event;self.mouseUps++;}
+-(void)flagsChanged:(NSEvent*)event{if(event.modifierFlags==0)self.flags++;}
+@end
 @interface UnsupportedWindow:NSWindow @end
 @implementation UnsupportedWindow @end
 @interface RHGFixtureWindow:NSWindow @end
 @implementation RHGFixtureWindow @end
 #define require(condition) do{if(!(condition)){fprintf(stderr,"fixture-check-line:%d\n",__LINE__);_exit(81);}}while(0)
 static void server(mach_port_t port,const char *mode){
- double x=.75,y=.25;BOOL pollArmed=NO;
+ double x=.75,y=.25;BOOL pollArmed=NO;uint32_t depth=2;uint64_t generation=1;
+ RHGRequest previousConfiguration={0};BOOL configured=NO;
  for(;;){@autoreleasepool{
   RHGRequestReceive receive={0};kern_return_t result=mach_msg(&receive.message.h,MACH_RCV_MSG|MACH_RCV_TIMEOUT,0,sizeof receive,port,2000,MACH_PORT_NULL);if(result)_exit(82);
   RHGRequest request=receive.message;
   RHGReply reply={0};reply.h.msgh_bits=MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND_ONCE,0);reply.h.msgh_remote_port=request.h.msgh_remote_port;reply.h.msgh_size=sizeof reply;
   reply.magic=RHG_MAGIC;reply.version=RHG_VERSION;reply.op=request.op;reply.requestID=request.requestID;reply.status=RHG_OK;
+  if(request.op==RHG_HELLO){require(request.framesInFlight>=1&&request.framesInFlight<=RHG_MAX_FRAMES_IN_FLIGHT);depth=request.framesInFlight;}
+  if(request.op==RHG_CONFIGURE){
+   require(request.configurationGeneration==generation);
+   BOOL changed=!configured||request.width!=previousConfiguration.width||request.height!=previousConfiguration.height||request.pixelFormat!=previousConfiguration.pixelFormat||request.deviceRegistryID!=previousConfiguration.deviceRegistryID||request.displaySyncEnabled!=previousConfiguration.displaySyncEnabled;
+   if(changed){generation++;previousConfiguration=request;configured=YES;}
+   reply.displaySyncEnabled=request.displaySyncEnabled;
+  }
+  reply.framesInFlight=depth;reply.configurationGeneration=request.op==RHG_PRESENT?request.configurationGeneration:generation;
   reply.window=4242;reply.width=640;reply.height=360;reply.pixelFormat=80;reply.deviceRegistryID=1;reply.backingScale=2;
   reply.logicalWidth=320;reply.logicalHeight=180;
   reply.cocoaOriginX=100;reply.cocoaOriginY=200;reply.quartzOriginX=100;reply.quartzOriginY=300;
@@ -134,6 +157,33 @@ int main(int argc,char **argv){@autoreleasepool{
  [child addCursorRect:child.bounds cursor:cursor];[child discardCursorRects];
  require([window makeFirstResponder:child]&&window.firstResponder==child);
  [NSApp updateWindows];
+ if(!strcmp(mode,"scroll-input")){
+  ScrollRecorder *recorder=[[ScrollRecorder alloc]initWithFrame:NSMakeRect(0,0,320,180)];window.contentView=recorder;require([window makeFirstResponder:recorder]);
+  void(*deliver)(RHGInput)=dlsym(RTLD_DEFAULT,"RHGFixtureDeliverInput");require(deliver!=NULL);
+  RHGInput scroll={.type=RHG_SCROLL,.deltaX=.0125,.deltaY=-.0375,.scrollingDeltaX=.125,.scrollingDeltaY=-.375,.scrollFixedX=.125,.scrollFixedY=-.375,.scrollPrecise=1,.scrollInverted=1,.scrollPhase=NSEventPhaseChanged,.scrollMomentumPhase=NSEventPhaseBegan,.scrollCGPhase=kCGScrollPhaseChanged,.scrollCGMomentumPhase=kCGMomentumScrollPhaseBegin,.timestamp=123,.x=.5,.y=.5};
+  deliver(scroll);NSEvent *received=recorder.lastScroll;require(received&&received.type==NSEventTypeScrollWheel);
+  require(fabs(received.deltaY+.0375)<1e-12&&fabs(received.scrollingDeltaY+.375)<1e-12&&fabs(received.scrollingDeltaX-.125)<1e-12);
+  require(received.hasPreciseScrollingDeltas&&received.isDirectionInvertedFromDevice&&received.phase==NSEventPhaseChanged&&received.momentumPhase==NSEventPhaseBegan);
+  require(CGEventGetIntegerValueField(received.CGEvent,kCGScrollWheelEventIsContinuous)==1);
+  require(CGEventGetIntegerValueField(received.CGEvent,kCGScrollWheelEventScrollPhase)==kCGScrollPhaseChanged);
+  NSView *inert=[[NSView alloc]initWithFrame:NSMakeRect(0,0,40,40)];[recorder addSubview:inert];[window makeFirstResponder:inert];
+  NSEvent *previous=recorder.lastScroll;scroll.scrollPhase=NSEventPhaseBegan;scroll.scrollMomentumPhase=NSEventPhaseNone;deliver(scroll);
+  require(recorder.lastScroll!=previous&&recorder.lastScroll.scrollingDeltaY==-.375); // Keyboard responder does not swallow wheel input.
+  [window makeFirstResponder:recorder];
+  RHGInput key={.type=RHG_KEY_DOWN,.keyCode=13,.charactersLength=1,.characters={'w'},.timestamp=124};deliver(key);
+  RHGInput button={.type=RHG_MOUSE_DOWN,.button=0,.timestamp=124};deliver(button);
+  RHGInput flags={.type=RHG_FLAGS,.keyCode=56,.modifiers=NSEventModifierFlagShift,.timestamp=124};deliver(flags);
+  flags.keyCode=59;flags.modifiers|=NSEventModifierFlagControl;deliver(flags);
+  require(recorder.downs==1&&recorder.mouseDowns==1);
+  RHGInput lost={.type=RHG_FOCUS,.keyCode=0,.timestamp=125};deliver(lost);require(recorder.ups==1&&recorder.mouseUps==1&&recorder.flags==2);
+  require(recorder.lastScroll.phase==NSEventPhaseCancelled&&recorder.lastScroll.momentumPhase==NSEventPhaseEnded&&recorder.lastScroll.scrollingDeltaY==0);
+  deliver(lost);require(recorder.ups==1&&recorder.mouseUps==1&&recorder.flags==2);
+  NSView *container=[[NSView alloc]initWithFrame:NSMakeRect(0,0,320,180)];ScrollRecorder *left=[[ScrollRecorder alloc]initWithFrame:NSMakeRect(0,0,160,180)],*right=[[ScrollRecorder alloc]initWithFrame:NSMakeRect(160,0,160,180)];[container addSubview:left];[container addSubview:right];window.contentView=container;[window makeFirstResponder:container];
+  scroll.x=.2;scroll.y=.5;scroll.scrollPhase=NSEventPhaseBegan;scroll.scrollMomentumPhase=NSEventPhaseNone;deliver(scroll);require(left.scrolls==1&&right.scrolls==0);
+  scroll.x=.8;scroll.scrollPhase=NSEventPhaseChanged;deliver(scroll);require(left.scrolls==2&&right.scrolls==0);
+  scroll.scrollPhase=NSEventPhaseNone;scroll.scrollMomentumPhase=NSEventPhaseBegan;deliver(scroll);require(left.scrolls==3&&right.scrolls==0);
+  scroll.scrollMomentumPhase=NSEventPhaseEnded;deliver(scroll);scroll.scrollMomentumPhase=NSEventPhaseNone;deliver(scroll);require(left.scrolls==4&&right.scrolls==1);
+ }
  if(!strcmp(mode,"unknown-selector")){((void(*)(id,SEL))[window methodForSelector:NSSelectorFromString(@"unsupportedOwnedFixtureSelector")])(window,NSSelectorFromString(@"unsupportedOwnedFixtureSelector"));return 86;}
  NSArray *census=CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionAll,kCGNullWindowID));unsigned own=0;
  for(NSDictionary *entry in census)if([entry[(id)kCGWindowOwnerPID]intValue]==getpid())own++;
@@ -144,9 +194,10 @@ int main(int argc,char **argv){@autoreleasepool{
 def main():
  run=pathlib.Path(tempfile.mkdtemp(prefix='hosted-shim-cpu-',dir=WORK/'tests'));run.chmod(0o700)
  include=ROOT/'Sources/ReadyHostedView/include';shim=ROOT/'NativeEmbedding/ReadyHostedGameShim.m';header=include/'ReadyHostedGameProtocol.h'
- paths=[shim,header,pathlib.Path(__file__).resolve()];before={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths}
+ paths=[shim,header,include/'RHGScrollEvent.h',pathlib.Path(__file__).resolve()];before={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths}
  testedShim=run/'shim-under-test.m';testedShim.write_text(shim.read_text()+r'''
 CGError RHGFixtureVirtualWarp(CGPoint p){return rhgWarpMouse(p);}
+void RHGFixtureDeliverInput(RHGInput input){rhgDeliverInput(input);}
 CGError RHGFixtureArmPoll(void){return rhgPointerRequest(RHG_POINTER_CURSOR,RHG_CURSOR_HIDE,0,0);}
 static NSPoint RHGFixtureOriginalPoint(id object,SEL selector){(void)object;(void)selector;return NSMakePoint(901,902);}
 void RHGFixtureOriginalMouseControl(BOOL enable){
@@ -166,7 +217,7 @@ void RHGFixtureOriginalMouseControl(BOOL enable){
  checks={}
  regular=run/'RegularGuestFixture.app/Contents';(regular/'MacOS').mkdir(parents=True,mode=0o700);shutil.copy2(binary,regular/'MacOS/driver')
  (regular/'Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable':'driver','CFBundleIdentifier':'local.ready.hosted.regular.'+uuid.uuid4().hex,'CFBundlePackageType':'APPL','LSUIElement':False}))
- for mode,expected in [('logical',0),('poll-position',0),('pointer-inactive',0),('bad-pointer',77),('regular-policy',0),('subclass',0),('unsupported',77),('multiple',77),('unknown-selector',77),('bad-reply',77),('bad-metadata',77)]:
+ for mode,expected in [('logical',0),('scroll-input',0),('poll-position',0),('pointer-inactive',0),('bad-pointer',77),('regular-policy',0),('subclass',0),('unsupported',77),('multiple',77),('unknown-selector',77),('bad-reply',77),('bad-metadata',77)]:
   env={k:v for k,v in os.environ.items()if not k.startswith(('READY_','DYLD_','Steam','STEAM'))}
   env.update(DYLD_INSERT_LIBRARIES=str(library),READY_HOSTED_GAME_SERVICE='local.ready.hostedgame.fixture.'+uuid.uuid4().hex,READY_HOSTED_GAME_NONCE='a1'*32,MTL_HUD_ENABLED='0')
   executable=regular/'MacOS/driver'if mode=='regular-policy'else binary
