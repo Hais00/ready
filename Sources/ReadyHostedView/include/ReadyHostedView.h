@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "ReadyHostedGameProtocol.h"
+#include "RHGPerformance.h"
 typedef struct RHGHostOpaque *RHGHostRef;
 typedef void (*RHGHostFirstFrameCallback)(void *context);
 /* All calls except copy-metrics are on the main thread. Window/view are AppKit

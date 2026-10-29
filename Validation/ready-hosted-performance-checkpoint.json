@@ -1,0 +1,224 @@
+{
+  "schema": 1,
+  "date": "2026-10-29",
+  "status": "v4-built-scoped-fixtures-passed-live-performance-retest-pending",
+  "verificationSuspendedByUser": true,
+  "verificationSuspensionReason": "Current work moved to Steam library and launch interface; gameplay and benchmark retests are suspended.",
+  "baselineSourceCommit": "db41806",
+  "historicalNativeSpaceCheckpoint": {
+    "path": "Validation/ready-hosted-native-space-checkpoint.json",
+    "sha256": "9509498c376c7d6661dfc644f30b154d9dc19e4df6619f4e72874b0a131bb2f4",
+    "preservedUnchanged": true,
+    "scope": "V3 user-confirmed cursor following and unresolved input-feel/stutter baseline; not v4 recovery evidence."
+  },
+  "nativeVsHostedV3EngineBenchmark": {
+    "report": "ready-user-native-v3-benchmark-comparison.json",
+    "sha256": "62a432c7361bcada2d7633582a7012d0e0450a4cdf738ad5afe047896ac4eba4",
+    "source": "User-provided native and hosted benchmark exports; run identity supplied by caller.",
+    "graphicsSettingsEqual": true,
+    "differentGraphicsKeys": [],
+    "nativeAverageFPS": 37.715972900390625,
+    "hostedAverageFPS": 34.20225143432617,
+    "candidateFPSChangePercent": -9.316268932911608,
+    "engineMeanFrameIncreaseMilliseconds": 2.7230098828438187,
+    "nativeEngineFrameMilliseconds": {
+      "maximum": 66.18,
+      "mean": 26.515573905862922,
+      "over100ms": 0,
+      "over50ms": 4,
+      "p50": 25.48,
+      "p95": 33.6,
+      "p99": 35.05
+    },
+    "hostedEngineFrameMilliseconds": {
+      "maximum": 63.49,
+      "mean": 29.23858378870674,
+      "over100ms": 0,
+      "over50ms": 2,
+      "p50": 29.65,
+      "p95": 34.15,
+      "p99": 36.15
+    },
+    "nativeRawSourceHashes": {
+      "frames.csv": "3f3aef8a61c54f1a53ff40925097d0d864893c475c0006d34ed7efae8ee21c58",
+      "summary.json": "6047ccde757b1dd27be1f77e67e04f59a5ae128e777fe6f258d53177a51984c3"
+    },
+    "hostedRawSourceHashes": {
+      "frames.csv": "9a2b0fa0f5d39e97df0544137bc7fb545fcdea2839a49845c1bf2e47b092a094",
+      "summary.json": "040b834341da98921a51c4cd67de252ecda2c2ba49fed25992965d0863b64d54"
+    },
+    "onGlassPacingMeasuredByCSV": false,
+    "inputLatencyMeasuredByCSV": false,
+    "controlledThermalOrRepeatedABBenchmark": false
+  },
+  "preV4RealProfile": {
+    "report": "ready-pre-v4-performance-sample.json",
+    "sha256": "35873b5ad67ec32ef258c5199e1633bd58d095b108366b9a030fcf3b71a61d28",
+    "scope": "Pre-v4 intro/title profiling sample, not a benchmark or post-fix FPS result",
+    "hostPID": 12886,
+    "guestPID": 12940,
+    "guestLayerDisplaySyncEnabled": false,
+    "hostLayerDisplaySyncEnabled": true,
+    "meanCPUDurationMilliseconds": {
+      "hostForegroundEligibilityPerCheck": 0.67007631692457,
+      "hostNextDrawable": 0.33552456826923077,
+      "hostPresentAPI": 0.5486674314102564,
+      "hostAcquireService": 0.7589013041666667,
+      "hostPresentService": 1.2077561099358973,
+      "hostPollService": 1.4268811672042099,
+      "guestFrameCreditWait": 14.411536592307693,
+      "guestSurfaceImport": 0.325384271474359
+    },
+    "foregroundCheckCount": 18547,
+    "presentCallCount": 3120,
+    "quantiles": "log2-bucket upper bounds; arithmetic means use sumNs/count",
+    "timingsAdditiveOrCausalBreakdown": false,
+    "benchmarkOrPostFixRecoveryProof": false
+  },
+  "v4Implemented": {
+    "protocolVersion": 4,
+    "typedDisplaySyncBooleanAndACK": true,
+    "configurationCacheIncludesDisplaySync": true,
+    "guestPreferenceAppliedRatherThanForcedOff": true,
+    "foregroundChecksRemovedFromRenderOperations": true,
+    "foregroundSnapshotPerPollTurn": true,
+    "foregroundCheckForInput": true,
+    "foregroundPermissionCachedAcrossTurns": false,
+    "inputModeAwareFIFOAndEightMillisecondPolling": true,
+    "GPUCompletionDefersBlockingPresentRPCToOwnedSerialWorker": true,
+    "maximumOutstandingFrames": 1,
+    "newHostGPUCommandsOrApplicationCopiesAdded": false
+  },
+  "sourceHashes": {
+    "Sources/ReadyHostedView/ReadyHostedView.m": "979728d08849f67818b1f914e4d1f8a4a8d5ecdd26ce3e09ed3e11d97643c3c3",
+    "NativeEmbedding/ReadyHostedGameShim.m": "275b89848f8de947c6eba2ba602d6a9fd0488651523550636eaea57619d19887",
+    "Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h": "a2d5e1bd8f2c89d0faeb393637e8915b11bf5b784aeabe00113df93e649727d7",
+    "Sources/ReadyHostedView/include/ReadyHostedView.h": "ac8b8603ffd17cd366fe0bd6c81345b855315092a8b6dc4dda4f41ec79afea50",
+    "Sources/ReadyHostedView/include/RHGPerformance.h": "b8e6ba01d8e22c39f223e5424af71b1ae50e8dd24af6140204dc08fd879d125b",
+    "Sources/ReadyHostedView/RHGInputMotion.h": "b5ad3650311e13aff8658e19463b62893e3c24f43b4d328077c16a21628a59f4",
+    "Scripts/analyze_native_benchmarks.py": "c33eaf2b169cf938a34f5133767157efcfea48327701e3b1ccc786dbc362718f"
+  },
+  "scopedFixtures": {
+    "eligibility": {
+      "report": "hosted-eligibility-cpu-iympnr36/report.json",
+      "sha256": "5208f410917066cac73e69b06d2db62c38e634284c2b02d722e362c9b3024c3e",
+      "passed": true,
+      "checks": 11,
+      "fixtureOnly": true,
+      "sourceHashes": {
+        "Sources/ReadyHostedView/ReadyHostedView.m": "979728d08849f67818b1f914e4d1f8a4a8d5ecdd26ce3e09ed3e11d97643c3c3",
+        "Sources/ReadyHostedView/RHGInputMotion.h": "b5ad3650311e13aff8658e19463b62893e3c24f43b4d328077c16a21628a59f4",
+        "Sources/ReadyHostedView/include/RHGPerformance.h": "b8e6ba01d8e22c39f223e5424af71b1ae50e8dd24af6140204dc08fd879d125b",
+        "Sources/ReadyHostedView/include/ReadyHostedView.h": "ac8b8603ffd17cd366fe0bd6c81345b855315092a8b6dc4dda4f41ec79afea50",
+        "Sources/ReadyHostedView/RHGPointerState.h": "3180ff274ab04c53f0d7949b6621fb4fb2350f79c5ea4de71493c9ee2f5fe73e",
+        "Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h": "a2d5e1bd8f2c89d0faeb393637e8915b11bf5b784aeabe00113df93e649727d7",
+        "NativeEmbedding/ReadyHostedEligibilityTests.py": "a2c77e07d2d169fd5ba960d8e8dc26d84fb4e2047173b1f979b990c7bdd0aa27"
+      }
+    },
+    "inputFIFO": {
+      "report": "hosted-input-cpu-rg6bdl2w/report.json",
+      "sha256": "f31bd8876803c910d01e1acbbf4f62eadd2310449565b6f4ad7d7f783516a887",
+      "passed": true,
+      "checks": 15,
+      "fixtureOnly": true,
+      "sourceHashes": {
+        "Sources/ReadyHostedView/RHGInputMotion.h": "b5ad3650311e13aff8658e19463b62893e3c24f43b4d328077c16a21628a59f4",
+        "Sources/ReadyHostedView/RHGPointerState.h": "3180ff274ab04c53f0d7949b6621fb4fb2350f79c5ea4de71493c9ee2f5fe73e",
+        "Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h": "a2d5e1bd8f2c89d0faeb393637e8915b11bf5b784aeabe00113df93e649727d7",
+        "NativeEmbedding/ReadyHostedInputTests.py": "4b707b8f1b9fcce340cd7df979fd2f5f88e15417d81e0fa0adb911a36126031c"
+      }
+    },
+    "pointer": {
+      "report": "hosted-pointer-cpu-pxclsn15/report.json",
+      "sha256": "8f963fbeccee45d1ece1aa51edd7e94f8c4fbfb22a3ea93bc466c4484755beaa",
+      "passed": true,
+      "checks": 14,
+      "fixtureOnly": true,
+      "sourceHashes": {
+        "Sources/ReadyHostedView/RHGPointerState.h": "3180ff274ab04c53f0d7949b6621fb4fb2350f79c5ea4de71493c9ee2f5fe73e",
+        "Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h": "a2d5e1bd8f2c89d0faeb393637e8915b11bf5b784aeabe00113df93e649727d7",
+        "Sources/ReadyHostedView/ReadyHostedView.m": "979728d08849f67818b1f914e4d1f8a4a8d5ecdd26ce3e09ed3e11d97643c3c3",
+        "NativeEmbedding/ReadyHostedPointerTests.py": "124504dd64d63df3731ff5a67f4e72e33f10372b7e4349cb54482b1efd496206"
+      }
+    },
+    "shim": {
+      "report": "hosted-shim-cpu-95jh8wxh/report.json",
+      "sha256": "cc9d7c8a51bb3d74f7572fca12407f94e89dafd90aede86000f88b60af3d2f15",
+      "passed": true,
+      "checks": 11,
+      "fixtureOnly": true,
+      "sourceHashes": {
+        "NativeEmbedding/ReadyHostedGameShim.m": "275b89848f8de947c6eba2ba602d6a9fd0488651523550636eaea57619d19887",
+        "Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h": "a2d5e1bd8f2c89d0faeb393637e8915b11bf5b784aeabe00113df93e649727d7",
+        "NativeEmbedding/ReadyHostedGameShimTests.py": "39736c831c8d386cd4389cd46c95bdaa0d377a19a90c3e4394bb7eda6f4dbc0f"
+      }
+    },
+    "performance": {
+      "receipt": "Evidence/hosted-performance-tests.json",
+      "receiptSHA256": "25e7fc01d35e866b2d4ac47e5e6bd0b0f267024d3c7172aa8c2e35623aaec3f7",
+      "report": "hosted-performance-_jb1ua8a/report.json",
+      "sha256": "9847fb4834ea25f53fe8bd96728a0bce9cfffe105e059429346a6e09c7675ff7",
+      "passed": true,
+      "fixtureOnly": true,
+      "statsChecks": 26,
+      "completionChecks": 20,
+      "negativeCases": 2,
+      "GPUOrUIOrGameOrAccountUsed": false
+    },
+    "vsync": {
+      "receipt": "Evidence/hosted-vsync-tests.json",
+      "receiptSHA256": "ca87b83d7215757e6051b4f6422d88ea3d5652a18ca0b7cbfeaaba4296e9b634",
+      "report": "hosted-vsync-citipavo/report.json",
+      "sha256": "c2e5c18c863cfa9d3286bcdd3f63ee3eb563f76afd2772843c330ad2704cac98",
+      "passed": true,
+      "fixtureOnly": true,
+      "hostChecks": 11,
+      "guestChecks": 6,
+      "negativeACKCases": 2,
+      "GPUOrUIOrGameOrAccountUsed": false
+    }
+  },
+  "buildAndRelocation": {
+    "releaseBuildPassedReportedByRoot": true,
+    "report": "ready-v4-profile-package.json",
+    "sha256": "e04a77deaab12cab2f03bc433defaaa3ad09c8fde0a68a34c587ffb5f06247bf",
+    "relocationPassed": true,
+    "relocationChecks": 14,
+    "scope": "headless relocated frontend only; no real GPU, game, account, or full-runtime validation"
+  },
+  "latestLiveAttempt": {
+    "readyPID": 14076,
+    "profileFlagEnabled": true,
+    "hostAndHUDRequested": true,
+    "CuaGetAppTimedOut": true,
+    "windowCountReturned": 1,
+    "usableWindowBoundsReturned": false,
+    "windowWidthReturned": 0,
+    "windowHeightReturned": 0,
+    "macUnlockRequested": true,
+    "actualV4FramesObserved": false,
+    "actualV4RenderVerified": false,
+    "performanceRecoveryVerified": false
+  },
+  "openIssues": [
+    {
+      "id": "hosted-input-parity",
+      "status": "open",
+      "basis": "Earlier user-reported different input feel; v4 FIFO/mode changes lack live parity validation."
+    },
+    {
+      "id": "hosted-performance-stutter",
+      "status": "open",
+      "basis": "Earlier user-reported stutter and measured v3 engine FPS regression; no v4 repeated benchmark or display-pacing comparison yet."
+    }
+  ],
+  "limits": [
+    "V4 implementation/build and scoped tests do not prove stutter is fixed or performance/input parity restored.",
+    "The real profiler sample is pre-v4 intro/title, not the native-vs-hosted benchmark scene or a post-fix result.",
+    "Engine benchmark CSV timings are not display-presentation intervals; the independently instrumented host presentation samples are a separate source.",
+    "The VSync mismatch is established in the sampled session; its exact contribution to slowdown/stutter is not isolated.",
+    "CPU/IPC timings overlap and contain scheduling/wait time; do not sum them as a causal per-frame GPU overhead budget.",
+    "No direct scanout, zero CPU/Mach overhead, general gameplay/controller/corner compatibility or whole-application distribution approval is claimed.",
+    "No account identifiers, credentials, full journals, screenshots or proprietary payloads are published here."
+  ]
+}

@@ -4,7 +4,7 @@
 #include <mach/mach.h>
 #include <stdint.h>
 #define RHG_MAGIC UINT32_C(0x52484731)
-#define RHG_VERSION 3
+#define RHG_VERSION 4
 #define RHG_MAX_EVENTS 8
 #define RHG_NONCE_BYTES 32
 #define RHG_SERVICE_PREFIX "local.ready.hostedgame."
@@ -20,7 +20,7 @@ typedef struct {
 typedef struct {
  mach_msg_header_t h;uint32_t magic,version,op,reserved;uint64_t requestID;
  uint8_t nonce[RHG_NONCE_BYTES];uint64_t frameID;uint32_t surfaceID,width,height,pixelFormat;
- uint64_t deviceRegistryID;uint32_t presentMode,reserved2;double presentTime,gpuSeconds;
+ uint64_t deviceRegistryID;uint32_t presentMode,displaySyncEnabled;double presentTime,gpuSeconds;
  uint32_t pointerAction,reserved3;double pointerX,pointerY;
 } RHGRequest;
 typedef struct {
@@ -34,6 +34,8 @@ typedef struct {
  double logicalWidth,logicalHeight,quartzOriginX,quartzOriginY,cocoaOriginX,cocoaOriginY;
  /* Authenticated normalized host virtual position; y increases downwards. */
  double pointerX,pointerY;
+ /* CONFIGURE ACK: the host's adopted displaySyncEnabled, strictly 0 or 1. */
+ uint32_t displaySyncEnabled;
 } RHGReply;
 typedef struct {RHGRequest message;mach_msg_audit_trailer_t trailer;} RHGRequestReceive;
 typedef struct {RHGReply message;mach_msg_max_trailer_t trailer;} RHGReplyReceive;

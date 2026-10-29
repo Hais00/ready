@@ -16,6 +16,7 @@
 #import <mach-o/dyld.h>
 #import <stdatomic.h>
 #import "ReadyHostedGameProtocol.h"
+#import "RHGPerformance.h"
 
 typedef struct {
     uint32_t window,width,height;
@@ -313,8 +314,42 @@ static NSRecursiveLock *rhgHookLock;
 static NSMutableDictionary *rhgOriginals;
 static __weak CAMetalLayer *rhgGameLayer;
 static uint64_t rhgFrames;
+typedef struct {
+    RHGPerfStats rpcLock[RHG_PERF_OPERATIONS],rpcTotal[RHG_PERF_OPERATIONS];
+    RHGPerfStats rpcSend[RHG_PERF_OPERATIONS],rpcReceive[RHG_PERF_OPERATIONS];
+    RHGPerfStats frameCredit,importSurface,residency,completionToWorker,workerQueue,completionBody;
+    bool guestLayerDisplaySyncEnabled;
+} RHGGuestPerformance;
+static RHGGuestPerformance rhgPerformance;
+static pthread_mutex_t rhgPerfLock=PTHREAD_MUTEX_INITIALIZER;
+static _Atomic bool rhgPerfWritePending;
+static dispatch_queue_t rhgPresentationWorker(void){
+    static dispatch_queue_t queue;static dispatch_once_t once;
+    dispatch_once(&once,^{queue=dispatch_queue_create("app.ready.hosted.present",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_USER_INTERACTIVE,0));});return queue;
+}
+static void rhgPerfAdd(RHGPerfStats *metric,uint64_t begin,uint64_t end){
+    if(!begin)return;pthread_mutex_lock(&rhgPerfLock);RHGPerfInterval(metric,begin,end);pthread_mutex_unlock(&rhgPerfLock);
+}
+static void rhgPerfReport(uint64_t frames){
+    if(!RHGPerfProfileEnabled()||atomic_exchange(&rhgPerfWritePending,true))return;
+    pthread_mutex_lock(&rhgPerfLock);RHGGuestPerformance snapshot=rhgPerformance;pthread_mutex_unlock(&rhgPerfLock);
+    static dispatch_queue_t writer;static dispatch_once_t once;
+    dispatch_once(&once,^{writer=dispatch_queue_create("app.ready.hosted.perf-writer",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_UTILITY,0));});
+    dispatch_async(writer,^{@autoreleasepool{
+        NSMutableDictionary *operations=[NSMutableDictionary new];
+        for(unsigned op=0;op<RHG_PERF_OPERATIONS;op++)if(snapshot.rpcTotal[op].count){
+            operations[RHGPerfOperationName(op)]=@{@"lockWait":RHGPerfStatsJSON(&snapshot.rpcLock[op]),@"total":RHGPerfStatsJSON(&snapshot.rpcTotal[op]),@"send":RHGPerfStatsJSON(&snapshot.rpcSend[op]),@"receive":RHGPerfStatsJSON(&snapshot.rpcReceive[op])};
+        }
+        NSDictionary *value=@{@"type":@"hosted-guest-performance",@"schema":@1,@"framesAcknowledged":@(frames),@"unit":@"nanoseconds",@"clock":@"mach_continuous_time",@"quantiles":@"log2-bucket-upper-bounds",@"maximumOutstandingFrames":@1,@"guestLayerDisplaySyncEnabled":@(snapshot.guestLayerDisplaySyncEnabled),@"rpc":operations,
+            @"frameCredit":RHGPerfStatsJSON(&snapshot.frameCredit),@"surfaceImport":RHGPerfStatsJSON(&snapshot.importSurface),@"residencySetup":RHGPerfStatsJSON(&snapshot.residency),@"gpuCallbackToWorker":RHGPerfStatsJSON(&snapshot.completionToWorker),@"workerQueueWait":RHGPerfStatsJSON(&snapshot.workerQueue),@"gpuCallbackBody":RHGPerfStatsJSON(&snapshot.completionBody),@"hostGPUCommandBuffers":@0,@"applicationSurfaceCopies":@0};
+        NSData *json=[NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingSortedKeys error:nil];
+        if(json&&json.length<=65536){NSMutableData *line=[json mutableCopy];[line appendBytes:"\n" length:1];flockfile(stderr);fwrite(line.bytes,1,line.length,stderr);fflush(stderr);funlockfile(stderr);}
+        atomic_store(&rhgPerfWritePending,false);
+    }});
+}
 static BOOL rhgConfigured;
 static uint32_t rhgConfiguredWidth,rhgConfiguredHeight,rhgConfiguredFormat;
+static uint32_t rhgConfiguredDisplaySync;
 static uint64_t rhgConfiguredDevice;
 static _Atomic uint32_t rhgVirtualHideCount;
 static _Atomic bool rhgVirtualHiddenUntilMove;
@@ -344,16 +379,20 @@ static void rhgMetadataFromReply(RHGReply reply) {
     rhgMetadata=(RHGWindowMetadata){reply.window,reply.width,reply.height,reply.pixelFormat,reply.deviceRegistryID,reply.backingScale,reply.logicalWidth,reply.logicalHeight,reply.quartzOriginX,reply.quartzOriginY,reply.cocoaOriginX,reply.cocoaOriginY};
 }
 static RHGReply rhgExchange(uint32_t operation,RHGRequest fields) {
+    uint64_t began=RHGPerfNow();
     pthread_mutex_lock(&rhgRPCLock);
+    uint64_t locked=RHGPerfNow();
     RHGRequest request=fields;
     request.h=(mach_msg_header_t){.msgh_bits=MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND,MACH_MSG_TYPE_MAKE_SEND_ONCE),
         .msgh_size=sizeof request,.msgh_remote_port=rhgPeer,.msgh_local_port=rhgReceive};
     request.magic=RHG_MAGIC;request.version=RHG_VERSION;request.op=operation;request.requestID=++rhgRequestID;
     memcpy(request.nonce,rhgNonce,sizeof rhgNonce);
     kern_return_t result=mach_msg(&request.h,MACH_SEND_MSG|MACH_SEND_TIMEOUT,sizeof request,0,MACH_PORT_NULL,3000,MACH_PORT_NULL);
+    uint64_t sent=RHGPerfNow();
     if(result)rhgFail(@"host-send-failed");
     RHGReplyReceive received={0};
     result=mach_msg(&received.message.h,MACH_RCV_MSG|MACH_RCV_TIMEOUT,0,sizeof received,rhgReceive,3000,MACH_PORT_NULL);
+    uint64_t receivedAt=RHGPerfNow();
     if(result)rhgFail(@"host-reply-deadline");
     RHGReply reply=received.message;
     if(reply.h.msgh_size!=sizeof reply || reply.magic!=RHG_MAGIC || reply.version!=RHG_VERSION ||
@@ -380,7 +419,11 @@ static RHGReply rhgExchange(uint32_t operation,RHGRequest fields) {
         os_unfair_lock_lock(&rhgPointerLocationLock);rhgPointerScreenLocation=point;os_unfair_lock_unlock(&rhgPointerLocationLock);
         atomic_store(&rhgVirtualHideCount,reply.pointerHideCount);atomic_store(&rhgVirtualHiddenUntilMove,reply.pointerHiddenUntilMove!=0);
     }
-    pthread_mutex_unlock(&rhgRPCLock);return reply;
+    pthread_mutex_unlock(&rhgRPCLock);
+    if(began){unsigned op=operation<RHG_PERF_OPERATIONS?operation:0;
+        rhgPerfAdd(&rhgPerformance.rpcLock[op],began,locked);rhgPerfAdd(&rhgPerformance.rpcSend[op],locked,sent);
+        rhgPerfAdd(&rhgPerformance.rpcReceive[op],sent,receivedAt);rhgPerfAdd(&rhgPerformance.rpcTotal[op],began,RHGPerfNow());}
+    return reply;
 }
 static int rhgHex(unsigned char value) {
     if(value>='0'&&value<='9')return value-'0';if(value>='a'&&value<='f')return value-'a'+10;return -1;
@@ -449,12 +492,16 @@ static void rhgConnect(void) {
         if(!name || strncmp(name,RHG_SERVICE_PREFIX,strlen(RHG_SERVICE_PREFIX)) || !nonce || strlen(nonce)!=RHG_NONCE_BYTES*2)rhgFail(@"missing-owned-host-configuration");
         for(unsigned i=0;i<RHG_NONCE_BYTES;i++){int a=rhgHex(nonce[i*2]),b=rhgHex(nonce[i*2+1]);if(a<0||b<0)rhgFail(@"invalid-host-capability");rhgNonce[i]=(uint8_t)((a<<4)|b);}
         if(bootstrap_look_up(bootstrap_port,name,&rhgPeer) || mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&rhgReceive))rhgFail(@"host-lookup-failed");
-        rhgFrameAvailable=dispatch_semaphore_create(1);rhgMetadataFromReply(rhgExchange(RHG_HELLO,(RHGRequest){0}));
+        rhgFrameAvailable=dispatch_semaphore_create(1);(void)rhgPresentationWorker();rhgMetadataFromReply(rhgExchange(RHG_HELLO,(RHGRequest){0}));
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE,0),^{
             for(;;){@autoreleasepool{
                 RHGReply reply=rhgExchange(RHG_POLL,(RHGRequest){0});
-                for(unsigned i=0;i<reply.eventCount;i++){RHGInput input=reply.events[i];dispatch_async(dispatch_get_main_queue(),^{rhgDeliverInput(input);});}
-                usleep(16000);
+                if(reply.eventCount)dispatch_async(dispatch_get_main_queue(),^{
+                    for(unsigned i=0;i<reply.eventCount;i++)rhgDeliverInput(reply.events[i]);
+                });
+                // Bound idle polling; full batches drain promptly while yielding
+                // between RPCs so rendering can acquire the shared transaction lock.
+                usleep(reply.eventCount==RHG_MAX_EVENTS?1000:8000);
             }}
         });
     });
@@ -563,6 +610,7 @@ static void rhgHook(Class type,SEL selector,IMP hook) {
 @property uint64_t frameID;
 @property uint32_t surfaceID,presentMode;
 @property double presentTime,gpuSeconds;
+@property uint64_t gpuCompletedTick;
 @property BOOL fenceRegistered,gpuComplete,presentRequested,presentSent;
 @property(nonatomic,strong)id<MTLResidencySet> importedResidency API_AVAILABLE(macos(15.0));
 @property BOOL residencyEnded;
@@ -570,11 +618,22 @@ static void rhgHook(Class type,SEL selector,IMP hook) {
 @end
 static void rhgTryPresent(RHGDrawable *drawable) {
     @synchronized(drawable){if(!drawable.gpuComplete||!drawable.presentRequested||drawable.presentSent)return;drawable.presentSent=YES;}
-    RHGRequest request={0};request.frameID=drawable.frameID;request.surfaceID=drawable.surfaceID;
-    request.presentMode=drawable.presentMode;request.presentTime=drawable.presentTime;request.gpuSeconds=drawable.gpuSeconds;
-    RHGReply reply=rhgExchange(RHG_PRESENT,request);
-    if(reply.frameID!=drawable.frameID||reply.surfaceID!=drawable.surfaceID)rhgFail(@"present-surface-identity-changed");
-    dispatch_semaphore_signal(rhgFrameAvailable);
+    uint64_t enqueued=RHGPerfNow();
+    // Retain this exact drawable/import until the genuine host PRESENT ACK.
+    // GPU callbacks never wait for a mutex-protected Mach transaction.
+    dispatch_async(rhgPresentationWorker(),^{@autoreleasepool{
+        uint64_t entered=RHGPerfNow();
+        rhgPerfAdd(&rhgPerformance.workerQueue,enqueued,entered);
+        rhgPerfAdd(&rhgPerformance.completionToWorker,drawable.gpuCompletedTick,entered);
+        [drawable endImportedResidency]; // Fence completed before this task was eligible.
+        RHGRequest request={0};request.frameID=drawable.frameID;request.surfaceID=drawable.surfaceID;
+        request.presentMode=drawable.presentMode;request.presentTime=drawable.presentTime;request.gpuSeconds=drawable.gpuSeconds;
+        RHGReply reply=rhgExchange(RHG_PRESENT,request);
+        if(reply.frameID!=drawable.frameID||reply.surfaceID!=drawable.surfaceID)rhgFail(@"present-surface-identity-changed");
+        dispatch_semaphore_signal(rhgFrameAvailable);
+        static uint64_t acknowledged;acknowledged++;
+        if(acknowledged%120==0)rhgPerfReport(acknowledged);
+    }});
 }
 static void rhgRequestPresent(RHGDrawable *drawable,uint32_t mode,double time) {
     if(!isfinite(time)||time<0)rhgFail(@"invalid-presentation-time");
@@ -604,10 +663,11 @@ static void rhgBufferPresent(id<MTLCommandBuffer>buffer,id value,uint32_t mode,d
     RHGDrawable *drawable=rhgProxy(value);
     @synchronized(drawable){if(drawable.fenceRegistered)rhgFail(@"drawable-already-fenced");drawable.fenceRegistered=YES;}
     [buffer addCompletedHandler:^(id<MTLCommandBuffer>completed){
+        uint64_t entered=RHGPerfNow();
         if(completed.status!=MTLCommandBufferStatusCompleted)rhgFail(@"guest-metal-command-failed");
-        [drawable endImportedResidency]; // The guest GPU has finished using this import.
-        @synchronized(drawable){drawable.gpuSeconds=MAX(0,completed.GPUEndTime-completed.GPUStartTime);drawable.gpuComplete=YES;}
+        @synchronized(drawable){drawable.gpuSeconds=MAX(0,completed.GPUEndTime-completed.GPUStartTime);drawable.gpuCompletedTick=entered;drawable.gpuComplete=YES;}
         rhgTryPresent(drawable);
+        rhgPerfAdd(&rhgPerformance.completionBody,entered,RHGPerfNow());
     }];
     rhgRequestPresent(drawable,mode,time);
 }
@@ -634,10 +694,11 @@ static void rhgSignalDrawable(id<MTL4CommandQueue>queue,SEL selector,id value) {
     if(queue.device.registryID!=drawable.texture.device.registryID)rhgFail(@"metal4-device-mismatch");
     @synchronized(drawable){if(drawable.fenceRegistered)rhgFail(@"duplicate-metal4-drawable-signal");drawable.fenceRegistered=YES;}
     id<MTLSharedEvent>event=[queue.device newSharedEvent];if(!event)rhgFail(@"metal4-shared-event-unavailable");
-    MTLSharedEventListener *listener=[[MTLSharedEventListener alloc]initWithDispatchQueue:dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE,0)];
+    MTLSharedEventListener *listener=[[MTLSharedEventListener alloc]initWithDispatchQueue:rhgPresentationWorker()];
     [event notifyListener:listener atValue:1 block:^(id<MTLSharedEvent>completed,uint64_t value){(void)completed;(void)value;
-        [drawable endImportedResidency]; // Queue signal follows all prior Metal 4 GPU work.
-        @synchronized(drawable){drawable.gpuComplete=YES;}rhgTryPresent(drawable);
+        uint64_t entered=RHGPerfNow();
+        @synchronized(drawable){drawable.gpuCompletedTick=entered;drawable.gpuComplete=YES;}rhgTryPresent(drawable);
+        rhgPerfAdd(&rhgPerformance.completionBody,entered,RHGPerfNow());
         (void)event;(void)listener;
     }];
     [queue signalEvent:event value:1]; // GPU fence only; no extra command buffer/pass/copy.
@@ -704,23 +765,32 @@ RHG_INTERPOSE(rhgWarpMouse,CGWarpMouseCursorPosition);
 RHG_INTERPOSE(rhgHideCursor,CGDisplayHideCursor);
 RHG_INTERPOSE(rhgShowCursor,CGDisplayShowCursor);
 
-static id rhgNextDrawable(CAMetalLayer *layer,SEL selector) {
-    (void)selector;rhgConnect();
-    if(!layer.device || !rhgFormat(layer.pixelFormat))rhgFail(@"unsupported-layer-device-or-format");
-    if(rhgGameLayer && rhgGameLayer!=layer)rhgFail(@"multiple-swapchain-layers");rhgGameLayer=layer;rhgInstallDevice(layer.device);
-    if(dispatch_semaphore_wait(rhgFrameAvailable,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC)))rhgFail(@"outstanding-frame-deadline");
+static RHGRequest rhgAdoptLayerConfiguration(CAMetalLayer *layer){
     CGSize size=layer.drawableSize;
     if(!isfinite(size.width)||!isfinite(size.height)||size.width<1||size.height<1||size.width>8192||size.height>8192)rhgFail(@"invalid-drawable-size");
     RHGRequest configure={0};configure.width=(uint32_t)size.width;configure.height=(uint32_t)size.height;
     configure.pixelFormat=(uint32_t)layer.pixelFormat;configure.deviceRegistryID=layer.device.registryID;
+    configure.displaySyncEnabled=layer.displaySyncEnabled?1:0;
     if(!rhgConfigured || rhgConfiguredWidth!=configure.width || rhgConfiguredHeight!=configure.height ||
-       rhgConfiguredFormat!=configure.pixelFormat || rhgConfiguredDevice!=configure.deviceRegistryID) {
+       rhgConfiguredFormat!=configure.pixelFormat || rhgConfiguredDevice!=configure.deviceRegistryID || rhgConfiguredDisplaySync!=configure.displaySyncEnabled) {
         RHGReply configuration=rhgExchange(RHG_CONFIGURE,configure);rhgMetadataFromReply(configuration);
-        if(configuration.width!=configure.width||configuration.height!=configure.height||configuration.pixelFormat!=configure.pixelFormat||configuration.deviceRegistryID!=configure.deviceRegistryID)rhgFail(@"host-did-not-adopt-layer-configuration");
+        if(configuration.width!=configure.width||configuration.height!=configure.height||configuration.pixelFormat!=configure.pixelFormat||configuration.deviceRegistryID!=configure.deviceRegistryID||configuration.displaySyncEnabled>1||configuration.displaySyncEnabled!=configure.displaySyncEnabled)rhgFail(@"host-did-not-adopt-layer-configuration");
         rhgConfiguredWidth=configure.width;rhgConfiguredHeight=configure.height;
-        rhgConfiguredFormat=configure.pixelFormat;rhgConfiguredDevice=configure.deviceRegistryID;rhgConfigured=YES;
+        rhgConfiguredFormat=configure.pixelFormat;rhgConfiguredDevice=configure.deviceRegistryID;rhgConfiguredDisplaySync=configure.displaySyncEnabled;rhgConfigured=YES;
     }
+    return configure;
+}
+static id rhgNextDrawable(CAMetalLayer *layer,SEL selector) {
+    (void)selector;rhgConnect();
+    if(!layer.device || !rhgFormat(layer.pixelFormat))rhgFail(@"unsupported-layer-device-or-format");
+    if(RHGPerfProfileEnabled()){pthread_mutex_lock(&rhgPerfLock);rhgPerformance.guestLayerDisplaySyncEnabled=layer.displaySyncEnabled;pthread_mutex_unlock(&rhgPerfLock);}
+    if(rhgGameLayer && rhgGameLayer!=layer)rhgFail(@"multiple-swapchain-layers");rhgGameLayer=layer;rhgInstallDevice(layer.device);
+    uint64_t creditBegan=RHGPerfNow();
+    if(dispatch_semaphore_wait(rhgFrameAvailable,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC)))rhgFail(@"outstanding-frame-deadline");
+    rhgPerfAdd(&rhgPerformance.frameCredit,creditBegan,RHGPerfNow());
+    RHGRequest configure=rhgAdoptLayerConfiguration(layer);
     RHGReply reply=rhgExchange(RHG_ACQUIRE,(RHGRequest){0});
+    uint64_t importBegan=RHGPerfNow();
     IOSurfaceRef surface=IOSurfaceLookupFromMachPort(reply.port.name);mach_port_deallocate(mach_task_self(),reply.port.name);
     if(!surface||IOSurfaceGetID(surface)!=reply.surfaceID||reply.window!=rhgMetadata.window||reply.pixelFormat!=layer.pixelFormat||
        reply.width!=configure.width||reply.height!=configure.height||reply.deviceRegistryID!=layer.device.registryID||
@@ -731,13 +801,16 @@ static id rhgNextDrawable(CAMetalLayer *layer,SEL selector) {
     if(!layer.framebufferOnly)descriptor.usage|=MTLTextureUsageShaderRead|MTLTextureUsageShaderWrite;
     id<MTLTexture>texture=[layer.device newTextureWithDescriptor:descriptor iosurface:surface plane:0];
     if(!texture||!texture.iosurface||IOSurfaceGetID(texture.iosurface)!=reply.surfaceID)rhgFail(@"same-surface-metal-import-failed");
+    rhgPerfAdd(&rhgPerformance.importSurface,importBegan,RHGPerfNow());
     RHGDrawable *drawable=[RHGDrawable new];drawable.texture=texture;drawable.layer=layer;drawable.importedSurface=surface;
     if(@available(macOS 15.0,*)) {
+        uint64_t residencyBegan=RHGPerfNow();
         MTLResidencySetDescriptor *residencyDescriptor=[MTLResidencySetDescriptor new];residencyDescriptor.initialCapacity=1;
         id<MTLResidencySet> residency=[layer.device newResidencySetWithDescriptor:residencyDescriptor error:nil];
         if(!residency)rhgFail(@"imported-texture-residency-unavailable");
         [residency addAllocation:texture];[residency commit];[residency requestResidency];
         drawable.importedResidency=residency;
+        rhgPerfAdd(&rhgPerformance.residency,residencyBegan,RHGPerfNow());
     }
     drawable.frameID=reply.frameID;drawable.surfaceID=reply.surfaceID;rhgFrames++;return drawable;
 }

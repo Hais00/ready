@@ -16,7 +16,13 @@
 #import <math.h>
 #import "ReadyHostedView.h"
 #import "ReadyHostedGameProtocol.h"
-#import "RHGPointerState.h"
+#import "RHGInputMotion.h"
+#import "RHGPerformance.h"
+typedef struct {
+ RHGPerfStats mainDispatch[RHG_PERF_OPERATIONS],service[RHG_PERF_OPERATIONS];
+ RHGPerfStats nextDrawable,presentCall,eligibility;
+ RHGPerfPresentation presentation;
+} RHGHostPerformance;
 @class RHGHost;
 @interface RHGView:NSView
 @property(nonatomic,weak)RHGHost *owner;
@@ -25,6 +31,10 @@
 @public uint8_t nonce[RHG_NONCE_BYTES];
 @public _Atomic bool stopped;
 @public RHGPointerState pointer;
+@public RHGInputQueue inputQueue; // Accessed only on the host main thread.
+@public os_unfair_lock perfLock;
+@public RHGHostPerformance performance;
+@public _Atomic bool perfWritePending;
 }
 @property(nonatomic,weak)NSWindow *window;
 @property(nonatomic,strong)RHGView *view;
@@ -41,8 +51,7 @@
 @property(nonatomic,assign)RHGHostFirstFrameCallback firstFrameCallback;
 @property(nonatomic,assign)void *firstFrameContext;
 @property(nonatomic)int diagnosticFD;
-@property(nonatomic,strong)NSLock *inputLock;
-@property(nonatomic,strong)NSMutableArray<NSData*> *inputs;
+@property(nonatomic,strong)NSLock *diagnosticLock;
 @property(nonatomic)double began;
 @property(nonatomic)BOOL pointerEnabled,pointerSuspended,pointerFullscreenSuspended,pointerRetryBlocked,virtualAssociated,virtualInitialized,virtualHiddenUntilMove;
 @property(nonatomic)uint32_t virtualHideCount;
@@ -53,7 +62,12 @@
 -(void)input:(NSEvent*)event type:(uint32_t)type;
 -(void)shutdown;
 -(BOOL)foregroundEligible;
+-(void)perfInterval:(RHGPerfStats*)metric begin:(uint64_t)begin end:(uint64_t)end;
+-(void)profileSnapshot;
+-(void)observePresentedTime:(double)time;
+-(void)writeDiagnostic:(NSData*)line;
 -(void)reconcilePointer;
+-(void)reconcilePointerWithEligibility:(BOOL)eligible;
 -(void)releasePointer;
 @end
 static RHGHost *RHGPointerOwner;
@@ -90,7 +104,7 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
 -(void)scrollWheel:(NSEvent*)e{[self.owner input:e type:RHG_SCROLL];}
 @end
 @implementation RHGHost
--(instancetype)init{if((self=[super init])){atomic_init(&stopped,false);_diagnosticFD=-1;_inputLock=[NSLock new];_inputs=[NSMutableArray new];_pointerObservers=[NSMutableArray new];_virtualAssociated=YES;_virtualX=_virtualY=.5;_began=CACurrentMediaTime();}return self;}
+-(instancetype)init{if((self=[super init])){atomic_init(&stopped,false);atomic_init(&perfWritePending,false);perfLock=(os_unfair_lock)OS_UNFAIR_LOCK_INIT;_diagnosticFD=-1;_diagnosticLock=[NSLock new];_pointerObservers=[NSMutableArray new];_virtualAssociated=YES;_virtualX=_virtualY=.5;_began=CACurrentMediaTime();}return self;}
 -(void)dealloc{[_pointerTimer invalidate];for(NSArray*pair in _pointerObservers)[pair[0]removeObserver:pair[1]];if(_diagnosticFD>=0)close(_diagnosticFD);if(_port)mach_port_destroy(mach_task_self(),_port);}
 -(void)record:(NSString*)phase reason:(NSString*)reason{
  if(self.diagnosticFD<0)return;
@@ -102,14 +116,44 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
  v[@"pointerAnchored"]=@(self->pointer.anchored);
  if([phase hasPrefix:@"pointer-"]){v[@"cursorVisibleReported"]=@(CGCursorIsVisible());v[@"cursorVisibilityQueryDeprecated"]=@YES;}
  NSData*d=[NSJSONSerialization dataWithJSONObject:v options:NSJSONWritingSortedKeys error:nil];if(!d)return;
- NSMutableData*line=[d mutableCopy];[line appendBytes:"\n" length:1];const uint8_t*b=line.bytes;size_t offset=0;while(offset<line.length){ssize_t n=write(self.diagnosticFD,b+offset,line.length-offset);if(n<0&&errno==EINTR)continue;if(n<=0)break;offset+=(size_t)n;}
+ NSMutableData*line=[d mutableCopy];[line appendBytes:"\n" length:1];[self writeDiagnostic:line];
+}
+-(void)writeDiagnostic:(NSData*)line{
+ [self.diagnosticLock lock];const uint8_t*b=line.bytes;size_t offset=0;
+ while(offset<line.length){ssize_t n=write(self.diagnosticFD,b+offset,line.length-offset);if(n<0&&errno==EINTR)continue;if(n<=0)break;offset+=(size_t)n;}
+ [self.diagnosticLock unlock];
+}
+-(void)perfInterval:(RHGPerfStats*)metric begin:(uint64_t)begin end:(uint64_t)end{
+ if(!begin)return;os_unfair_lock_lock(&perfLock);RHGPerfInterval(metric,begin,end);os_unfair_lock_unlock(&perfLock);
+}
+-(void)observePresentedTime:(double)time{
+ os_unfair_lock_lock(&perfLock);RHGPerfObservePresentation(&performance.presentation,time);os_unfair_lock_unlock(&perfLock);
+}
+-(void)profileSnapshot{
+ if(!RHGPerfProfileEnabled()||atomic_exchange(&perfWritePending,true))return;
+ os_unfair_lock_lock(&perfLock);RHGHostPerformance snapshot=performance;os_unfair_lock_unlock(&perfLock);
+ NSUInteger frameCount=self.frames;BOOL usesTransaction=self.metal.presentsWithTransaction,displaySync=self.metal.displaySyncEnabled;
+ double elapsedMilliseconds=(CACurrentMediaTime()-self.began)*1000;pid_t guestPID=self.guestPID;
+ static dispatch_queue_t writer;static dispatch_once_t once;
+ dispatch_once(&once,^{writer=dispatch_queue_create("app.ready.hosted.host-perf-writer",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_UTILITY,0));});
+ dispatch_async(writer,^{@autoreleasepool{
+  NSMutableDictionary *operations=[NSMutableDictionary new];
+  for(unsigned op=0;op<RHG_PERF_OPERATIONS;op++)if(snapshot.service[op].count){operations[RHGPerfOperationName(op)]=@{@"mainDispatchWait":RHGPerfStatsJSON(&snapshot.mainDispatch[op]),@"service":RHGPerfStatsJSON(&snapshot.service[op])};}
+  NSDictionary *value=@{@"type":@"hosted-host-performance",@"schema":@1,@"presentCalls":@(frameCount),@"elapsedMilliseconds":@(elapsedMilliseconds),@"hostPID":@(getpid()),@"guestPID":@(guestPID),@"unit":@"nanoseconds",@"clock":@"mach_continuous_time",@"quantiles":@"log2-bucket-upper-bounds",@"maximumOutstandingFrames":@1,@"hostLayerDisplaySyncEnabled":@(displaySync),@"operations":operations,
+   @"nextDrawable":RHGPerfStatsJSON(&snapshot.nextDrawable),@"presentCall":RHGPerfStatsJSON(&snapshot.presentCall),@"foregroundEligibility":RHGPerfStatsJSON(&snapshot.eligibility),@"displayPresentation":RHGPerfPresentationJSON(&snapshot.presentation),@"hostGPUCommandBuffers":@0,@"applicationSurfaceCopies":@0,@"hostCommandQueues":@0,@"hostCommandBuffers":@0,@"hostEncoders":@0,@"pixelReadbacks":@0,@"presentsWithTransaction":@(usesTransaction)};
+  NSData *json=[NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingSortedKeys error:nil];
+  if(json&&json.length<=65536){NSMutableData *line=[json mutableCopy];[line appendBytes:"\n" length:1];[self writeDiagnostic:line];}
+  atomic_store(&self->perfWritePending,false);
+ }});
 }
 -(BOOL)foregroundEligible {
+ uint64_t began=RHGPerfNow();@try{
  if(atomic_load(&stopped)||self.pointerSuspended||self.pointerFullscreenSuspended||!self.window||self.view.window!=self.window||self.view.isHiddenOrHasHiddenAncestor||!NSApp.isActive||NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier!=getpid()||!self.window.isKeyWindow||!self.window.isOnActiveSpace||self.window.isMiniaturized||!(self.window.occlusionState&NSWindowOcclusionStateVisible))return NO;
  if(self.guestPID>0){char path[PROC_PIDPATHINFO_MAXSIZE]={0};if(proc_pidpath(self.guestPID,path,sizeof path)<=0||strcmp(path,self.expectedExecutable.fileSystemRepresentation))return NO;}
  CFDictionaryRef session=CGSessionCopyCurrentDictionary();if(!session)return NO;
  CFTypeRef console=CFDictionaryGetValue(session,kCGSessionOnConsoleKey),login=CFDictionaryGetValue(session,kCGSessionLoginDoneKey),user=CFDictionaryGetValue(session,kCGSessionUserIDKey);
  int32_t uid=-1;BOOL valid=console==kCFBooleanTrue&&login==kCFBooleanTrue&&user&&CFGetTypeID(user)==CFNumberGetTypeID()&&CFNumberGetValue(user,kCFNumberSInt32Type,&uid)&&uid==(int32_t)getuid();CFRelease(session);return valid;
+ }@finally{[self perfInterval:&performance.eligibility begin:began end:RHGPerfNow()];}
 }
 -(void)releasePointer {
  BOOL owned=self->pointer.detached||self->pointer.hidden;int32_t previousError=self->pointer.error;
@@ -119,7 +163,10 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
  if(atomic_load(&stopped)&&!self->pointer.detached&&!self->pointer.hidden){[self.pointerTimer invalidate];self.pointerTimer=nil;}
 }
 -(void)reconcilePointer {
- BOOL allowed=self.pointerEnabled&&self.firstFrameAnnounced&&[self foregroundEligible];
+ [self reconcilePointerWithEligibility:self.pointerEnabled&&self.firstFrameAnnounced&&[self foregroundEligible]];
+}
+-(void)reconcilePointerWithEligibility:(BOOL)eligible {
+ BOOL allowed=self.pointerEnabled&&self.firstFrameAnnounced&&eligible;
  if(!allowed){self.pointerRetryBlocked=NO;[self releasePointer];return;}
  if(self.pointerRetryBlocked){if(self->pointer.detached||self->pointer.hidden)[self releasePointer];return;}
  if(RHGPointerOwner&&RHGPointerOwner!=self){[RHGPointerOwner releasePointer];if(RHGPointerOwner)return;}
@@ -131,11 +178,19 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
  }else if(!was&&self->pointer.error){self.pointerRetryBlocked=YES;[self record:@"pointer-capture-failed" reason:nil];}
 }
 -(void)input:(NSEvent*)e type:(uint32_t)type{
- [self reconcilePointer];if(!self.firstFrameAnnounced||![self foregroundEligible])return;RHGInput input={0};input.type=type;input.modifiers=e.modifierFlags;input.timestamp=e.timestamp;
+ BOOL eligible=[self foregroundEligible];[self reconcilePointerWithEligibility:eligible];
+ if(!self.firstFrameAnnounced||!eligible)return;RHGInput input={0};input.type=type;input.modifiers=e.modifierFlags;input.timestamp=e.timestamp;
  if(type==RHG_KEY_DOWN||type==RHG_KEY_UP||type==RHG_FLAGS){input.keyCode=e.keyCode;input.repeat=type==RHG_KEY_DOWN&&e.isARepeat;NSData*text=[((type==RHG_FLAGS?@"":e.charactersIgnoringModifiers)?:@"")dataUsingEncoding:NSUTF8StringEncoding];input.charactersLength=(uint32_t)MIN(sizeof input.characters,text.length);if(input.charactersLength)memcpy(input.characters,text.bytes,input.charactersLength);}
  else{NSPoint p=[self.view convertPoint:e.locationInWindow fromView:nil];input.x=self.view.bounds.size.width>0?p.x/self.view.bounds.size.width:0;input.y=self.view.bounds.size.height>0?p.y/self.view.bounds.size.height:0;input.button=(uint32_t)e.buttonNumber;input.clickCount=(uint32_t)MAX(0,e.clickCount);input.deltaX=e.deltaX;input.deltaY=e.deltaY;
-  if(self->pointer.captured){if(type==RHG_MOUSE_MOVE){self.virtualX=fmax(0,fmin(1,self.virtualX+e.deltaX/fmax(1,self.view.bounds.size.width)));self.virtualY=fmax(0,fmin(1,self.virtualY+e.deltaY/fmax(1,self.view.bounds.size.height)));self.virtualHiddenUntilMove=NO;}input.x=self.virtualX;input.y=self.virtualY;}}
- [self.inputLock lock];if(self.inputs.count>=128)[self.inputs removeObjectAtIndex:0];[self.inputs addObject:[NSData dataWithBytes:&input length:sizeof input]];[self.inputLock unlock];
+  if(self->pointer.captured){if(type==RHG_MOUSE_MOVE){
+   RHGVirtualPointer virtual={self.virtualAssociated,self.virtualInitialized,self.virtualHiddenUntilMove,self.virtualHideCount,self.virtualX,self.virtualY};
+   if(!RHGInputPointerMove(&virtual,input.deltaX,input.deltaY,self.view.bounds.size.width,self.view.bounds.size.height))return;
+   self.virtualX=virtual.x;self.virtualY=virtual.y;self.virtualHiddenUntilMove=virtual.hiddenUntilMove;
+  }input.x=self.virtualX;input.y=self.virtualY;}}
+ if(!RHGInputQueuePush(&self->inputQueue,input)){
+  // A bounded queue must not silently lose a release and leave held controls.
+  [self record:@"input-rejected" reason:@"input-control-queue-overflow"];[self shutdown];
+ }
 }
 -(void)shutdown{
  if(atomic_exchange(&stopped,true))return;
@@ -148,7 +203,10 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
 }
 @end
 static void RHGFill(RHGHost*host,RHGReply*reply){
- [host reconcilePointer];
+ // Rendering does not revalidate physical pointer ownership. Input/POLL,
+ // enabled changes, notifications and the independent timer do so freshly.
+ BOOL focus=NO;
+ if(reply->op==RHG_POLL){focus=[host foregroundEligible];[host reconcilePointerWithEligibility:focus];}
  reply->magic=RHG_MAGIC;reply->version=RHG_VERSION;reply->window=(uint32_t)host.window.windowNumber;
  reply->width=(uint32_t)host.metal.drawableSize.width;reply->height=(uint32_t)host.metal.drawableSize.height;reply->pixelFormat=(uint32_t)host.metal.pixelFormat;reply->deviceRegistryID=host.device.registryID;reply->backingScale=host.window.backingScaleFactor;
  reply->pointerCaptured=host->pointer.captured;reply->pointerAssociated=host.virtualAssociated;reply->pointerHideCount=host.virtualHideCount;reply->pointerHiddenUntilMove=host.virtualHiddenUntilMove;reply->pointerError=host->pointer.error;
@@ -157,9 +215,18 @@ static void RHGFill(RHGHost*host,RHGReply*reply){
  NSRect screenRect=[host.window convertRectToScreen:[host.view convertRect:host.view.bounds toView:nil]];
  reply->quartzOriginX=screenRect.origin.x;reply->quartzOriginY=NSMaxY(NSScreen.screens.firstObject.frame)-NSMaxY(screenRect);reply->cocoaOriginX=screenRect.origin.x;reply->cocoaOriginY=screenRect.origin.y;
  if(reply->op!=RHG_POLL||reply->eventCount)return;
- BOOL focus=[host foregroundEligible];
- if(focus!=host.lastFocus){RHGInput change={0};change.type=RHG_FOCUS;change.keyCode=focus?1:0;change.timestamp=CACurrentMediaTime();[host.inputLock lock];if(!focus)[host.inputs removeAllObjects];[host.inputs addObject:[NSData dataWithBytes:&change length:sizeof change]];[host.inputLock unlock];host.lastFocus=focus;}
- [host.inputLock lock];reply->eventCount=(uint32_t)MIN(RHG_MAX_EVENTS,host.inputs.count);for(uint32_t i=0;i<reply->eventCount;i++)[host.inputs[i]getBytes:&reply->events[i] length:sizeof(RHGInput)];if(reply->eventCount)[host.inputs removeObjectsInRange:NSMakeRange(0,reply->eventCount)];[host.inputLock unlock];
+ if(focus!=host.lastFocus){RHGInput change={0};change.type=RHG_FOCUS;change.keyCode=focus?1:0;change.timestamp=CACurrentMediaTime();if(!focus)RHGInputQueueClear(&host->inputQueue);
+  if(!RHGInputQueuePush(&host->inputQueue,change)){[host record:@"input-rejected" reason:@"input-control-queue-overflow"];[host shutdown];}host.lastFocus=focus;}
+ reply->eventCount=RHGInputQueuePop(&host->inputQueue,reply->events,RHG_MAX_EVENTS);
+}
+static void RHGConfigureLayer(RHGHost*host,const RHGRequest*q,RHGReply*reply){
+ uint64_t pixels=(uint64_t)q->width*q->height;
+ if(host.drawable){reply->status=RHG_BUSY;return;}
+ if(!q->width||!q->height||q->width>8192||q->height>8192||pixels>33554432||!RHGFormat(q->pixelFormat)||q->deviceRegistryID!=host.device.registryID||q->displaySyncEnabled>1){reply->status=RHG_UNSUPPORTED;return;}
+ BOOL sync=q->displaySyncEnabled!=0;
+ if(host.configured&&host.metal.pixelFormat==q->pixelFormat&&host.metal.drawableSize.width==q->width&&host.metal.drawableSize.height==q->height&&host.metal.displaySyncEnabled==sync){reply->displaySyncEnabled=host.metal.displaySyncEnabled?1:0;return;}
+ host.metal.pixelFormat=(MTLPixelFormat)q->pixelFormat;host.metal.drawableSize=CGSizeMake(q->width,q->height);host.metal.displaySyncEnabled=sync;host.configured=YES;
+ RHGFill(host,reply);reply->displaySyncEnabled=host.metal.displaySyncEnabled?1:0;[host record:@"configured" reason:nil];
 }
 static void RHGServe(RHGHost*host){
  while(!atomic_load(&host->stopped)){@autoreleasepool{
@@ -176,19 +243,20 @@ static void RHGServe(RHGHost*host){
   if(valid&&host.guestPID==0){char path[PROC_PIDPATHINFO_MAXSIZE]={0};valid=q->op==RHG_HELLO&&proc_pidpath(pid,path,sizeof path)>0&&host.expectedExecutable.length&&strcmp(path,host.expectedExecutable.fileSystemRepresentation)==0;if(valid)host.guestPID=pid;}
   valid=valid&&pid>0&&host.guestPID==pid;
   if(!valid){reply.status=RHG_REJECTED;reply.magic=RHG_MAGIC;reply.version=RHG_VERSION;}
-  else RHGMainSync(^{
+  else {uint64_t dispatchBegan=RHGPerfNow();RHGMainSync(^{
+   uint64_t serviceBegan=RHGPerfNow();unsigned perfOp=q->op<RHG_PERF_OPERATIONS?q->op:0;
+   [host perfInterval:&host->performance.mainDispatch[perfOp] begin:dispatchBegan end:serviceBegan];
+   @try{
    host.requests++;RHGFill(host,&reply);
    if(atomic_load(&host->stopped)){reply.status=RHG_STOPPED;return;}
    if(q->op==RHG_HELLO||q->op==RHG_POLL){if(q->op==RHG_HELLO)[host record:@"guest-connected" reason:nil];}
    else if(q->op==RHG_CONFIGURE){
-    uint64_t pixels=(uint64_t)q->width*q->height;
-    if(host.drawable){reply.status=RHG_BUSY;return;}
-    if(!q->width||!q->height||q->width>8192||q->height>8192||pixels>33554432||!RHGFormat(q->pixelFormat)||q->deviceRegistryID!=host.device.registryID){reply.status=RHG_UNSUPPORTED;return;}
-    if(host.configured&&host.metal.pixelFormat==q->pixelFormat&&host.metal.drawableSize.width==q->width&&host.metal.drawableSize.height==q->height)return;
-    host.metal.pixelFormat=(MTLPixelFormat)q->pixelFormat;host.metal.drawableSize=CGSizeMake(q->width,q->height);host.configured=YES;RHGFill(host,&reply);[host record:@"configured" reason:nil];
+    RHGConfigureLayer(host,q,&reply);
    }else if(q->op==RHG_ACQUIRE){
     if(!host.configured){reply.status=RHG_UNSUPPORTED;return;}if(host.drawable){reply.status=RHG_BUSY;return;}
-    host.drawable=[host.metal nextDrawable];IOSurfaceRef surface=host.drawable.texture.iosurface;
+    uint64_t drawableBegan=RHGPerfNow();host.drawable=[host.metal nextDrawable];
+    [host perfInterval:&host->performance.nextDrawable begin:drawableBegan end:RHGPerfNow()];
+    IOSurfaceRef surface=host.drawable.texture.iosurface;
     if(!surface){host.drawable=nil;reply.status=RHG_UNSUPPORTED;[host record:@"rejected" reason:@"drawable-has-no-exportable-surface"];return;}
     mach_port_t surfacePort=IOSurfaceCreateMachPort(surface);if(!surfacePort){host.drawable=nil;reply.status=RHG_REJECTED;return;}
     host.surfaceID=IOSurfaceGetID(surface);host.acquires++;reply.frameID=host.frameID;reply.surfaceID=host.surfaceID;
@@ -196,6 +264,10 @@ static void RHGServe(RHGHost*host){
    }else if(q->op==RHG_PRESENT){
     if(!host.drawable||q->frameID!=host.frameID||q->surfaceID!=host.surfaceID||!isfinite(q->presentTime)||!isfinite(q->gpuSeconds)||q->gpuSeconds<0||q->gpuSeconds>600){reply.status=RHG_REJECTED;return;}
     if(q->presentMode>RHG_PRESENT_MIN_DURATION){reply.status=RHG_UNSUPPORTED;return;}
+    if(RHGPerfProfileEnabled()){
+      __weak RHGHost *weak=host;
+      [host.drawable addPresentedHandler:^(id<MTLDrawable>displayed){[weak observePresentedTime:displayed.presentedTime];}];
+    }
     BOOL transition=!host.firstFrameAnnounced&&host.firstFrameCallback!=NULL;
     if(transition){[CATransaction begin];[CATransaction setDisableActions:YES];host.metal.presentsWithTransaction=YES;}
     if(!host.firstFrameAnnounced){
@@ -205,9 +277,11 @@ static void RHGServe(RHGHost*host){
         dispatch_async(dispatch_get_main_queue(),^{[weakHost record:@"first-presentation-result" reason:timestamp>0?@"on-glass-timestamp":@"skipped-no-display-timestamp"];});
       }];
     }
+    uint64_t presentBegan=RHGPerfNow();
     if(q->presentMode==RHG_PRESENT_NORMAL)[host.drawable present];
     else if(q->presentMode==RHG_PRESENT_AT_TIME)[host.drawable presentAtTime:q->presentTime];
     else [host.drawable presentAfterMinimumDuration:q->presentTime];
+    [host perfInterval:&host->performance.presentCall begin:presentBegan end:RHGPerfNow()];
     if(transition){
       host.firstFrameAnnounced=YES;
       // This callback can only exchange views/flags. No GPU wait or display
@@ -224,11 +298,16 @@ static void RHGServe(RHGHost*host){
     int32_t error=RHGVirtualPointerRequest(&virtual,q->op,q->pointerAction,q->pointerX,q->pointerY,true);
     if(error){reply.status=RHG_REJECTED;reply.pointerError=error;return;}
     BOOL policyChanged=host.virtualAssociated!=virtual.associated||host.virtualHideCount!=virtual.hideCount||host.virtualHiddenUntilMove!=virtual.hiddenUntilMove;
+    if(q->op==RHG_POINTER_WARP||host.virtualAssociated!=virtual.associated)RHGInputQueueBarrier(&host->inputQueue);
     host.virtualAssociated=virtual.associated;host.virtualInitialized=virtual.initialized;host.virtualHiddenUntilMove=virtual.hiddenUntilMove;host.virtualHideCount=virtual.hideCount;host.virtualX=virtual.x;host.virtualY=virtual.y;
     [host reconcilePointer];RHGFill(host,&reply);reply.pointerError=0;if(policyChanged)[host record:@"pointer-virtual-policy" reason:host.firstFrameAnnounced&&host.pointerEnabled?@"physical-owner-independent":@"physical-capture-deferred"];
    }else if(q->op==RHG_DONE){host.pointerEnabled=NO;[host releasePointer];[host record:@"guest-done" reason:nil];host.drawable=nil;}
    else reply.status=RHG_UNSUPPORTED;
-  });
+   }@finally{
+    [host perfInterval:&host->performance.service[perfOp] begin:serviceBegan end:RHGPerfNow()];
+    if(q->op==RHG_PRESENT&&reply.status==RHG_OK&&host.frames>0&&host.frames%120==0)[host profileSnapshot];
+   }
+  });}
   if(reply.h.msgh_remote_port){kern_return_t sent=mach_msg(&reply.h,MACH_SEND_MSG|MACH_SEND_TIMEOUT,reply.h.msgh_size,0,MACH_PORT_NULL,2000,MACH_PORT_NULL);if(sent!=KERN_SUCCESS){if(reply.body.msgh_descriptor_count)mach_msg_destroy(&reply.h);RHGMainSync(^{[host record:@"peer-lost" reason:nil];});}}
  }}
 }
