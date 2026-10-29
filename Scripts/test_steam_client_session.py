@@ -39,7 +39,9 @@ for line in sys.stdin:
  elif op in ['reconnect','fixture_recovered']:online(id)
  elif op=='fixture_network_loss':send('state',state='reconnecting',reason='network_lost');send('result',id)
  elif op=='fixture_remote_kick':send('state',state='offline',reason='session_replaced');send('result',id)
- elif op=='fixture_revoked':send('state',state='authorization_required',reason='revoked');send('result',id)
+ elif op=='fixture_revoked':send('state',state='authorization_required',reason='revoked',invalidateCredentials=True);send('result',id)
+ elif op=='fixture_session_expired':send('state',state='logged_out',reason='session_expired',steamResult='Expired',connectionResultContext='logged_off',invalidateCredentials=False);send('result',id)
+ elif op=='fixture_reason_alone':send('state',state='offline',reason='expired');send('result',id)
  elif op=='authenticate':auth=id;send('qr',id,url='https://example.invalid/fixture-only')
  elif op=='fixture_auth_complete':
   send('credentials',auth,credentials={'username':'fixture_account','refresh_token':'dummy_new_secret'})

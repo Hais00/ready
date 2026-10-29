@@ -15,6 +15,8 @@ struct SteamFriendState: Identifiable, Equatable {
 struct SteamClientState {
   var connection = "offline"
   var reason = ""
+  var steamResult: String?
+  var connectionResultContext: String?
   var accountName = ""
   var displayName = ""
   var steamID = ""
@@ -214,6 +216,11 @@ final class SteamClientSession {
       catch { state.warning="Accesso attivo solo in memoria: impossibile salvare nel Portachiavi.";notify() }
       return
     }
+    if type == "state" || (type == "result" && value["state"] != nil) {
+      let results:Set<String> = ["OK","Fail","Unknown","Expired","Revoked","InvalidPassword","AccessDenied","AccountDisabled","AccountLockedDown","AccountLogonDenied","AccountLoginDeniedNeedTwoFactor","NoConnection","Timeout","ConnectFailed","ServiceUnavailable","RateLimitExceeded","TryAnotherCM","RemoteDisconnect","LoggedInElsewhere","LogonSessionReplaced","NotLoggedOn"]
+      state.steamResult = (value["steamResult"] as? String).flatMap { results.contains($0) ? $0 : nil }
+      state.connectionResultContext = (value["connectionResultContext"] as? String).flatMap { ["logged_off","logon_response"].contains($0) ? $0 : nil }
+    }
     if type == "state" {
       let connection = value["state"] as? String ?? "offline"
       if ["connecting","authenticating","online","reconnecting","offline","authorization_required","logged_out"].contains(connection) {
@@ -225,7 +232,7 @@ final class SteamClientSession {
         if connection == "online" { restartCount = 0 }
         if becameOnline { request("snapshot") { _ in } }
         let invalidation = (value["invalidateCredentials"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() && $0.boolValue } ?? false
-        if (invalidation || ["revoked","expired","invalid_password"].contains(state.reason)), credentialAccess.load(profile, .steam) == credentialAtStart {
+        if invalidation, credentialAccess.load(profile, .steam) == credentialAtStart {
           credentialAccess.remove(profile, .steam); credentialAtStart = nil
         }
       }

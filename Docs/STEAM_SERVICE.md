@@ -18,7 +18,7 @@ If `options` exists it must be an object and supplies those fields.
 
 | Operation | Fields and behavior |
 | --- | --- |
-| `snapshot` | Offline-safe result with `state`, `reason`, `account`, `friends`, capabilities and protocol version. It does not connect. |
+| `snapshot` | Offline-safe result with `state`, `reason`, `steamResult`, `connectionResultContext`, `account`, `friends`, capabilities and protocol version. It does not connect. |
 | `connect` | Top-level `credentials: {username, refresh_token}`; logs on with the stored profile account. |
 | `authenticate` | `method: qr` or `password`. Password mode accepts `username`/`password` operation fields or a top-level credentials object. It uses SteamKit's official authentication and Steam Guard interfaces. No automatic QR is started by another operation. |
 | `guard_code` | `challengeID`, `code`; replies to the single active email/device-code challenge. A challenge can be answered once. Mobile approval emits a notification with no code challenge. Email addresses and codes are never echoed. |
@@ -76,13 +76,36 @@ The callback pump persists across reconnects. A network disconnect retries at
 1, 2, 4, 8, 16 and 30 seconds, with a 30-second attempt budget, then requires an
 explicit reconnect. A server LoggedOff callback, remote session replacement,
 revocation, expired/invalid password, manual offline or logout suppresses these
-retries. Revocation/expiry/invalid-password/account-disabled/account-locked results
-emit `invalidateCredentials: true`; a network failure or remote-session kick
-does not. Server reasons/results are fixed names, never raw exception text.
+retries. A LoggedOff notice describes the current CM session: it stops owned
+activity and automatic retry but preserves the saved refresh credential, including
+Expired/Revoked/InvalidPassword results. An explicit reconnect can try that
+credential. Only a rejected LogOn response using it may emit
+`invalidateCredentials: true` for Expired/Revoked/InvalidPassword/disabled/locked
+results. Explicit user logout still forgets the selected profile normally.
+The context is recorded as `logged_off` or `logon_response`; a reason string alone
+never authorizes vault deletion. Server reasons/results are fixed names, never
+raw exception text. Epoch checks precede applying failed as well as successful
+logon results, preventing a late failure from erasing a newer session.
 The service LoginID is random nonzero in `1...0x7fffffff`, separate from the
 downloader's reserved `0xD0000000...0xDfffffff` range. Reconnect retains that LoginID.
 Disconnect callbacks are drained before reusing the SteamClient, so an earlier
 connection cannot satisfy/fail a later connection's completion source.
+
+The previous frontend also erased the vault based on reason text alone; this
+has been removed. Only an explicit strict-Boolean invalidation event from the
+current service generation can authorize that operation. Fixed error classes
+now distinguish network/timeout/rate-limit/session changes from a corroborated
+ownership denial. A failed or malformed response never creates a game grant.
+Private diagnostics retain only whitelisted result/context codes and comparison
+booleans, not accounts, SteamIDs, token/ticket bytes, ticket digests or raw errors.
+
+One live post-game interruption exposed the misleading error and an already
+missing Ready credential item. The old service/frontend did not preserve the
+exact server result/context, so the historical cause cannot be reconstructed
+and no token-rotation claim follows. The context separation and stale-result
+guards pass 177 service checks; frontend error/grant tests pass 100 checks.
+Live repeat-launch validation of this correction is pending renewed user login;
+the deleted credential cannot be recreated by installing the fix.
 
 Limits: 64 KiB input characters per complete JSONL frame, 4 MiB output characters,
 16 pending requests, 4096 unique requests per process, four-minute request budgets,

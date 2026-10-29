@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "kind": "steam-session-versus-credential-rejection-fix",
+  "sourceBug": "A server LoggedOff result was treated as rejection of the saved refresh credential.",
+  "previousLiveFailureExactSteamResultRecovered": false,
+  "previousOwnReadyCredentialItemMetadataPresent": false,
+  "oldCredentialContentsRequested": false,
+  "loggedOffPreservesSavedCredential": true,
+  "remoteLogoffStillSuppressesAutomaticRetry": true,
+  "explicitLogonRejectionMayInvalidateCredential": true,
+  "reasonTextAloneCannotEraseCredential": true,
+  "ownershipGateUnchanged": true,
+  "persistentServiceChecks": 177,
+  "authorizationFailureChecks": 100,
+  "livePostFixTwoLaunchCycleVerified": false,
+  "serviceReportSHA256": "0b839049b4d41d59275324ad2ff076f651346fa82b1da975fc16f372d2395335",
+  "servicePayloadManifestSHA256": "4393892ec7f9d4761f81f5950ac862d16d26561f0823242071383905de50fb69"
+}

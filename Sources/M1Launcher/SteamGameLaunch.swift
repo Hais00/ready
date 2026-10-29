@@ -74,7 +74,8 @@ extension AppDelegate {
         self.pendingLaunch = nil; self.steamGameAuthorization = nil
         self.steamPreparationID = nil
         if reason != .cancelled {
-          self.showError(LauncherError.unavailable("Steam non ha confermato l’accesso e la licenza per questo gioco."))
+          if let detail=authorization.lastFailureDetail {try? detail.writePrivate(logs:self.paths.logs)}
+          self.showError(LauncherError.unavailable(reason.userMessage))
         }
       case .success(let grant):
         do {

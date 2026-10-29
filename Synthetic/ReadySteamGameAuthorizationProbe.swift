@@ -11,6 +11,7 @@ import LauncherCore
       save: { _, _, _ in writes += 1 }, remove: { _, _ in vault = nil })
     let network = SteamClientSession(profile: profile, command: [CommandLine.arguments[1], CommandLine.arguments[2]], credentialAccess: access)
     let factory = SteamGameAuthorization(network: network, credentialAccess: access, uptime: { clock })
+    var lastFailure:SteamGameAuthorization.Failure?
     func check(_ value: Bool, _ name: String) throws {
       checks[name] = value
       if !value { throw NSError(domain: "SteamGameAuthorizationFixture_" + name, code: 1) }
@@ -39,9 +40,11 @@ import LauncherCore
       try spin { outcome != nil }
       switch outcome! {
       case .success(let grant):
+        lastFailure=nil
         if expectedFailure { throw NSError(domain: "UnexpectedAuthorizationGrant", code: 1) }
         return grant
-      case .failure:
+      case .failure(let failure):
+        lastFailure=failure
         if !expectedFailure { throw NSError(domain: "UnexpectedAuthorizationFailure", code: 1) }
         return nil
       }
@@ -66,7 +69,43 @@ import LauncherCore
 
     for invalid in ["wrong_app", "wrong_identity", "numeric_authorized", "numeric_ticket", "false_ticket", "boolean_app", "invalid_individual", "error", "missing_ticket"] {
       try mode(invalid); _ = try prepare(true); try check(true, "reject_" + invalid)
+      try check(lastFailure == (invalid=="error" ? .serviceFailure:.rejected),"safeClassification_"+invalid)
+      let detail=try JSONEncoder().encode(factory.lastFailureDetail!)
+      let fields=try JSONSerialization.jsonObject(with:detail)as![String:Any]
+      try check(Set(fields.keys).isSubset(of:["code","steamResult","epochMatches","stateOnline","vaultMatches","appMatched","identityMatched","ticketReported"]),"diagnosticFieldWhitelist_"+invalid)
+      let text=String(decoding:detail,as:UTF8.self)
+      try check(!text.contains(identity) && !text.contains(profile.uuidString) && !text.contains("fixture_only_secret"),"diagnosticNoIdentityOrCredential_"+invalid)
     }
+    for (name,failure,result) in [("error_denied",SteamGameAuthorization.Failure.notAuthorized,"AccessDenied"),
+      ("error_timeout",.timeout,nil),("error_network",.network,"NoConnection"),("error_auth",.authenticationRequired,"Expired"),
+      ("error_busy",.serviceFailure,nil),("error_invalid_callback",.rejected,"OK"),("error_uncorroborated_denial",.serviceFailure,nil),
+      ("error_throttle",.rateLimited,"RateLimitExceeded"),("error_job",.serviceFailure,nil),("error_unknown_result",.serviceFailure,"Unknown"),
+      ("error_numeric_facts",.serviceFailure,"OK")] as [(String,SteamGameAuthorization.Failure,String?)] {
+      try mode(name);_=try prepare(true)
+      try check(lastFailure==failure&&factory.lastFailureDetail?.steamResult==result,"specificSafeFailure_"+name)
+      try check(vault==original&&writes==0,"failurePreservesCredential_"+name)
+      if name=="error_numeric_facts"{try check(factory.lastFailureDetail?.appMatched==nil&&factory.lastFailureDetail?.ticketReported==nil,"numericFactsNeverBecomeObservedTrue")}
+      if name=="error_invalid_callback"{try check(factory.lastFailureDetail?.appMatched==false&&factory.lastFailureDetail?.ticketReported==true,"callbackFactsRetainedWithoutTicketBytes")}
+    }
+    try mode("error_then_result");var terminalCount=0
+    factory.prepare(profile:profile,gameID:"480"){result in terminalCount+=1;if case .failure(let reason)=result{lastFailure=reason}}
+    try spin{terminalCount==1};settle()
+    try check(terminalCount==1&&lastFailure == .network,"errorThenLatePositiveCannotCreateGrant")
+    try mode("valid");_=try prepare();try check(factory.lastFailureDetail==nil,"successClearsPriorSafeFailure")
+    try mode("error_busy");_=try prepare(true);try mode("valid");_=try prepare();try check(factory.lastFailureDetail==nil,"repeatedFailureAndSuccessStaySeparate")
+    let malicious=SteamGameAuthorization.FailureDetail(code:"fixture_only_secret",steamResult:identity,epochMatches:true,stateOnline:true,vaultMatches:true,appMatched:nil,identityMatched:nil,ticketReported:nil)
+    let diagnosticEncoder=JSONEncoder();diagnosticEncoder.outputFormatting=[.sortedKeys]
+    let encoded=try diagnosticEncoder.encode(malicious),encodedText=String(decoding:encoded,as:UTF8.self)
+    try check(malicious.code=="unknown_error" && malicious.steamResult=="Unknown" && !encodedText.contains("fixture_only_secret") && !encodedText.contains(identity),"failureDetailCannotSerializeUnlistedStrings")
+    let logs=URL(fileURLWithPath:CommandLine.arguments[3]).appendingPathComponent("private-diagnostic")
+    try FileManager.default.createDirectory(at:logs,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
+    try malicious.writePrivate(logs:logs)
+    let file=logs.appendingPathComponent("steam-last-authorization-failure.json")
+    let stored=try Data(contentsOf:file),fileMode=(try FileManager.default.attributesOfItem(atPath:file.path)[.posixPermissions]as!NSNumber).intValue
+    try check(stored==encoded&&fileMode==0o600,"diagnosticWrittenAtomicallyWithPrivatePermissions")
+    let alias=logs.deletingLastPathComponent().appendingPathComponent("diagnostic-alias");try FileManager.default.createSymbolicLink(at:alias,withDestinationURL:logs)
+    var refused=false;do{try malicious.writePrivate(logs:alias)}catch{refused=true}
+    try check(refused,"diagnosticDirectorySymlinkRejected")
     var immediateFailure = false
     factory.prepare(profile: other, gameID: "480") { if case .failure = $0 { immediateFailure = true } }
     try check(immediateFailure, "wrongProfileRejectedBeforeRequest")
@@ -91,9 +130,11 @@ import LauncherCore
     factory.prepare(profile: profile, gameID: "480") { completionCount += 1; if case .failure = $0 { failed = true } }
     vault = try JSONSerialization.data(withJSONObject: ["username":"fixture_account", "refresh_token":"different_fixture_secret"])
     try spin { completionCount == 1 }; try check(failed, "vaultChangeRejectsLateResult"); vault = original
+    try check(factory.lastFailureDetail?.code=="local_credentials_changed"&&factory.lastFailureDetail?.vaultMatches==false,"localVaultChangeIdentifiedWithoutSteamBlame")
 
     for terminal in ["revoked", "logged_out", "changed_identity"] {
       try mode(terminal); _ = try prepare(true); try check(true, terminal + "RejectsResult")
+      if terminal=="revoked"{try check(factory.lastFailureDetail?.steamResult=="Revoked"&&factory.lastFailureDetail?.stateOnline==false,"staleResultRetainsSafeConnectionResult")}
       network.stop(); vault = original; network.start(); try spin { network.state.online && network.state.steamID == identity }
     }
     try mode("delay"); completionCount = 0; var cancellation: SteamGameAuthorization.Failure?
@@ -122,6 +163,10 @@ import LauncherCore
     immediateFailure = false
     factory.prepare(profile: profile, gameID: "480") { if case .failure = $0 { immediateFailure = true } }
     try check(immediateFailure, "offlineNeverStartsLogin")
+    try check(factory.lastFailureDetail?.code=="local_offline"&&factory.lastFailureDetail?.stateOnline==false,"offlinePreflightHasSafeLocalCause")
+    try command("fixture_connection_result",["steamResult":"Expired"])
+    factory.prepare(profile:profile,gameID:"480"){_ in}
+    try check(factory.lastFailureDetail?.steamResult=="Expired"&&factory.lastFailureDetail?.stateOnline==false,"offlinePreflightRetainsSafeConnectionResult")
     try online(); try mode("valid")
     held = try prepare()!; network.stop(); network.start(); try spin { network.state.online && network.state.steamID == identity }
     try check(consumeFails(held), "consumeRechecksGeneration")

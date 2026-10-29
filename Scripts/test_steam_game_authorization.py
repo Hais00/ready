@@ -5,7 +5,7 @@
 Pass --core-products to reuse an already validated static LauncherCore build
 without launching SwiftPM alongside another agent's build.
 """
-import argparse,json,pathlib,subprocess,sys,tempfile
+import argparse,hashlib,json,pathlib,subprocess,sys,tempfile
 from swift_probe_support import prepare_core
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 WORK=pathlib.Path('/Volumes/Dati APFS/Codex-ready-01a17e79')
@@ -39,11 +39,22 @@ for line in sys.stdin:
   assert set(request)=={'id','operation','profileID','profileGeneration','gameID'}
   app=int(request['gameID'])
   if mode=='delay':threading.Thread(target=lambda i=id,a=app:(time.sleep(.1),authorized(i,a)),daemon=True).start()
+  elif mode.startswith('error_'):
+   failures={'error_denied':('not_authorized','AccessDenied'),'error_timeout':('timeout',None),'error_network':('network_error','NoConnection'),
+    'error_auth':('authentication_required','Expired'),'error_busy':('busy',None),'error_invalid_callback':('ownership_invalid_response','OK'),
+    'error_uncorroborated_denial':('not_authorized',None),'error_throttle':('rate_limited','RateLimitExceeded'),'error_job':('ownership_request_failed',None),
+    'error_unknown_result':('steam_error','fixture_only_secret'),'error_numeric_facts':('steam_error','OK'),'error_then_result':('network_error','NoConnection')}
+   code,result=failures[mode]
+   fields=dict(code=code,steamResult=result,message='fixture_only_secret',rawAccount='fixture_account',rawTicket='fixture_only_secret')
+   if mode in ('error_denied','error_invalid_callback'):fields.update(ownershipResponseReceived=True,ownershipAppMatched=mode=='error_denied',ownershipTicketNonEmpty=mode=='error_invalid_callback',ownershipSteamIDPresent=True,ownershipDecisionAuthorized=False)
+   if mode=='error_numeric_facts':fields.update(ownershipResponseReceived=1,ownershipAppMatched=1,ownershipTicketNonEmpty=1)
+   send('error',id,**fields)
+   if mode=='error_then_result':authorized(id,app)
   elif mode=='wrong_envelope':
    saved=generation;generation='00000000-0000-0000-0000-000000000000';authorized(id,app);generation=saved
   elif mode in ('revoked','logged_out','changed_identity'):
    if mode=='changed_identity':identity='76561198000000002';send('persona',account=account())
-   else:state='authorization_required'if mode=='revoked'else'logged_out';send('state',state=state,reason=mode,invalidateCredentials=mode=='revoked')
+   else:state='authorization_required'if mode=='revoked'else'logged_out';send('state',state=state,reason=mode,steamResult='Revoked'if mode=='revoked'else'LogonSessionReplaced',invalidateCredentials=mode=='revoked')
    authorized(id,app)
   elif mode=='error':send('error',id,code='fixture_only_secret')
   else:
@@ -60,6 +71,7 @@ for line in sys.stdin:
  elif op=='cancel':cancelled=True;send('result',id)
  elif op=='fixture_assert_cancelled':
   assert cancelled;send('result',id)
+ elif op=='fixture_connection_result':state='authorization_required';send('state',state=state,reason='fixture_unavailable',steamResult=request['steamResult']);send('result',id)
  elif op=='offline':state='offline';send('state',state=state);send('result',id)
  elif op=='reconnect':online(id)
  elif op=='logout':state='logged_out';send('state',state=state);send('result',id)
@@ -75,10 +87,15 @@ def main():
  run=pathlib.Path(tempfile.mkdtemp(prefix='steam-game-authorization-',dir=WORK/'tests'))
  fake=run/'fake.py';fake.write_text(FAKE);fake.chmod(0o600);binary=run/'probe'
  sources=['Sources/M1Launcher/Credentials.swift','Sources/M1Launcher/StoreClient.swift','Sources/M1Launcher/SteamClientSession.swift','Sources/M1Launcher/SteamGameAuthorization.swift','Synthetic/ReadySteamGameAuthorizationProbe.swift']
+ hashes={name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest()for name in sources}
  command=['swiftc','-swift-version','5','-parse-as-library','-I',str(modules),*[str(ROOT/x)for x in sources],str(archive),'-framework','Security','-o',str(binary)]
  compiled=subprocess.run(command,cwd=ROOT,capture_output=True,text=True)
  if compiled.returncode:raise RuntimeError(compiled.stderr[-6000:])
- result=subprocess.run([str(binary),sys.executable,str(fake)],capture_output=True,text=True,timeout=30)
+ result=subprocess.run([str(binary),sys.executable,str(fake),str(run)],capture_output=True,text=True,timeout=30)
+ (run/'stdout.json').write_text(result.stdout);(run/'stderr.log').write_text(result.stderr)
  if result.returncode:raise RuntimeError('Synthetic authorization fixture failed: '+result.stderr[-2500:])
- report=json.loads(result.stdout);assert report['allPassed'];print(json.dumps(report,sort_keys=True))
+ report=json.loads(result.stdout);assert report['allPassed'];assert hashes=={name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest()for name in sources}
+ retained=run/'report.json';retained.write_text(json.dumps({'passed':True,'count':len(report)-1,'checks':report,'sourceHashes':hashes,'fixtureOnly':True,'realAccountUsed':False,'realKeychainUsed':False},indent=2)+'\n');retained.chmod(0o600)
+ pointer={'passed':True,'count':len(report)-1,'retainedReport':str(retained),'retainedReportSHA256':hashlib.sha256(retained.read_bytes()).hexdigest(),'sourceHashes':hashes,'fixtureOnly':True,'realAccountUsed':False,'realKeychainUsed':False}
+ (ROOT/'Evidence/steam-game-authorization-tests.json').write_text(json.dumps(pointer,indent=2)+'\n');print(json.dumps(pointer,indent=2))
 if __name__=='__main__':main()

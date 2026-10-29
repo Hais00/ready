@@ -18,6 +18,16 @@ sealed record SteamServiceAccount(string steamID,string accountName,string displ
 sealed record SteamServiceFriend(string steamID,string displayName,string presence,string? gameID,string? gameName,string relationship="Friend");
 sealed record SteamServiceMutation(bool ServerAcknowledged,bool RequestSent,EResult? Result,string Status);
 sealed record SteamTransportNotice(string Kind,EResult? Result=null,bool UserInitiated=false);
+// Preserve callback facts until the service can report a bounded failure. Never
+// serialize this object: a successful Decision contains private ticket metadata.
+sealed record SteamServiceOwnership(GameOwnershipPreflight.Decision Decision,EResult Result,
+    bool AppMatched,bool TicketNonEmpty,bool SteamIDPresent)
+{
+    internal static SteamServiceOwnership Observe(uint requested,EResult result,uint returned,byte[]? ticket,ulong? steamID)=>
+        new(GameOwnershipPreflight.Decide(requested,result,returned,ticket,steamID),result,
+            requested==returned,ticket is {Length:>0},steamID is not null and not 0);
+    public override string ToString()=>"[private Steam ownership response]";
+}
 interface ISteamServiceTransport:IAsyncDisposable
 {
     event Action<SteamTransportNotice>? Notice;
@@ -32,7 +42,7 @@ interface ISteamServiceTransport:IAsyncDisposable
     void SetActivity(IReadOnlyCollection<uint> apps);
     Task<SteamServiceMutation> SetPersonaNameAsync(string displayName,CancellationToken cancel);
     Task<SteamServiceMutation> FriendActionAsync(string operation,ulong steamID,CancellationToken cancel);
-    Task<GameOwnershipPreflight.Decision> AuthorizeAsync(uint appID,CancellationToken cancel);
+    Task<SteamServiceOwnership> AuthorizeAsync(uint appID,CancellationToken cancel);
     Task LibraryAsync(Action<object[]> page,CancellationToken cancel);
 }
 
@@ -49,6 +59,7 @@ sealed class PersistentSteamService:IAsyncDisposable
     readonly SemaphoreSlim lifecycle=new(1,1);
     readonly SemaphoreSlim social=new(1,1);
     readonly Dictionary<string,CancellationTokenSource> pending=new(StringComparer.OrdinalIgnoreCase);
+    readonly HashSet<string> explicitlyCancelled=new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> seen=new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<uint> authorizedApps=new(),runningApps=new();
     readonly List<Task> work=new();
@@ -59,6 +70,8 @@ sealed class PersistentSteamService:IAsyncDisposable
     SteamServiceCredentials? credentials;
     string? profile,generation;
     string state="offline",reason="not_connected";
+    EResult? lastConnectionResult;
+    string? connectionResultContext;
     long sequence,epoch;
     bool blocked=true,disposed;
     string? guardChallenge;
@@ -153,7 +166,8 @@ sealed class PersistentSteamService:IAsyncDisposable
     void Error(string id,string code,EResult? result=null)=>Emit("error",id,new(){["code"]=code,["steamResult"]=SteamSafeFailure.ResultName(result)});
     void State(string value,string why,double? retryAfter=null)
     {
-        lock(sync){state=value;reason=why;Emit("state",null,new(){["state"]=value,["reason"]=why,["retryAfter"]=retryAfter});}
+        lock(sync){state=value;reason=why;Emit("state",null,new(){["state"]=value,["reason"]=why,["retryAfter"]=retryAfter,
+            ["steamResult"]=SteamSafeFailure.ResultName(lastConnectionResult),["connectionResultContext"]=connectionResultContext});}
     }
     internal void Accept(string line)
     {
@@ -206,16 +220,7 @@ sealed class PersistentSteamService:IAsyncDisposable
                 case "set_persona_name":case "add_friend":case "remove_friend":case "block_friend":case "unblock_friend":
                     await SocialAction(id,operation,Options(root),cancel.Token);break;
                 case "authorize_game":
-                    RequireOnline();uint appID=AppID(root);long current=CurrentEpoch();
-                    var decision=await transport.AuthorizeAsync(appID,cancel.Token);
-                    EnsureEpoch(current);cancel.Token.ThrowIfCancellationRequested();
-                    if(!decision.Authorized)throw new ServiceFailure("not_authorized");
-                    lock(sync)
-                    {
-                        EnsureEpoch(current);authorizedApps.Add(appID);
-                        Result(id,new(){["appID"]=appID,["steamID"]=decision.SteamID,["authorized"]=true,["ownershipTicketReceived"]=true,["backendSessionReady"]=false});
-                    }
-                    break;
+                    await AuthorizeGame(id,root,cancel.Token);break;
                 case "set_activity":
                     RequireOnline();uint playingApp=AppID(root);var activityOptions=Options(root);
                     if(!activityOptions.TryGetProperty("running",out var running)||running.ValueKind is not (JsonValueKind.True or JsonValueKind.False))throw new ArgumentException();
@@ -241,7 +246,7 @@ sealed class PersistentSteamService:IAsyncDisposable
                     Result(id,new(){["invalidateCredentials"]=forget});break;
                 case "cancel":
                     string target=UUIDText(Options(root),"requestID");
-                    lock(sync){if(pending.TryGetValue(target,out var request)&&target!=id)request.Cancel();}
+                    lock(sync){if(pending.TryGetValue(target,out var request)&&target!=id){explicitlyCancelled.Add(target);request.Cancel();}}
                     Result(id);break;
                 case "shutdown":await Stop("logged_out","shutdown",false,id);Result(id);lifetime.Cancel();break;
                 default:throw new ServiceFailure("unsupported_operation");
@@ -254,7 +259,74 @@ sealed class PersistentSteamService:IAsyncDisposable
         catch(JsonException){Error(id,"invalid_request");}
         catch(KeyNotFoundException){Error(id,"invalid_request");}
         catch(Exception){Error(id,"steam_error");}
-        finally{lock(sync){pending.Remove(id);cancel.Dispose();}}
+        finally{lock(sync){pending.Remove(id);explicitlyCancelled.Remove(id);cancel.Dispose();}}
+    }
+    async Task AuthorizeGame(string id,JsonElement root,CancellationToken cancel)
+    {
+        SteamServiceOwnership? ownership=null;long? current=null;string stage="ownership_ticket";
+        try
+        {
+            uint app;
+            try{app=AppID(root);}catch(Exception){throw new ServiceFailure("invalid_game_id");}
+            lock(sync){RequireOnline();current=epoch;cancel.ThrowIfCancellationRequested();}
+            ownership=await transport.AuthorizeAsync(app,cancel);
+            stage="ownership_decision";
+            lock(sync)
+            {
+                EnsureEpoch(current.Value);cancel.ThrowIfCancellationRequested();
+                if(!ownership.Decision.Authorized)
+                {
+                    string code=OwnershipCode(ownership.Result);
+                    OwnershipError(id,code,stage,ownership,null);return;
+                }
+                authorizedApps.Add(app);
+                Result(id,new(){["appID"]=app,["steamID"]=ownership.Decision.SteamID,["authorized"]=true,["ownershipTicketReceived"]=true,["backendSessionReady"]=false});
+            }
+        }
+        catch(Exception error)
+        {
+            // State/epoch changes override even a late successful SDK callback.
+            // A cancelled SDK AsyncJob without our token cancellation means its
+            // message deadline elapsed; it is not evidence of missing ownership.
+            lock(sync)
+            {
+                string code=current is {} observed&&(observed!=epoch||state!="online")||lifetime.IsCancellationRequested
+                    ?"disconnected":error switch
+                    {
+                        ServiceFailure failure=>failure.Code,
+                        OperationCanceledException=>explicitlyCancelled.Contains(id)?"cancelled":"timeout",
+                        TimeoutException=>"timeout",IOException or System.Net.Sockets.SocketException=>"network_error",
+                        AsyncJobFailedException=>"ownership_request_failed",_=>"steam_error"
+                    };
+                OwnershipError(id,code,stage,ownership,error);
+            }
+        }
+    }
+    static string OwnershipCode(EResult result)=>result switch
+    {
+        EResult.OK=>"ownership_invalid_response",
+        EResult.AccessDenied or EResult.InsufficientPrivilege=>"not_authorized",
+        EResult.Timeout=>"timeout",
+        EResult.NoConnection or EResult.ConnectFailed or EResult.HandshakeFailed or EResult.IOFailure or
+            EResult.RemoteDisconnect or EResult.ServiceUnavailable or EResult.TryAnotherCM=>"network_error",
+        EResult.NotLoggedOn or EResult.Revoked or EResult.Expired or EResult.InvalidPassword or
+            EResult.AccountDisabled or EResult.AccountLockedDown=>"authentication_required",
+        EResult.RateLimitExceeded or EResult.LimitExceeded=>"rate_limited",_=>"ownership_request_failed"
+    };
+    void OwnershipError(string id,string code,string stage,SteamServiceOwnership? response,Exception? error)
+    {
+        string category=code switch
+        {
+            "not_authorized"=>response?.Result==EResult.AccessDenied?"not_owned":"permission_denied",
+            "ownership_invalid_response"=>"invalid_callback","timeout"=>"timeout","network_error"=>"network",
+            "authentication_required" or "not_online" or "disconnected"=>"session_unavailable",
+            "cancelled"=>"cancelled","rate_limited"=>"rate_limited",_=>"request_failed"
+        };
+        Emit("error",id,new(){["code"]=code,["stage"]=stage,["steamResult"]=SteamSafeFailure.ResultName(response?.Result),
+            ["exceptionKind"]=error is null?null:error is AsyncJobFailedException?"AsyncJobFailedException":SteamSafeFailure.ExceptionKind(error),
+            ["ownershipFailure"]=category,["ownershipResponseReceived"]=response is not null,
+            ["ownershipAppMatched"]=response?.AppMatched,["ownershipTicketNonEmpty"]=response?.TicketNonEmpty,
+            ["ownershipSteamIDPresent"]=response?.SteamIDPresent,["ownershipDecisionAuthorized"]=response?.Decision.Authorized});
     }
     long CurrentEpoch(){lock(sync)return epoch;}
     void EnsureEpoch(long current){lock(sync){if(current!=epoch||state!="online")throw new ServiceFailure("disconnected");}}
@@ -336,16 +408,17 @@ sealed class PersistentSteamService:IAsyncDisposable
                 if(operation=="authenticate")Emit("credentials",id,new(){["credentials"]=new{username=selected.Username,refresh_token=selected.RefreshToken}});
             }
             State("authenticating","logon");EResult login=await transport.LogOnAsync(selected,cancel);
-            cancel.ThrowIfCancellationRequested();
-            if(login!=EResult.OK)
-            {
-                if(InvalidatesCredentials(login)||RemoteKick(login))ApplyLogOff(login);
-                else State("offline","logon_failed");
-                throw new ServiceFailure("steam_login_failed",login);
-            }
             lock(sync)
             {
                 if(epoch!=current)throw new ServiceFailure("disconnected");
+                cancel.ThrowIfCancellationRequested();
+                lastConnectionResult=login;connectionResultContext="logon_response";
+                if(login!=EResult.OK)
+                {
+                    if(InvalidatesCredentials(login)||RemoteKick(login))ApplyLogOff(login,rejectedLogon:true);
+                    else State("offline","logon_failed");
+                    throw new ServiceFailure("steam_login_failed",login);
+                }
                 credentials=selected;blocked=false;
                 State("online","logon_success");PublishPersona();
                 Result(id,new(){["account"]=transport.Account(selected.Username)});
@@ -373,22 +446,33 @@ sealed class PersistentSteamService:IAsyncDisposable
     }
     internal static bool InvalidatesCredentials(EResult result)=>result is EResult.Expired or EResult.Revoked or EResult.InvalidPassword or EResult.AccountDisabled or EResult.AccountLockedDown;
     internal static bool RemoteKick(EResult result)=>result is EResult.LoggedInElsewhere or EResult.AlreadyLoggedInElsewhere or EResult.LogonSessionReplaced;
-    void ApplyLogOff(EResult result)
+    void ApplyLogOff(EResult result,bool rejectedLogon=false)
     {
         lock(sync)
         {
             if(disposed)return;
+            lastConnectionResult=result;connectionResultContext=rejectedLogon?"logon_response":"logged_off";
             blocked=true;++epoch;reconnectCancel?.Cancel();authorizedApps.Clear();runningApps.Clear();
-            bool invalidate=InvalidatesCredentials(result);
+            // A server's LoggedOff result describes this CM session, not a
+            // response to using the long-lived refresh credential. Preserve the
+            // credential until an explicit subsequent LogOn actually rejects it.
+            bool invalidate=rejectedLogon&&InvalidatesCredentials(result);
+            bool needsAuthorization=invalidate||result is EResult.AccountDisabled or EResult.AccountLockedDown;
             if(invalidate)credentials=null;
             string why=result switch
             {
+                EResult.Expired when !rejectedLogon=>"session_expired",
+                EResult.Revoked when !rejectedLogon=>"server_session_revoked",
+                EResult.InvalidPassword when !rejectedLogon=>"server_session_rejected",
+                EResult.AccountDisabled when !rejectedLogon=>"account_disabled",
+                EResult.AccountLockedDown when !rejectedLogon=>"account_locked",
                 EResult.Revoked=>"revoked",EResult.Expired=>"expired",EResult.InvalidPassword=>"invalid_password",
                 EResult.LogonSessionReplaced=>"session_replaced",EResult.LoggedInElsewhere or EResult.AlreadyLoggedInElsewhere=>"logged_in_elsewhere",
                 _=>invalidate?"credentials_rejected":"server_logoff"
             };
-            State(invalidate?"authorization_required":"logged_out",why);
-            Emit("state",null,new(){["state"]=state,["reason"]=reason,["steamResult"]=SteamSafeFailure.ResultName(result),["invalidateCredentials"]=invalidate});
+            State(needsAuthorization?"authorization_required":"logged_out",why);
+            Emit("state",null,new(){["state"]=state,["reason"]=reason,["steamResult"]=SteamSafeFailure.ResultName(result),
+                ["connectionResultContext"]=connectionResultContext,["invalidateCredentials"]=invalidate});
             foreach(var request in pending.Values)request.Cancel();
             long stoppedEpoch=epoch;
             work.Add(Task.Run(async()=>
@@ -447,12 +531,18 @@ sealed class PersistentSteamService:IAsyncDisposable
                     using var budget=CancellationTokenSource.CreateLinkedTokenSource(cancel);budget.CancelAfter(TimeSpan.FromSeconds(30));
                     await transport.StopAsync();await transport.ConnectAsync(budget.Token);
                     var result=await transport.LogOnAsync(selected,budget.Token);
-                    if(result!=EResult.OK)
+                    lock(sync)
                     {
-                        if(InvalidatesCredentials(result)||RemoteKick(result)||result==EResult.AccessDenied){ApplyLogOff(result);return;}
-                        continue;
+                        if(blocked||epoch!=current)return;
+                        budget.Token.ThrowIfCancellationRequested();
+                        lastConnectionResult=result;connectionResultContext="logon_response";
+                        if(result!=EResult.OK)
+                        {
+                            if(InvalidatesCredentials(result)||RemoteKick(result)||result==EResult.AccessDenied){ApplyLogOff(result,rejectedLogon:true);return;}
+                            continue;
+                        }
+                        State("online","reconnected");PublishPersona();
                     }
-                    lock(sync){if(blocked||epoch!=current)return;State("online","reconnected");PublishPersona();}
                     return;
                 }
                 catch(OperationCanceledException)when(!cancel.IsCancellationRequested){}
@@ -482,6 +572,7 @@ sealed class PersistentSteamService:IAsyncDisposable
         {
             var fields=state=="online"?FriendPage(options):new Dictionary<string,object?>{["friends"]=Array.Empty<object>()};
             fields["state"]=state;fields["reason"]=reason;fields["account"]=state=="online"?transport.Account(credentials?.Username??""):null;
+            fields["steamResult"]=SteamSafeFailure.ResultName(lastConnectionResult);fields["connectionResultContext"]=connectionResultContext;
             fields["capabilities"]=new[]{"connect","authenticate","guard_code","snapshot","friends","set_presence","set_persona_name","add_friend","remove_friend","block_friend","unblock_friend","set_activity","authorize_game","library","offline","reconnect","logout","cancel","shutdown"};
             fields["protocolVersion"]=1;fields["backendSessionReady"]=false;
             Result(id,fields);
@@ -762,11 +853,23 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
         foreach(uint app in apps)message.Body.games_played.Add(new CMsgClientGamesPlayed.GamePlayed{game_id=app});
         client.Send(message);
     }
-    public async Task<GameOwnershipPreflight.Decision> AuthorizeAsync(uint appID,CancellationToken cancel)
+    public async Task<SteamServiceOwnership> AuthorizeAsync(uint appID,CancellationToken cancel)
     {
-        var response=await apps.GetAppOwnershipTicket(appID).ToTask().WaitAsync(cancel);
-        try{return GameOwnershipPreflight.Decide(appID,response.Result,response.AppID,response.Ticket,client.SteamID?.ConvertToUInt64());}
-        finally{if(response.Ticket is {} ticket)CryptographicOperations.ZeroMemory(ticket);}
+        var request=apps.GetAppOwnershipTicket(appID).ToTask();SteamApps.AppOwnershipTicketCallback? response=null;
+        try
+        {
+            response=await request.WaitAsync(cancel);
+            return SteamServiceOwnership.Observe(appID,response.Result,response.AppID,response.Ticket,client.SteamID?.ConvertToUInt64());
+        }
+        finally
+        {
+            if(response?.Ticket is {} ticket)CryptographicOperations.ZeroMemory(ticket);
+            else _=request.ContinueWith(completed=>
+            {
+                if(completed.IsCompletedSuccessfully&&completed.Result.Ticket is {} lateTicket)CryptographicOperations.ZeroMemory(lateTicket);
+                else _=completed.Exception;
+            },CancellationToken.None,TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
+        }
     }
     public async Task LibraryAsync(Action<object[]> page,CancellationToken cancel)
     {

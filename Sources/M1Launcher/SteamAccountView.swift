@@ -156,6 +156,7 @@ final class SteamAccountView: NSView, ReadyDialogContentSizing {
     var detail = names[state.connection] ?? "Steam"
     if !state.accountName.isEmpty { detail += " · Account: " + state.accountName }
     if ["logged_in_elsewhere","session_replaced","remote_logout"].contains(state.reason) { detail += "\nLa sessione è stata chiusa da Steam o da un altro accesso. Premi Riconnetti per riprovare." }
+    if ["session_expired","server_session_revoked","server_session_rejected","server_logoff"].contains(state.reason) { detail += "\nSteam ha chiuso la connessione. Premi Riconnetti per provare l’accesso già salvato." }
     if ["revoked","expired","invalid_password"].contains(state.reason) { detail += "\nSteam richiede una nuova autorizzazione." }
     if !state.warning.isEmpty{detail += "\n"+state.warning}
     if let notice=actionNotice,Date().timeIntervalSince(notice.1)<15{detail += "\n"+notice.0}

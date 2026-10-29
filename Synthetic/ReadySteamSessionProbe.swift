@@ -46,6 +46,12 @@ import LauncherCore
     stage="remote_kick";session.request("fixture_remote_kick"){_ in};try spin{session.state.reason=="session_replaced"}
     checks["remoteSessionReplacementKeepsCredentialForExplicitReconnect"]=vault[profile]==initial
     session.reconnect();try spin{session.state.online}
+    session.request("fixture_session_expired"){_ in};try spin{session.state.connection=="logged_out"}
+    checks["connectionExpiryPreservesSavedRefreshCredential"]=vault[profile]==initial && session.state.steamResult=="Expired" && session.state.connectionResultContext=="logged_off"
+    session.reconnect();try spin{session.state.online}
+    session.request("fixture_reason_alone"){_ in};try spin{session.state.connection=="offline"}
+    checks["reasonStringAloneCannotEraseCredential"]=vault[profile]==initial
+    session.reconnect();try spin{session.state.online}
     stage="revocation";session.request("fixture_revoked"){_ in};try spin{vault[profile]==nil}
     checks["revocationInvalidatesOnlyCurrentProfile"]=vault[other]==initial&&session.state.connection=="authorization_required"
     var sawQR=false

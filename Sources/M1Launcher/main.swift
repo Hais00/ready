@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   var steamLaunchCancellation: (() -> Void)?
   var steamAccountDialog: UUID?
   var steamPreparationID: UUID?
+  var steamConnectionDiagnosticSignature = ""
   lazy var dialogs = ReadyDialogPresenter(window: { [weak self] in self?.window })
   var qrDialog: UUID?
   var qrImage: NSImageView?
