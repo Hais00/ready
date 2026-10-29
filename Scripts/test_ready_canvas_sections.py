@@ -19,11 +19,11 @@ sys.dont_write_bytecode=True
 from swift_probe_support import prepare_core
 ROOT=Path(__file__).resolve().parents[1]
 DEFAULT_WORK=Path('/Volumes/Dati APFS/Codex-ready-01a17e79')
-SOURCES=['Sources/M1Launcher/MetalCanvas.swift','Sources/M1Launcher/ArtworkCache.swift','Sources/M1Launcher/GameArtwork.swift','Sources/M1Launcher/CanvasDrawing.swift','Sources/M1Launcher/ControllerNavigation.swift','Synthetic/ReadyCanvasSectionsProbe.swift']
+SOURCES=['Sources/M1Launcher/MetalCanvas.swift','Sources/M1Launcher/ArtworkCache.swift','Sources/M1Launcher/LibraryEntryPresentation.swift','Sources/M1Launcher/ArtworkIndexStore.swift','Sources/M1Launcher/CanvasShellRenderer.swift','Sources/M1Launcher/LibraryGridSurface.swift','Sources/M1Launcher/GameArtwork.swift','Sources/M1Launcher/CanvasDrawing.swift','Sources/M1Launcher/ControllerNavigation.swift','Synthetic/ReadyCanvasSectionsProbe.swift']
 def sha(path):
     with Path(path).open('rb')as f:return hashlib.file_digest(f,'sha256').hexdigest()
 def main():
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--work-root',type=Path,default=DEFAULT_WORK);a=parser.parse_args()
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--work-root',type=Path,default=DEFAULT_WORK);parser.add_argument('--core-root',type=Path);a=parser.parse_args()
     work=a.work_root
     if not work.is_absolute()or work.resolve(strict=True)!=work or work.stat().st_uid!=os.getuid()or work.stat().st_mode&0o077 or(work/'.ready-external-workspace').read_text().strip()!='ready project work for thread01a17e79':raise ValueError('Marked private canonical owned work root required')
     run=Path(tempfile.mkdtemp(prefix='canvas-sections-',dir=work/'tests'));run.chmod(0o700)
@@ -32,7 +32,10 @@ def main():
     for name in SOURCES:(snapshots/Path(name).name).write_bytes((ROOT/name).read_bytes())
     cache=work/'cache/canvas-sections-swift';cache.mkdir(mode=0o700,exist_ok=True)
     os.environ.update(TMPDIR=str(work/'tmp')+'/',CLANG_MODULE_CACHE_PATH=str(cache),PYTHONDONTWRITEBYTECODE='1')
-    products,modules,archive=prepare_core()
+    if a.core_root:
+        products=modules=a.core_root.resolve(strict=True);archive=products/'libLauncherCore.dylib'
+        bound=json.loads((products/'core-build.json').read_text());assert all(sha(ROOT/name)==digest for name,digest in bound['sourceHashes'].items());assert sha(archive)==bound['librarySHA256']and sha(products/'LauncherCore.swiftmodule')==bound['moduleSHA256']
+    else:products,modules,archive=prepare_core()
     archive_hash=sha(archive)
     module=modules/'LauncherCore.swiftmodule';importable=list(module.glob('*.swiftmodule'))if module.is_dir()else[module]
     module_hashes={str(path.relative_to(modules)):sha(path)for path in importable}

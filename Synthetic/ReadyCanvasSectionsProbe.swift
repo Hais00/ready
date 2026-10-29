@@ -10,17 +10,18 @@ private final class OffscreenCanvasWindow: NSWindow {
 @main struct ReadyCanvasSectionsProbe {
   static func require(_ value: Bool, _ name: String) throws { if !value { throw NSError(domain: name, code: 1) } }
   static func main() throws {
-    _ = NSApplication.shared
+    _ = NSApplication.shared;NSApp.setActivationPolicy(.prohibited)
     guard CommandLine.arguments.count == 2, let device = MTLCreateSystemDefaultDevice() else { throw NSError(domain: "ArgumentsOrMetal", code: 1) }
     let root = URL(fileURLWithPath: CommandLine.arguments[1]);try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions:0o700])
     let canvas = MetalCanvas(frame: NSRect(x:0,y:0,width:1240,height:760),device:device)
     canvas.state.games = [Game(id:"section-a",store:.steam,storeID:"fixture-a",title:"Fixture A"),Game(id:"section-b",store:.steam,storeID:"fixture-b",title:"Fixture B")]
     canvas.filter = .steam;canvas.query = "Fixture"
     let window = OffscreenCanvasWindow(contentRect:NSRect(x:-8192,y:-8192,width:1240,height:760),styleMask:[.borderless],backing:.buffered,defer:false)
-    window.isReleasedWhenClosed=false;window.contentView=canvas;window.orderBack(nil);window.makeFirstResponder(canvas)
+    window.isReleasedWhenClosed=false;window.contentView=canvas;window.makeFirstResponder(canvas)
     defer { canvas.releaseGraphics();window.close() }
     var actions=[CanvasAction]();canvas.onAction={actions.append($0)}
     func key(_ code:UInt16,_ flags:NSEvent.ModifierFlags = []) {
+      canvas.renderDisplayTick() // Service the coalesced frame in this hidden fixture.
       let event=NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:flags,timestamp:ProcessInfo.processInfo.systemUptime,windowNumber:window.windowNumber,context:nil,characters:"",charactersIgnoringModifiers:"",isARepeat:false,keyCode:code)!
       canvas.keyDown(with:event)
     }
@@ -46,6 +47,7 @@ private final class OffscreenCanvasWindow: NSWindow {
       switch action {
       case .game(let id):return "game:"+id
       case .gameOptions(let id):return "options:"+id
+      case .librarySection(let flag):return "section:"+String(flag)
       case .store(let store):return "store:"+(store?.rawValue ?? "all")
       case .profiles:return "profiles"
       case .importGame:return "import"

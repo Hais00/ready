@@ -45,10 +45,16 @@ extension AppDelegate {
       guard let self,self.gameDetailView===view else{return};self.gameDetailView=nil;self.gameDetailID=nil
     }){_ in}
     view.update(game:game,jobs:steamDownloads?.snapshot ?? [])
-    if game.store == .steam,(game.metadata?["metadataComplete"]?.foundation as?Bool) != true {
-      requestSteamGameDetails(gameID:game.storeID){[weak self,weak view]_ in
+    canvas.artworkCache.prefetch(game:game)
+    if game.store == .steam {
+      canvas.artworkCache.revalidate(game:game)
+      requestSteamGameDetails(gameID:game.storeID,refresh:true){[weak self,weak view]_ in
         guard let self,let view,self.gameDetailView===view,self.state.activeProfile==profile else{return}
         self.refreshGameDetails()
+        if let stored=self.state.games.first(where:{$0.id==id}) {
+          let updated=self.state.configured(stored)
+          if GameArtwork.Role.allCases.contains(where:{GameArtwork.candidates(for:game,role:$0) != GameArtwork.candidates(for:updated,role:$0)}){self.canvas.artworkCache.revalidate(game:updated)}
+        }
       }
     }
   }

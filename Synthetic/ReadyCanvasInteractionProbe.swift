@@ -9,13 +9,13 @@ import Metal
     if !test { throw NSError(domain: message, code: 1) }
   }
   static func main() throws {
-    _ = NSApplication.shared
+    _ = NSApplication.shared;NSApp.setActivationPolicy(.prohibited)
     guard let device = MTLCreateSystemDefaultDevice() else { throw NSError(domain: "NoMetal", code: 1) }
     let canvas = MetalCanvas(frame: NSRect(x: 0, y: 0, width: 1240, height: 760), device: device)
     let window = NSWindow(contentRect: canvas.frame, styleMask: [.titled], backing: .buffered, defer: false)
-    window.contentView = canvas; window.setFrameOrigin(NSPoint(x: -4000, y: -4000)); window.makeKeyAndOrderFront(nil); window.makeFirstResponder(canvas)
+    window.contentView = canvas; window.setFrameOrigin(NSPoint(x: -4000, y: -4000)); window.makeFirstResponder(canvas)
     defer { canvas.releaseGraphics(); window.close() }
-    canvas.refresh()
+    canvas.refresh();canvas.renderDisplayTick()
     let original = canvas.interactionSnapshot.hits
     try require(Set(original.map(\.id)).count == original.count, "HitIDsNotUnique")
     var actions = [CanvasAction](); canvas.onAction = { actions.append($0) }

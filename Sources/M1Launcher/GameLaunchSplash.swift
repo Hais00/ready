@@ -46,8 +46,8 @@ final class GameLaunchSplash:NSView {
   private let errorLabel=NSTextField(wrappingLabelWithString:"")
   private var cancelButton:LaunchActionButton!
   private var retryButton:LaunchActionButton!
-  private var candidates=[String](),bannerCandidates=Set<String>()
-  private var loadedAddress:String?,fullBleed=false,finished=false,failed=false
+  private var artworkGame:Game?
+  private var loadedImageIdentifier:ObjectIdentifier?,fullBleed=false,finished=false,failed=false
   private var loadedImageSize=CGSize.zero
   override var isFlipped:Bool{true}
   override var acceptsFirstResponder:Bool{true}
@@ -107,26 +107,25 @@ final class GameLaunchSplash:NSView {
   func update(game:Game){
     guard !finished,game.id==gameID else{return}
     titleLabel.stringValue=game.title
-    let banners=GameArtwork.candidates(for:game,role:.banner)
-    bannerCandidates=Set(banners)
-    var seen=Set<String>()
-    candidates=(banners+GameArtwork.candidates(for:game,role:.icon)).filter{seen.insert($0).inserted}
+    artworkGame=game
+    artwork.prefetch(game:game)
     refreshArtwork()
   }
   private func refreshArtwork(){
     guard !finished else{return}
-    for address in candidates {
-      guard let image=artwork.image(address,refresh:{[weak self]in self?.refreshArtwork()}) else{continue}
-      guard loadedAddress != address else{return}
-      loadedAddress=address;loadedImageSize=CGSize(width:image.width,height:image.height)
-      fullBleed=bannerCandidates.contains(address) && !GameArtwork.shouldAspectFit(imageSize:loadedImageSize,role:.banner)
-      placeholder.isHidden=true
-      CATransaction.begin();CATransaction.setAnimationDuration(0.45)
-      picture.contents=image;picture.contentsGravity=fullBleed ? .resizeAspectFill:.resizeAspect
-      CATransaction.commit();needsLayout=true
-      startAnimations()
-      return
-    }
+    guard let game=artworkGame else{return}
+    let refresh:()->Void={ [weak self] in self?.refreshArtwork() }
+    let banner=artwork.image(for:game,role:.banner,refresh:refresh)
+    guard let image=banner ?? artwork.image(for:game,role:.icon,refresh:refresh) else{return}
+    let identifier=ObjectIdentifier(image)
+    guard loadedImageIdentifier != identifier else{return}
+    loadedImageIdentifier=identifier;loadedImageSize=CGSize(width:image.width,height:image.height)
+    fullBleed=banner != nil && !GameArtwork.shouldAspectFit(imageSize:loadedImageSize,role:.banner)
+    placeholder.isHidden=true
+    CATransaction.begin();CATransaction.setAnimationDuration(0.45)
+    picture.contents=image;picture.contentsGravity=fullBleed ? .resizeAspectFill:.resizeAspect
+    CATransaction.commit();needsLayout=true
+    startAnimations()
   }
   override func layout(){
     super.layout()

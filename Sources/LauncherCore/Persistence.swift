@@ -68,23 +68,60 @@ public enum AtomicFile {
     }
   }
 }
+private final class LibraryWriteQueue {
+  let queue=DispatchQueue(label:"ready.library.persistence",qos:.utility)
+  let key=DispatchSpecificKey<Bool>()
+  init(){queue.setSpecific(key:key,value:true)}
+  func sync<T>(_ body:()throws->T)rethrows->T{
+    if DispatchQueue.getSpecific(key:key)==true{return try body()}
+    return try queue.sync(execute:body)
+  }
+}
+private final class WeakLibraryWriteQueue {weak var value:LibraryWriteQueue?;init(_ value:LibraryWriteQueue){self.value=value}}
+private enum LibraryWriteQueues {
+  static let lock=NSLock()
+  static var roots=[String:WeakLibraryWriteQueue]()
+  static func shared(_ root:URL)->LibraryWriteQueue{
+    let path=root.standardizedFileURL.resolvingSymlinksInPath().path
+    lock.lock();defer{lock.unlock()}
+    if let existing=roots[path]?.value{return existing}
+    roots=roots.filter{$0.value.value != nil}
+    let writer=LibraryWriteQueue();roots[path]=WeakLibraryWriteQueue(writer);return writer
+  }
+}
 public final class LibraryRepository {
   public let paths: LauncherPaths
-  public init(paths: LauncherPaths) { self.paths = paths }
-  public func load() throws -> LibraryState {
-    try paths.prepare()
-    guard FileManager.default.fileExists(atPath: paths.library.path) else {
-      let s = LibraryState.initial()
-      try save(s)
-      return s
-    }
-    return try JSONDecoder().decode(LibraryState.self, from: Data(contentsOf: paths.library))
+  private let writer:LibraryWriteQueue
+  private let beforeWrite:(()->Void)?
+  public convenience init(paths:LauncherPaths){self.init(paths:paths,beforeWrite:nil)}
+  // Internal fault-injection seam; ordinary callers use the public initializer.
+  internal init(paths:LauncherPaths,beforeWrite:(()->Void)?){
+    self.paths=paths;writer=LibraryWriteQueues.shared(paths.root);self.beforeWrite=beforeWrite
   }
-  public func save(_ state: LibraryState) throws {
+  public func load() throws -> LibraryState {
+    try writer.sync{
+      try paths.prepare()
+      guard FileManager.default.fileExists(atPath:paths.library.path)else{
+        let state=LibraryState.initial();try write(state);return state
+      }
+      return try JSONDecoder().decode(LibraryState.self,from:Data(contentsOf:paths.library))
+    }
+  }
+  public func save(_ state:LibraryState)throws{try writer.sync{try write(state)}}
+  /// Both synchronous/async writes and reads share the root's queue, including
+  /// maintenance's separately constructed repository. An older queued snapshot
+  /// cannot overwrite a newer submission to the same file.
+  public func saveAsync(_ state:LibraryState,completion:@escaping(Result<Void,Error>)->Void){
+    writer.queue.async{[self]in
+      let result=Result{try write(state)}
+      DispatchQueue.main.async{completion(result)}
+    }
+  }
+  private func write(_ state:LibraryState)throws{
+    beforeWrite?()
     try paths.prepare()
-    let enc = JSONEncoder()
-    enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-    try AtomicFile.writePrivate(enc.encode(state), to: paths.library)
+    let enc=JSONEncoder();enc.outputFormatting=[.prettyPrinted,.sortedKeys]
+    try AtomicFile.writePrivate(enc.encode(state),to:paths.library)
   }
 }
 /// Serializes only a particular game/profile prefix; independent games/profiles remain independent.

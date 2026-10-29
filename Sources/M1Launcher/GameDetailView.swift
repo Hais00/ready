@@ -99,7 +99,7 @@ private final class GameHeroView:NSView {
     options=GameDetailButton("Opzioni"){[weak self]in self?.onOptions?()}
     control=GameDetailButton("Metti in pausa"){[weak self]in self?.controlDownload()}
     for view:NSView in [hero,titleLabel,summary,versionLabel,picker,play,options,status,progress,control,aboutHeading,about,facts]{addSubview(view)}
-    observer=NotificationCenter.default.addObserver(forName:.readyArtworkChanged,object:artwork,queue:.main){[weak self]_ in MainActor.assumeIsolated{self?.updateHero()}}
+    observer=NotificationCenter.default.addObserver(forName:.readyArtworkChanged,object:artwork,queue:.main){[weak self]note in MainActor.assumeIsolated{guard let self,note.userInfo?["gameID"]as?String==self.game.id else{return};self.updateHero()}}
     render()
   }
   required init?(coder:NSCoder){fatalError("init(coder:) is not used")}
@@ -140,13 +140,13 @@ private final class GameHeroView:NSView {
   }
   private func updateHero(){
     let refresh:()->Void={ [weak self] in MainActor.assumeIsolated{if let self{self.updateHero()}} }
-    if let image=artwork.image(addresses:GameArtwork.candidates(for:game,role:.banner),refresh:refresh){hero.role = .banner;hero.image=image}
-    else{hero.role = .icon;hero.image=artwork.image(addresses:GameArtwork.candidates(for:game,role:.icon),refresh:refresh)}
+    if let image=artwork.image(for:game,role:.banner,refresh:refresh){hero.role = .banner;hero.image=image}
+    else{hero.role = .icon;hero.image=artwork.image(for:game,role:.icon,refresh:refresh)}
   }
   private func render(){
-    titleLabel.stringValue=game.title;hero.fallback=game.title;updateHero()
+    titleLabel.stringValue=LibraryEntryPresentation.title(game);hero.fallback=LibraryEntryPresentation.title(game);updateHero()
     summary.stringValue=Self.plain(value("shortDescription") ?? game.store.title+" · "+MetalCanvas.platformLabels(game).joined(separator:" / "))
-    about.stringValue=Self.plain(value("description") ?? value("shortDescription") ?? "I dettagli di questo gioco non sono disponibili offline. La scelta della versione e i file già installati restano accessibili.")
+    about.stringValue=[value("description"),value("shortDescription")].compactMap{$0}.map(Self.plain).first(where:{!$0.isEmpty}) ?? LibraryEntryPresentation.unavailableDescription(game)
     var details=[String]()
     if let text=values("developers"){details.append("SVILUPPATORE   "+text)}
     if let text=values("publishers"){details.append("EDITORE   "+text)}

@@ -3,6 +3,7 @@ using System.Net;
 using System.Text.Json;
 using SteamKit2;
 using SteamKit2.Authentication;
+using SteamKit2.Internal;
 static class SteamCatalogMetadataChecks
 {
     static readonly Dictionary<string,bool> checks=new();
@@ -11,12 +12,13 @@ static class SteamCatalogMetadataChecks
     static string Body(uint id=1091500)=>JsonSerializer.Serialize(new Dictionary<string,object>{{id.ToString(),new{success=true,data=new{steam_appid=id,name="<b>Official public name</b>",type="dlc",short_description="Public &amp; safe",about_the_game="<p>About</p><script>bad()</script>",developers=new[]{"Developer"},publishers=new[]{"Publisher"},genres=new[]{new{description="RPG"}},release_date=new{date="10 Dec, 2020"},platforms=new{windows=true,mac=true},header_image="https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1091500/header.jpg",capsule_image="https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1091500/capsule.jpg",refresh_token="must_not_be_serialized"}}}});
     sealed class Handler:HttpMessageHandler
     {
-        internal int Calls,Active,Maximum;internal string? URL;internal TaskCompletionSource<bool>? Gate;internal bool Bad,Large;
+        internal int Calls,Active,Maximum;internal string? URL;internal TaskCompletionSource<bool>? Gate;internal bool Bad,Large,ChangedName,NoCacheSeen,ExplicitMissing;internal int? Status;internal int? RetrySeconds;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancel)
         {
-            Interlocked.Increment(ref Calls);int active=Interlocked.Increment(ref Active);lock(this)Maximum=Math.Max(Maximum,active);URL=request.RequestUri!.AbsoluteUri;
+            Interlocked.Increment(ref Calls);int active=Interlocked.Increment(ref Active);lock(this)Maximum=Math.Max(Maximum,active);URL=request.RequestUri!.AbsoluteUri;NoCacheSeen=request.Headers.CacheControl?.NoCache==true&&request.Headers.CacheControl?.NoStore==true&&request.Headers.Pragma.Any(x=>x.Name=="no-cache");
             try{if(Gate is not null)await Gate.Task.WaitAsync(cancel);uint id=uint.Parse(request.RequestUri.Query.Split("appids=")[1].Split('&')[0]);
-                return new(Bad?HttpStatusCode.NotFound:HttpStatusCode.OK){Content=new StringContent(Large?new string('x',4*1024*1024+1):Body(id))};}
+                var response=new HttpResponseMessage(Status is{} status?(HttpStatusCode)status:Bad?HttpStatusCode.NotFound:HttpStatusCode.OK){Content=new StringContent(ExplicitMissing?"{\""+id+"\":{\"success\":false}}":Large?new string('x',4*1024*1024+1):ChangedName?Body(id).Replace("Official public name","Updated public name"):Body(id))};
+                if(RetrySeconds is{} retry)response.Headers.RetryAfter=new(TimeSpan.FromSeconds(retry));return response;}
             finally{Interlocked.Decrement(ref Active);}
         }
     }
@@ -69,9 +71,17 @@ static class SteamCatalogMetadataChecks
         Check(handler.Calls==1&&handler.URL=="https://store.steampowered.com/api/appdetails?appids=1091500&l=english","single-public-app-endpoint-cache");
         await catalog.DetailsAsync(1091500,"italian",default);Check(handler.Calls==2,"language-cache-separated");
         using(var cancelled=new CancellationTokenSource()){cancelled.Cancel();try{await catalog.DetailsAsync(1091500,"english",cancelled.Token);}catch(OperationCanceledException){}Check(handler.Calls==2,"cancelled-cache-request-no-http");}
+        handler.ChangedName=true;var refreshed=await catalog.DetailsAsync(1091500,"english",default,refresh:true);
+        Check(handler.Calls==3&&handler.NoCacheSeen&&Equals(refreshed["title"],"Updated public name"),"explicit-refresh-skips-memory-and-requests-http-revalidation");
+        await catalog.DetailsAsync(1091500,"english",default);Check(handler.Calls==3,"refreshed-result-replaces-default-memory-cache");
         var large=new Handler{Large=true};rejected=false;try{await new SteamPublicCatalog(new HttpClient(large)).DetailsAsync(1,"english",default);}catch(InvalidDataException){rejected=true;}Check(rejected,"response-size-bounded");
         var busy=new Handler{Gate=new(TaskCreationOptions.RunContinuationsAsynchronously)};var bounded=new SteamPublicCatalog(new HttpClient(busy));var pending=Enumerable.Range(1,6).Select(x=>bounded.DetailsAsync((uint)x,"english",default)).ToArray();await Wait(()=>busy.Active==2);Check(busy.Maximum==2,"http-concurrency-two");busy.Gate.SetResult(true);await Task.WhenAll(pending);Check(busy.Maximum==2,"http-concurrency-remains-bounded");
         var bad=new Handler{Bad=true};var badCatalog=new SteamPublicCatalog(new HttpClient(bad));for(int i=0;i<2;i++)try{await badCatalog.DetailsAsync(1,"english",default);}catch(HttpRequestException){}Check(bad.Calls==2,"failed-public-response-not-cached");
+        var rate=new Handler{Status=429,RetrySeconds=9};rejected=false;try{await new SteamPublicCatalog(new HttpClient(rate)).DetailsAsync(1,"english",default);}catch(SteamCatalogRequestFailure error){rejected=error.Code=="rate_limited"&&error.RetryAfterSeconds==9;}Check(rejected,"rate-limit-preserves-bounded-retry-after");
+        var transient=new Handler{Status=503,RetrySeconds=4};rejected=false;try{await new SteamPublicCatalog(new HttpClient(transient)).DetailsAsync(1,"english",default);}catch(SteamCatalogRequestFailure error){rejected=error.Code=="metadata_unavailable"&&error.RetryAfterSeconds==4;}Check(rejected,"server-5xx-transient-not-not-found");
+        var missing=new Handler{ExplicitMissing=true};rejected=false;try{await new SteamPublicCatalog(new HttpClient(missing)).DetailsAsync(1,"english",default);}catch(SteamCatalogRequestFailure error){rejected=error.Code=="metadata_not_found";}Check(rejected,"official-success-false-specific-not-found");
+        handler.Status=503;try{await catalog.DetailsAsync(1091500,"english",default,refresh:true);}catch(SteamCatalogRequestFailure){}int failedCalls=handler.Calls;var kept=await catalog.DetailsAsync(1091500,"english",default);
+        Check(handler.Calls==failedCalls&&Equals(kept["title"],"Updated public name"),"failed-refresh-keeps-last-valid-memory-cache");
         var output=new Output();var transport=new Fake();int metadataCalls=0;
         var delayed=new TaskCompletionSource<Dictionary<string,object?>>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using(var service=new PersistentSteamService(transport,output,catalogMetadata:(id,language,cancel)=>{Interlocked.Increment(ref metadataCalls);return id==7?delayed.Task:Task.FromResult(details);}))
@@ -82,6 +92,52 @@ static class SteamCatalogMetadataChecks
             string waiting=Send("catalog_metadata",new{gameID="7"});await Wait(()=>metadataCalls==2);string cancellation=Send("cancel",new{requestID=waiting});await Wait(()=>output.Events.Any(x=>x.GetProperty("id").GetString()==cancellation&&x.GetProperty("type").GetString()=="result"));delayed.SetResult(details);await Wait(()=>output.Events.Any(x=>x.GetProperty("id").GetString()==waiting&&x.GetProperty("type").GetString()=="error"));
             Check(output.Events.Count(x=>x.GetProperty("id").GetString()==waiting&&x.GetProperty("type").GetString() is "error" or "result")==1,"late-public-callback-after-cancel-no-result");
         }
+        var request=SteamOwnedGamesCatalog.Request(76561198000000001UL);
+        Check(request.steamid==76561198000000001UL&&request.include_appinfo&&!request.skip_unvetted_apps&&request.include_free_sub&&!request.include_family_licenses,"owned-games-authenticated-self-request-flags");
+        rejected=false;try{SteamOwnedGamesCatalog.Request(0);}catch(ArgumentException){rejected=true;}Check(rejected,"owned-games-invalid-self-rejected");
+        var ownedBody=new CPlayer_GetOwnedGames_Response{game_count=2};ownedBody.games.Add(new(){appid=1,name="CM authoritative name",img_icon_url=new string('b',40)});ownedBody.games.Add(new(){appid=2,name="CM other name"});
+        var owned=SteamOwnedGamesCatalog.Parse(EResult.OK,ownedBody);
+        Check(owned.Available&&owned.Games.Count==2,"owned-games-count-validated");
+        Check(!SteamOwnedGamesCatalog.Parse(EResult.AccessDenied,ownedBody).Available,"owned-games-server-failure-unavailable-not-empty-success");
+        ownedBody.game_count=3;Check(!SteamOwnedGamesCatalog.Parse(EResult.OK,ownedBody).Available,"owned-games-partial-count-fails-closed");ownedBody.game_count=2;
+        var duplicate=new CPlayer_GetOwnedGames_Response{game_count=2};duplicate.games.Add(new(){appid=1});duplicate.games.Add(new(){appid=1});Check(!SteamOwnedGamesCatalog.Parse(EResult.OK,duplicate).Available,"owned-games-duplicate-fails-closed");
+        var cmGame=JSON(SteamCatalogMetadata.LibraryGame(1,null,owned,false));
+        Check(cmGame.GetProperty("title").GetString()=="CM authoritative name"&&cmGame.GetProperty("metadata").GetProperty("libraryKind").GetString()=="game"&&cmGame.GetProperty("metadata").GetProperty("iconURL").GetString()!.Contains(new string('b',40)),"cm-name-icon-game-classification-survive-missing-pics");
+        Check(cmGame.GetProperty("metadata").GetProperty("descriptionUnavailable").GetBoolean()&&!cmGame.GetProperty("metadata").TryGetProperty("description",out _),"cm-owned-games-does-not-invent-description");
+        Check(fallback.GetProperty("metadata").GetProperty("libraryKind").GetString()=="unknown"&&!fallback.GetProperty("title").GetString()!.All(char.IsDigit)&&fallback.GetProperty("metadata").GetProperty("ownedGameListed").ValueKind==JsonValueKind.Null,"license-unknown-retained-generic-not-numeric-game");
+        var dlc=KeyValue.LoadFromString("\"appinfo\" {\"common\" {\"name\" \"DLC record\" \"type\" \"dlc\"}}")!;
+        var tool=KeyValue.LoadFromString("\"appinfo\" {\"common\" {\"name\" \"Tool record\" \"type\" \"tool\"}}")!;
+        var collected=new List<JsonElement>();Action<object[]> collect=games=>collected.AddRange(games.Select(JSON));
+        await SteamOwnedGamesCatalog.CollectAsync(_=>Task.FromResult(owned),_=>Task.FromResult(new HashSet<uint>{2,3}),(ids,_)=>Task.FromResult(new Dictionary<uint,KeyValue>{{2,dlc},{3,tool}}),collect,default);
+        Check(collected.Count==3&&collected.Select(x=>x.GetProperty("storeID").GetString()).Distinct().Count()==3,"cm-and-package-union-complete-unique");
+        Check(collected.Single(x=>x.GetProperty("storeID").GetString()=="2").GetProperty("metadata").GetProperty("libraryKind").GetString()=="dlc"&&collected.Single(x=>x.GetProperty("storeID").GetString()=="3").GetProperty("metadata").GetProperty("libraryKind").GetString()=="tool","known-dlc-tool-retained-explicit-not-games");
+        collected.Clear();await SteamOwnedGamesCatalog.CollectAsync(_=>Task.FromResult(owned),_=>Task.FromResult(new HashSet<uint>{3}),(ids,_)=>Task.FromException<Dictionary<uint,KeyValue>>(new IOException()),collect,default);
+        Check(collected.Count==3&&collected.Single(x=>x.GetProperty("storeID").GetString()=="1").GetProperty("title").GetString()=="CM authoritative name","pics-job-failure-never-drops-authoritative-games");
+        collected.Clear();await SteamOwnedGamesCatalog.CollectAsync(_=>Task.FromResult(owned),_=>Task.FromException<HashSet<uint>>(new IOException()),(ids,_)=>Task.FromResult(new Dictionary<uint,KeyValue>()),collect,default);
+        Check(collected.Count==2&&collected.All(x=>!x.GetProperty("metadata").GetProperty("licenseMembershipComplete").GetBoolean()),"package-failure-never-drops-cm-games");
+        var partialPages=new SteamLibraryPages(true,(_,_)=>{});partialPages.Add(collected.Select(x=>(object)x));Check(!JSON(partialPages.Complete()).GetProperty("licenseMembershipComplete").GetBoolean(),"partial-license-snapshot-terminal-requires-preserving-old-membership");
+        collected.Clear();rejected=false;try{await SteamOwnedGamesCatalog.CollectAsync(_=>Task.FromResult(new SteamOwnedGamesSnapshot(true,new Dictionary<uint,SteamOwnedGame>(),"available")),_=>Task.FromException<HashSet<uint>>(new IOException()),(ids,_)=>Task.FromResult(new Dictionary<uint,KeyValue>()),collect,default);}catch(IOException){rejected=true;}Check(rejected&&collected.Count==0,"zero-cm-games-and-license-failure-never-empty-success");
+        collected.Clear();await SteamOwnedGamesCatalog.CollectAsync(_=>Task.FromException<SteamOwnedGamesSnapshot>(new IOException()),_=>Task.FromResult(new HashSet<uint>{3}),(ids,_)=>Task.FromResult(new Dictionary<uint,KeyValue>{{3,tool}}),collect,default);
+        Check(collected.Count==1&&collected[0].GetProperty("metadata").GetProperty("libraryKind").GetString()=="tool"&&collected[0].GetProperty("metadata").GetProperty("ownedGameListed").ValueKind==JsonValueKind.Null,"owned-rpc-unavailable-keeps-known-pics-content-no-denial");
+        collected.Clear();rejected=false;try{await SteamOwnedGamesCatalog.CollectAsync(_=>Task.FromException<SteamOwnedGamesSnapshot>(new IOException()),_=>Task.FromException<HashSet<uint>>(new IOException()),(ids,_)=>Task.FromResult(new Dictionary<uint,KeyValue>()),collect,default);}catch(IOException){rejected=true;}
+        Check(rejected&&collected.Count==0,"both-membership-sources-fail-no-empty-success");
+        using(var cancellation=new CancellationTokenSource()){
+            var gate=new TaskCompletionSource<SteamOwnedGamesSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);int licenseCalls=0;
+            var waiting=SteamOwnedGamesCatalog.CollectAsync(_=>gate.Task,_=>{licenseCalls++;return Task.FromResult(new HashSet<uint>());},(ids,_)=>Task.FromResult(new Dictionary<uint,KeyValue>()),collect,cancellation.Token);
+            cancellation.Cancel();gate.SetResult(owned);rejected=false;try{await waiting;}catch(OperationCanceledException){rejected=true;}
+            Check(rejected&&licenseCalls==0&&collected.Count==0,"cancel-late-owned-response-does-not-resurrect-library");
+        }
+        var refreshOutput=new Output();var refreshTransport=new Fake();bool sawRefresh=false;int refreshCalls=0;
+        await using(var service=new PersistentSteamService(refreshTransport,refreshOutput,catalogMetadataWithRefresh:(app,language,refresh,cancel)=>{refreshCalls++;sawRefresh=refresh;return Task.FromResult(details);})){
+            string SendRefresh(object option){string id=Guid.NewGuid().ToString();service.Accept(JsonSerializer.Serialize(new{id,profileID="00000000-0000-4000-8000-000000000001",profileGeneration="00000000-0000-4000-8000-000000000002",operation="catalog_metadata",options=new{gameID="1091500",refresh=option}}));return id;}
+            string yes=SendRefresh(true);await Wait(()=>refreshOutput.Events.Any(x=>x.GetProperty("id").GetString()==yes&&x.GetProperty("type").GetString()=="result"));
+            Check(sawRefresh&&refreshCalls==1&&refreshTransport.Connects==0,"service-refresh-true-routed-no-login");
+            string invalid=SendRefresh("true");await Wait(()=>refreshOutput.Events.Any(x=>x.GetProperty("id").GetString()==invalid&&x.GetProperty("type").GetString()=="error"));Check(refreshCalls==1,"service-refresh-strict-bool");
+        }
+        var rateOutput=new Output();await using(var service=new PersistentSteamService(new Fake(),rateOutput,catalogMetadataWithRefresh:(app,language,refresh,cancel)=>throw new SteamCatalogRequestFailure("rate_limited",9))){
+            string id=Guid.NewGuid().ToString();service.Accept(JsonSerializer.Serialize(new{id,profileID="00000000-0000-4000-8000-000000000001",profileGeneration="00000000-0000-4000-8000-000000000002",operation="catalog_metadata",options=new{gameID="1091500",refresh=true}}));
+            await Wait(()=>rateOutput.Events.Any(x=>x.GetProperty("id").GetString()==id&&x.GetProperty("type").GetString()=="error"));var error=rateOutput.Events.Last(x=>x.GetProperty("id").GetString()==id);Check(error.GetProperty("code").GetString()=="rate_limited"&&error.GetProperty("retryAfterSeconds").GetInt32()==9,"service-rate-limit-code-and-delay-safe");
+        }
         var emitted=new List<JsonElement>();var pages=new SteamLibraryPages(true,(games,index)=>emitted.Add(JSON(new{games,pageIndex=index})));
         pages.Add(Enumerable.Range(1,1000).Select(i=>(object)new{id="steam:"+i,title=new string('x',5000)}));var final=JSON(pages.Complete());
         Check(final.GetProperty("gameCount").GetInt32()==1000&&final.GetProperty("pageCount").GetInt32()==emitted.Count&&!final.TryGetProperty("games",out _),"paged-library-over-four-MiB-terminal-counts");
@@ -89,6 +145,8 @@ static class SteamCatalogMetadataChecks
         Check(emitted.SelectMany(x=>x.GetProperty("games").EnumerateArray()).Select(x=>x.GetProperty("id").GetString()).Distinct().Count()==1000,"paged-library-complete-no-duplicate");
         rejected=false;try{pages.Add(new[]{new{id="steam:1"}});}catch(SteamLibraryPayloadException error){rejected=error.Code=="library_duplicate_entry";}Check(rejected,"duplicate-library-entry-rejected");
         rejected=false;try{new SteamLibraryPages(true,(_,_)=>{}).Add(new[]{new{id="steam:1",title=new string('x',1024*1024)}});}catch(SteamLibraryPayloadException error){rejected=error.Code=="library_entry_too_large";}Check(rejected,"oversized-single-library-entry-rejected");
+        var classified=new SteamLibraryPages(true,(_,_)=>{});classified.Add(new[]{SteamCatalogMetadata.LibraryGame(1,null,owned,false),SteamCatalogMetadata.LibraryGame(3,tool,owned,true)});var classifiedEnd=JSON(classified.Complete());
+        Check(classifiedEnd.GetProperty("gameCount").GetInt32()==2&&classifiedEnd.GetProperty("recordCount").GetInt32()==2&&classifiedEnd.GetProperty("libraryKindCounts").GetProperty("game").GetInt32()==1&&classifiedEnd.GetProperty("libraryKindCounts").GetProperty("tool").GetInt32()==1,"kind-counts-additive-legacy-record-count-preserved");
         var empty=JSON(new SteamLibraryPages(true,(_,_)=>throw new Exception()).Complete());Check(empty.GetProperty("gameCount").GetInt32()==0&&empty.GetProperty("pageCount").GetInt32()==0,"empty-paged-library-explicit-zero-counts");
         Console.WriteLine(JsonSerializer.Serialize(new{passed=true,checkCount=checks.Count,checks,realAuthenticationAttempted=false,steamConnectionCreated=false}));return 0;
     }

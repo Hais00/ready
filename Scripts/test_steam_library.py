@@ -27,6 +27,8 @@ for line in sys.stdin:
   assert r['paged']is True
   mode=(run/'mode').read_text()if(run/'mode').exists()else'normal'
   if mode=='error':send('error',id,code='network_error');continue
+  if mode in('partial','bad-bool'):
+   send('library_page',id,pageIndex=0,games=[game(480)]);send('result',id,gameCount=1,pageCount=1,licenseMembershipComplete=False if mode=='partial'else 0);continue
   if mode=='delay':time.sleep(.25)
   if mode=='large':
    values=[game(10000+i)for i in range(1200)]
@@ -50,7 +52,7 @@ def main():
  ap=argparse.ArgumentParser();ap.add_argument('--core-products',type=pathlib.Path,required=True);args=ap.parse_args();products=args.core_products.resolve();archive=products/'libLauncherCore.a';modules=products if(products/'LauncherCore.swiftmodule').exists()else products/'Modules';m=modules/'LauncherCore.swiftmodule';ms=list(m.glob('*.swiftmodule'))if m.is_dir()else[m]
  if not archive.is_file()or not ms or archive.stat().st_mtime_ns<max(x.stat().st_mtime_ns for x in ms):raise RuntimeError('Refusing stale/missing Core archive/module')
  run=pathlib.Path(tempfile.mkdtemp(prefix='steam-library-',dir=WORK/'tests'));run.chmod(0o700);fake=run/'fake.py';fake.write_text(FAKE);fake.chmod(0o600)
- sources=[ROOT/'Sources/M1Launcher'/n for n in ['Credentials.swift','PrivateCredentialFile.swift','StoreClient.swift','SteamClientSession.swift','SteamLibraryCoordinator.swift']]+[ROOT/'Synthetic/ReadySteamLibraryProbe.swift'];hashes={str(p.relative_to(ROOT)):sha(p)for p in sources}
+ sources=[ROOT/'Sources/M1Launcher'/n for n in ['Credentials.swift','PrivateCredentialFile.swift','StoreClient.swift','SteamClientSession.swift','SteamLibraryCoordinator.swift','LibraryEntryPresentation.swift']]+[ROOT/'Synthetic/ReadySteamLibraryProbe.swift'];hashes={str(p.relative_to(ROOT)):sha(p)for p in sources}
  env={**os.environ,'TMPDIR':str(WORK/'tmp')+'/'}
  command=['xcrun','swiftc','-swift-version','5','-parse-as-library','-module-cache-path',str(WORK/'cache/steam-ui-module-cache'),'-I',str(modules),*map(str,sources),str(archive),'-framework','Security','-o',str(run/'probe')]
  result=subprocess.run(command,cwd=ROOT,env=env,capture_output=True,text=True,timeout=120);(run/'compile.log').write_text(result.stdout+result.stderr)
@@ -58,6 +60,6 @@ def main():
  result=subprocess.run([str(run/'probe'),os.sys.executable,str(fake),str(run)],env=env,capture_output=True,text=True,timeout=40);(run/'stdout.json').write_text(result.stdout);(run/'stderr.log').write_text(result.stderr)
  if result.returncode:raise RuntimeError('Library fixture failed; private diagnostics retained at '+str(run))
  checks=json.loads(result.stdout);assert checks.pop('allPassed');assert all(checks.values());assert hashes=={str(p.relative_to(ROOT)):sha(p)for p in sources}
- report={'passed':True,'count':len(checks),'checks':checks,'sourceHashes':hashes,'fixtureOnly':True,'actualAccountOrKeychainOrGameUsed':False};retained=run/'report.json';retained.write_text(json.dumps(report,indent=2)+'\n');retained.chmod(0o600)
- pointer={'passed':True,'count':len(checks),'retainedReport':str(retained),'retainedReportSHA256':sha(retained),'sourceHashes':hashes,'fixtureOnly':True,'actualAccountOrKeychainOrGameUsed':False};(ROOT/'Evidence/steam-library-tests.json').write_text(json.dumps(pointer,indent=2)+'\n');print(json.dumps(pointer,indent=2))
+ report={'passed':True,'count':len(checks),'checks':checks,'sourceHashes':hashes,'coreArchiveSHA256':sha(archive),'coreModuleSHA256':{p.name:sha(p)for p in ms},'persistenceSourceSHA256':sha(ROOT/'Sources/LauncherCore/Persistence.swift'),'fixtureOnly':True,'actualAccountOrKeychainOrGameUsed':False};retained=run/'report.json';retained.write_text(json.dumps(report,indent=2)+'\n');retained.chmod(0o600)
+ pointer={'passed':True,'count':len(checks),'retainedReport':str(retained),'retainedReportSHA256':sha(retained),'sourceHashes':hashes,'coreArchiveSHA256':sha(archive),'coreModuleSHA256':{p.name:sha(p)for p in ms},'persistenceSourceSHA256':sha(ROOT/'Sources/LauncherCore/Persistence.swift'),'fixtureOnly':True,'actualAccountOrKeychainOrGameUsed':False};(ROOT/'Evidence/steam-library-tests.json').write_text(json.dumps(pointer,indent=2)+'\n');print(json.dumps(pointer,indent=2))
 if __name__=='__main__':main()

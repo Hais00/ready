@@ -65,7 +65,7 @@ sealed class PersistentSteamService:IAsyncDisposable
     readonly List<Task> work=new();
     readonly Func<TimeSpan,CancellationToken,Task> delay;
     readonly TimeSpan requestBudget,heartbeatInterval;
-    readonly Func<uint,string,CancellationToken,Task<Dictionary<string,object?>>> catalogMetadata;
+    readonly Func<uint,string,bool,CancellationToken,Task<Dictionary<string,object?>>> catalogMetadata;
     Task? heartbeat,reconnect;
     CancellationTokenSource? reconnectCancel;
     SteamServiceCredentials? credentials;
@@ -79,10 +79,14 @@ sealed class PersistentSteamService:IAsyncDisposable
     TaskCompletionSource<string>? guardAnswer;
     internal PersistentSteamService(ISteamServiceTransport transport,TextWriter output,
         Func<TimeSpan,CancellationToken,Task>? delay=null,TimeSpan? requestBudget=null,TimeSpan? heartbeatInterval=null,
-        Func<uint,string,CancellationToken,Task<Dictionary<string,object?>>>? catalogMetadata=null)
+        Func<uint,string,CancellationToken,Task<Dictionary<string,object?>>>? catalogMetadata=null,
+        Func<uint,string,bool,CancellationToken,Task<Dictionary<string,object?>>>? catalogMetadataWithRefresh=null)
     {
         this.transport=transport;this.output=output;
-        this.catalogMetadata=catalogMetadata??new SteamPublicCatalog().DetailsAsync;
+        var publicCatalog=new SteamPublicCatalog();
+        this.catalogMetadata=catalogMetadataWithRefresh??(catalogMetadata is not null
+            ? (app,language,refresh,cancel)=>catalogMetadata(app,language,cancel)
+            : (app,language,refresh,cancel)=>publicCatalog.DetailsAsync(app,language,cancel,refresh));
         this.delay=delay??Task.Delay;this.requestBudget=requestBudget??TimeSpan.FromMinutes(4);
         this.heartbeatInterval=heartbeatInterval??TimeSpan.FromSeconds(15);
         transport.Notice+=OnNotice;
@@ -246,12 +250,14 @@ sealed class PersistentSteamService:IAsyncDisposable
                     await transport.LibraryAsync(page=>{lock(sync){EnsureEpoch(libraryEpoch);cancel.Token.ThrowIfCancellationRequested();pages.Add(page);}},cancel.Token);
                     lock(sync){EnsureEpoch(libraryEpoch);cancel.Token.ThrowIfCancellationRequested();Result(id,pages.Complete());}break;
                 case "catalog_metadata":
-                    uint catalogApp=AppID(root);string language=SteamPublicCatalog.Language(Text(Options(root),"language","english"));
+                    uint catalogApp=AppID(root);var catalogOptions=Options(root);string language=SteamPublicCatalog.Language(Text(catalogOptions,"language","english"));bool refresh=false;
+                    if(catalogOptions.TryGetProperty("refresh",out var refreshOption)){if(refreshOption.ValueKind is not (JsonValueKind.True or JsonValueKind.False))throw new ArgumentException();refresh=refreshOption.ValueKind==JsonValueKind.True;}
                     Dictionary<string,object?> details;
-                    try{details=await catalogMetadata(catalogApp,language,cancel.Token);}
+                    try{details=await catalogMetadata(catalogApp,language,refresh,cancel.Token);}
                     catch(OperationCanceledException)when(!cancel.IsCancellationRequested){throw new ServiceFailure("metadata_timeout");}
+                    catch(SteamCatalogRequestFailure){throw;}
                     catch(Exception error)when(error is HttpRequestException or InvalidDataException or JsonException or System.Text.RegularExpressions.RegexMatchTimeoutException){throw new ServiceFailure("metadata_unavailable");}
-                    lock(sync){cancel.Token.ThrowIfCancellationRequested();Result(id,new(){["appID"]=catalogApp,["metadata"]=details});}break;
+                    lock(sync){cancel.Token.ThrowIfCancellationRequested();Result(id,new(){["appID"]=catalogApp,["metadata"]=details,["clientCacheBypassed"]=refresh});}break;
                 case "offline":case "logout":
                     bool forget=operation=="logout"&&Options(root).TryGetProperty("forgetCredentials",out var forgetValue)&&forgetValue.ValueKind==JsonValueKind.True;
                     await Stop(operation=="offline"?"offline":"logged_out",operation=="offline"?"manual_offline":"explicit_logout",forget,id);
@@ -266,6 +272,13 @@ sealed class PersistentSteamService:IAsyncDisposable
         }
         catch(ServiceFailure failure){Error(id,failure.Code,failure.Result);}
         catch(SteamLibraryPayloadException failure){Error(id,failure.Code);}
+        catch(SteamCatalogRequestFailure failure)
+        {
+            var fields=new Dictionary<string,object?>{["code"]=failure.Code,["steamResult"]=null};
+            if(failure.RetryAfterSeconds is{} retry)fields["retryAfterSeconds"]=retry;
+            if(failure.Code=="metadata_not_found")fields["contentInfoUnavailable"]=true;
+            Emit("error",id,fields);
+        }
         catch(AuthenticationException failure){Error(id,"authentication_failed",failure.Result);}
         catch(OperationCanceledException){Error(id,cancel.IsCancellationRequested&&!lifetime.IsCancellationRequested?"cancelled":"disconnected");}
         catch(ArgumentException){Error(id,"invalid_request");}
@@ -887,32 +900,9 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
     public async Task LibraryAsync(Action<object[]> page,CancellationToken cancel)
     {
         Task<SteamApps.LicenseListCallback> task;lock(sync)task=licenses.Task;
-        var licenseList=await task.WaitAsync(cancel);
-        if(licenseList.Result!=EResult.OK)throw new IOException();
-        var ids=new HashSet<uint>();
-        foreach(var chunk in licenseList.LicenseList.Chunk(100))
-        {
-            var requests=chunk.Select(value=>new SteamApps.PICSRequest(value.PackageID,value.AccessToken));
-            var packages=await apps.PICSGetProductInfo(Array.Empty<SteamApps.PICSRequest>(),requests).ToTask().WaitAsync(cancel);
-            if(!packages.Complete||packages.Failed||packages.Results is null)throw new IOException();
-            foreach(var part in packages.Results)foreach(var package in part.Packages.Values)
-                if(package.KeyValues is {} values)foreach(var id in values["appids"].Children)if(uint.TryParse(id.Value,out var value))ids.Add(value);
-        }
-        foreach(var chunk in ids.Chunk(50))
-        {
-            var access=await apps.PICSGetAccessTokens(chunk,Array.Empty<uint>()).ToTask().WaitAsync(cancel);
-            var info=await apps.PICSGetProductInfo(chunk.Select(id=>new SteamApps.PICSRequest(id,access.AppTokens.GetValueOrDefault(id))),Array.Empty<SteamApps.PICSRequest>()).ToTask().WaitAsync(cancel);
-            if(!info.Complete||info.Failed||info.Results is null)throw new IOException();
-            var games=new List<object>();var records=new Dictionary<uint,KeyValue>();
-            foreach(var part in info.Results)foreach(var app in part.Apps.Values)
-                if(app.KeyValues is {} values)records[app.ID]=values;
-            foreach(uint id in chunk)
-            {
-                records.TryGetValue(id,out var values);
-                if(SteamCatalogMetadata.IsLibraryApp(values))games.Add(SteamCatalogMetadata.LibraryGame(id,values));
-            }
-            page(games.ToArray());
-        }
+        await SteamOwnedGamesCatalog.CollectAsync(token=>SteamOwnedGamesCatalog.FetchSelfAsync(client,token),
+            token=>SteamOwnedGamesCatalog.PackageIDsAsync(apps,task,token),
+            (ids,token)=>SteamOwnedGamesCatalog.AppInfoAsync(apps,ids,token),page,cancel);
     }
     public async ValueTask DisposeAsync()
     {

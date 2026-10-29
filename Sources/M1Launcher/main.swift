@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   var steamLaunchCancellation: (() -> Void)?
   var steamAccountDialog: UUID?
   var steamPreparationID: UUID?
+  var steamCatalogUpdate: DispatchWorkItem?
   var steamConnectionDiagnosticSignature = ""
   lazy var dialogs = ReadyDialogPresenter(window: { [weak self] in self?.window })
   lazy var pages: ReadyPagePresenter = {
@@ -195,6 +196,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
   }
   func applicationWillTerminate(_ notification: Notification) {
+    steamCatalogUpdate?.cancel();steamCatalogUpdate=nil
+    if let repository{try? repository.save(state)}
     MainActor.assumeIsolated {
       finishLaunchSplash()
       hostedPresentation?.stop(preserveFullscreen:false)
@@ -376,6 +379,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     switch action {
     case .game(let id): MainActor.assumeIsolated { showGameDetails(id: id) }
     case .gameOptions(let id): gameOptions(id)
+    case .librarySection(let other): canvas.showOtherContent=other;canvas.selected=0;canvas.refresh()
     case .store(let store):
       navigateToLibrary(store: store)
     case .profiles: profiles()

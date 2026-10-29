@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import Foundation
-import LauncherCore
+@testable import LauncherCore
 
 private final class LibraryVault {
   private let lock=NSLock();private var value:Data?
@@ -64,10 +64,30 @@ private final class LibraryVault {
     SteamLibraryMerge.apply([picsGame],to:&customState,profile:profile,account:"fixture-active")
     let deduplicated=customState.games[0]
     try check(deduplicated.variants.first==customNative && deduplicated.variants.filter{$0.platform == .macOS}.count==1 && deduplicated.variants.count==2 && deduplicated.variants.contains{$0.id=="windows" && $0.platform == .windows && $0.architecture == .unknown && !$0.installed && $0.executable==nil} && deduplicated.selectedVariant==customNative.id && deduplicated.saveRules==customGame.saveRules && (try encoder.encode(customState.gamePreferences))==preferences,"customInstalledNativeIDSuppressesRedundantPICSUnknownPlatformWithoutLosingWindowsAvailability")
+    var classified=rich;classified.metadata?["libraryKind"] = .string("unknown");classified.metadata?["libraryClassificationSource"] = .string("unknown")
+    var authority=placeholder;authority.metadata=["metadataComplete":.bool(false),"libraryKind":.string("game"),"libraryClassificationSource":.string("cm_player"),"ownedGameListed":.bool(true),"ownedGameListAvailable":.bool(true)]
+    var classifiedState=LibraryState(profiles:state.profiles,activeProfile:profile,games:[classified]);SteamLibraryMerge.apply([authority],to:&classifiedState,profile:profile,account:"fixture-active")
+    try check(classifiedState.games[0].metadata?["libraryKind"] == .string("game") && classifiedState.games[0].metadata?["libraryClassificationSource"] == .string("cm_player") && classifiedState.games[0].metadata?["description"] == rich.metadata?["description"] && classifiedState.games[0].metadata?["ownedGameListed"] == .bool(true),"authoritativeCMClassificationUpdatesRichCatalogWithoutErasingDescription")
+    SteamLibraryMerge.enrich(["libraryKind":.string("dlc"),"contentType":.string("dlc"),"libraryClassificationSource":.string("public_store"),"ownedGameListed":.bool(false)],gameID:"700",in:&classifiedState)
+    try check(classifiedState.games[0].metadata?["libraryKind"] == .string("game") && classifiedState.games[0].metadata?["ownedGameListed"] == .bool(true),"publicConflictCannotOverrideAuthoritativeClassificationOrMembership")
+    var publicState=classifiedState;publicState.games[0].metadata?["libraryClassificationSource"] = .string("public_store")
+    SteamLibraryMerge.enrich(["libraryKind":.string("demo"),"contentType":.string("demo"),"libraryClassificationSource":.string("public_store")],gameID:"700",in:&publicState)
+    try check(publicState.games[0].metadata?["libraryKind"] == .string("demo"),"freshPublicClassificationCanUpdateEarlierPublicClassification")
+    var absent=Game(id:"steam:888",store:.steam,storeID:"888",title:"Gioco Steam · informazioni non disponibili");var absentState=LibraryState(profiles:state.profiles,activeProfile:profile,games:[absent])
+    SteamLibraryMerge.markPublicMetadataUnavailable(gameID:"888",in:&absentState);SteamLibraryMerge.enrich(["title":.string("Authoritative title"),"metadataComplete":.bool(true),"description":.string("Fresh")],gameID:"888",in:&absentState)
+    try check(absentState.games[0].title=="Authoritative title" && absentState.games[0].metadata?["publicMetadataUnavailable"] == .bool(false),"CMGenericPlaceholderAndPersistedNotFoundRepairAfterRefreshSuccess")
+    try check(!SteamLibraryMerge.markPublicMetadataUnavailable(gameID:"888",in:&absentState),"notFoundCannotMarkValidCachedPublicDescriptorUnavailable")
+    var presentation=local;presentation.metadata=[:]
+    try check(!LibraryEntryPresentation.isOtherContent(presentation),"namedLegacyPresentationRetainedUntilAuthoritativeClassification")
+    presentation.metadata=["libraryKind":.string("unknown")];try check(LibraryEntryPresentation.isOtherContent(presentation),"explicitUnknownSeparatedEvenWithRealName")
+    presentation.metadata=[:];presentation.title="480";try check(LibraryEntryPresentation.isOtherContent(presentation)&&LibraryEntryPresentation.title(presentation)=="Contenuto Steam non identificato","numericFallbackNeverNamedGameCard")
+    presentation.title="Gioco Steam · informazioni non disponibili";try check(LibraryEntryPresentation.isOtherContent(presentation),"CMUnnamedGamePlaceholderPresentationFriendly")
+    presentation.metadata=["libraryKind":.string("game"),"libraryClassificationSource":.string("cm_player")];try check(!LibraryEntryPresentation.isOtherContent(presentation),"explicitCMGameRemainsGameEvenWhenNameUnavailable")
+    for kind in ["dlc","tool","runtime","support"]{presentation.metadata=["libraryKind":.string(kind)];try check(LibraryEntryPresentation.isOtherContent(presentation),"classified"+kind+"LivesInContentSection")}
     let session=SteamClientSession(profile:profile,command:[CommandLine.arguments[1],CommandLine.arguments[2],run.path],credentialAccess:vault.access)
     let coordinator=SteamLibraryCoordinator(profile:profile,network:session)
     coordinator.onAccountChanged={account in SteamLibraryMerge.clearOtherAccountMembership(in:&state,profile:profile,account:account)}
-    coordinator.onGames={games,account in merges+=1;SteamLibraryMerge.apply(games,to:&state,profile:profile,account:account)}
+    coordinator.onGames={[weak coordinator]games,account in merges+=1;SteamLibraryMerge.apply(games,to:&state,profile:profile,account:account,retainMissing:coordinator?.lastMembershipComplete==false)}
     coordinator.onError={_ in errors+=1}
     session.onChange={coordinator.observe($0)}
     defer{coordinator.stop();session.stop()}
@@ -103,15 +123,36 @@ private final class LibraryVault {
     try mode("large");coordinator.sync();try spin{merges==3}
     let largeBytes=Int(try String(contentsOf:run.appendingPathComponent("large-bytes"),encoding:.utf8)) ?? 0
     try check(largeBytes>4*1024*1024 && state.games.filter{$0.profileIDs?.contains(profile)==true}.count==1200,"ownedLibraryOverFourMiBStreamsAndCommitsAtomically")
-    vault.replace("fixture_other");try mode("other");session.request("fixture_other"){_ in};try spin{merges==4}
+    let beforePartial=Set(state.games.filter{$0.profileIDs?.contains(profile)==true}.map(\.storeID))
+    try mode("partial");coordinator.sync();try spin{merges==4}
+    try check(beforePartial.isSubset(of:Set(state.games.filter{$0.profileIDs?.contains(profile)==true}.map(\.storeID))),"incompleteLicenseMembershipRetainsMissingCachedMembers")
+    try mode("bad-bool");coordinator.sync();try spin{errors==4};try check(merges==4,"membershipCompletenessRequiresBooleanNotNumericZero")
+    let beforeAccountSwitch=merges
+    vault.replace("fixture_other");try mode("other");session.request("fixture_other"){_ in};try spin{merges==beforeAccountSwitch+1}
     try check(state.games.first{$0.storeID=="482"}?.profileIDs?.contains(profile)==false && state.games.first{$0.storeID=="600"}?.profileIDs==[profile],"accountSwitchCannotLeakOldRemoteCatalog")
     try check(state.games.first{$0.storeID=="480"}?.variants.prefix(2).elementsEqual([installed,planned])==true && state.games.first{$0.storeID=="499"}==remoteOther,"accountSwitchRetainsInstallationBytesAndOtherProfileData")
-    try mode("delay");coordinator.sync();coordinator.stop();settle(0.6);try check(merges==4,"stoppedCoordinatorRejectsLateLibraryResult")
+    try mode("delay");coordinator.sync();coordinator.stop();settle(0.6);try check(merges==beforeAccountSwitch+1,"stoppedCoordinatorRejectsLateLibraryResult")
     let offline=SteamClientSession(profile:UUID(),command:[CommandLine.arguments[1],CommandLine.arguments[2],run.path],credentialAccess:vault.access)
     var wentOnline=false;offline.onChange={if $0.online{wentOnline=true}}
     offline.start();offline.goOffline();settle(0.5)
     try check(!wentOnline && !offline.state.online,"manualOfflineDuringSlowStartupCannotAutoConnectLater");offline.stop()
     try check(vault.callsOnMain==0,"allSessionVaultIOOffMain")
+    let persistenceRoot=run.appendingPathComponent("ordered-state"),paths=LauncherPaths(root:persistenceRoot),entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0),secondDone=DispatchSemaphore(value:0)
+    let slow=LibraryRepository(paths:paths,beforeWrite:{entered.signal();release.wait()});let newer=LibraryRepository(paths:paths)
+    var older=LibraryState.initial();older.games=[Game(id:"old",store:.local,storeID:"old",title:"Older async")];var latest=older;latest.games[0].title="New user save"
+    var oldDone=false,oldSucceeded=false,onMain=false
+    slow.saveAsync(older){result in oldDone=true;onMain=Thread.isMainThread;if case .success=result{oldSucceeded=true}}
+    try check(entered.wait(timeout:.now()+2) == .success,"asyncPersistenceStartsOnOwnedWriterQueue")
+    DispatchQueue.global().async{try?newer.save(latest);secondDone.signal()}
+    try check(secondDone.wait(timeout:.now()+0.05) == .timedOut,"newRepositorySaveWaitsBehindOlderQueuedSnapshot")
+    release.signal();var newerFinished=false;try spin{if secondDone.wait(timeout:.now()) == .success{newerFinished=true};return oldDone && newerFinished}
+    try check(oldSucceeded && onMain && (try newer.load()).games[0].title=="New user save","sharedRootWriterPreventsOldAsyncOverwritingMaintenanceOrUserSave")
+    let fifo=LibraryRepository(paths:LauncherPaths(root:run.appendingPathComponent("fifo-state")));var callbacks=[Int]();var allMain=true
+    for value in 1...3{var snapshot=older;snapshot.games[0].title=String(value);fifo.saveAsync(snapshot){result in callbacks.append(value);allMain=allMain && Thread.isMainThread;if case .failure=result{allMain=false}}}
+    var synchronous=older;synchronous.games[0].title="4";try fifo.save(synchronous);try spin{callbacks.count==3}
+    try check(callbacks==[1,2,3] && allMain && (try fifo.load()).games[0].title=="4","asyncCompletionsFIFOAndSyncSaveOrdersAfterAllSubmittedSnapshots")
+    var valueSnapshot=older;fifo.saveAsync(valueSnapshot){_ in};valueSnapshot.games[0].title="Mutated after enqueue"
+    try check((try fifo.load()).games[0].title=="Older async","loadWaitsForPriorAsyncAndSnapshotIsIndependentOfLaterMutation")
     checks["allPassed"]=checks.values.allSatisfy{$0}
     print(String(data:try JSONSerialization.data(withJSONObject:checks,options:[.sortedKeys]),encoding:.utf8)!)
   }

@@ -7,7 +7,23 @@ import LauncherCore
 /// preference records remain in place even when that membership is removed.
 enum SteamLibraryMerge {
   static let ownersKey = "readySteamCatalogOwners"
-  private static let catalogKeys:Set<String>=["shortDescription","description","releaseDate","storeURL","iconURL","capsuleURL","heroURL","bannerURL","developers","publishers","genres","downloadableVariants","metadataComplete","title","contentType","artworkFallbacksUnverified"]
+  private static let catalogKeys:Set<String>=["shortDescription","description","releaseDate","storeURL","iconURL","capsuleURL","heroURL","bannerURL","developers","publishers","genres","downloadableVariants","metadataComplete","title","contentType","artworkFallbacksUnverified","libraryKind","libraryClassificationSource","libraryMembershipSource","ownedGameListAvailable","ownedGameListed","contentInfoUnavailable","descriptionUnavailable","descriptionSource","publicMetadataUnavailable"]
+  private static let classificationKeys:Set<String>=["libraryKind","libraryClassificationSource","contentType","contentInfoUnavailable"]
+  private static let membershipKeys:Set<String>=["libraryMembershipSource","ownedGameListAvailable","ownedGameListed","licensePackageMember","licenseMembershipComplete","ownedGameListStatus"]
+  private static func knownKind(_ metadata:[String:JSONValue])->String? {
+    for key in ["libraryKind","contentType"] {
+      guard case .string(let raw)=metadata[key]else{continue}
+      let value=raw.trimmingCharacters(in:.whitespacesAndNewlines).lowercased()
+      if ["game","demo","application","dlc","tool","runtime","support"].contains(value){return value}
+      if value=="software"{return "application"};if value=="mod"{return "game"}
+    }
+    return nil
+  }
+  private static func hasDescription(_ metadata:[String:JSONValue])->Bool {
+    ["description","shortDescription"].contains{key in
+      if case .string(let value)=metadata[key]{return !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty};return false
+    }
+  }
   private static func owners(_ game: Game) -> [String: JSONValue] {
     if case .object(let value) = game.metadata?[ownersKey] { return value }; return [:]
   }
@@ -37,8 +53,8 @@ enum SteamLibraryMerge {
       game.metadata?[ownersKey] = .object(values);state.games[index]=game
     }
   }
-  static func apply(_ incoming: [Game], to state: inout LibraryState, profile: UUID, account: String) {
-    clearRemoteMembership(in: &state, profile: profile)
+  static func apply(_ incoming: [Game], to state: inout LibraryState, profile: UUID, account: String, retainMissing: Bool = false) {
+    if !retainMissing { clearRemoteMembership(in: &state, profile: profile) }
     var seen = Set<String>()
     for remote in incoming where remote.store == .steam {
       guard let app = UInt32(remote.storeID), app > 0, String(app) == remote.storeID,
@@ -62,9 +78,15 @@ enum SteamLibraryMerge {
         }
         var metadata = old.metadata ?? [:]
         let keepRichCatalog = metadata["metadataComplete"] == .bool(true) && remote.metadata?["metadataComplete"] != .bool(true)
-        for (key, value) in remote.metadata ?? [:] where key != ownersKey {
-          // PICS still refreshes launch/depot fields. Its catalog placeholders
-          // must not erase an already completed public metadata response.
+        let incoming=remote.metadata ?? [:]
+        let authoritative=["pics","cm_player"].contains(incoming["libraryClassificationSource"]?.foundation as?String ?? "") && knownKind(incoming) != nil
+        let hadKnownClassification=knownKind(metadata) != nil
+        for (key, value) in incoming where key != ownersKey {
+          if membershipKeys.contains(key){metadata[key]=value;continue}
+          if classificationKeys.contains(key){
+            if authoritative || !hadKnownClassification {metadata[key]=value}
+            continue
+          }
           if keepRichCatalog,catalogKeys.contains(key),metadata[key] != nil{continue}
           metadata[key] = value
         }
@@ -84,7 +106,7 @@ enum SteamLibraryMerge {
   }
   static func placeholderTitle(_ game:Game)->Bool {
     let title=game.title.trimmingCharacters(in:.whitespacesAndNewlines)
-    return title.isEmpty || title==game.storeID
+    return title.isEmpty || title==game.storeID || title=="Contenuto Steam · informazioni non disponibili" || title=="Contenuto Steam non identificato" || title=="Gioco Steam · informazioni non disponibili"
   }
   private static func hasArtwork(_ game:Game)->Bool {
     let values=[game.artworkURL,game.metadata?["capsuleURL"]?.foundation as?String,game.metadata?["iconURL"]?.foundation as?String]
@@ -92,7 +114,10 @@ enum SteamLibraryMerge {
   }
   static func needsPublicRepair(_ game:Game)->Bool {
     guard game.store == .steam,let app=UInt32(game.storeID),app>0,String(app)==game.storeID else{return false}
-    return placeholderTitle(game) || !hasArtwork(game) || game.variants.isEmpty
+    let metadata=game.metadata ?? [:]
+    if metadata["publicMetadataUnavailable"] == .bool(true){return false}
+    if metadata["metadataComplete"] == .bool(true),(hasDescription(metadata) || metadata["descriptionUnavailable"] == .bool(true)){return false}
+    return placeholderTitle(game) || !hasArtwork(game) || game.variants.isEmpty || !hasDescription(metadata)
   }
   /// Candidate URLs only. No image existence or entitlement is inferred.
   static func addArtworkFallback(gameID:String,in state:inout LibraryState)->Bool {
@@ -109,7 +134,14 @@ enum SteamLibraryMerge {
   static func enrich(_ metadata: [String: JSONValue], gameID: String, in state: inout LibraryState) {
     guard let index = state.games.firstIndex(where: { $0.store == .steam && $0.storeID == gameID }) else { return }
     var combined = state.games[index].metadata ?? [:]
-    for (key, value) in metadata where catalogKeys.contains(key) { combined[key] = value }
+    let oldKind=knownKind(combined),newKind=knownKind(metadata)
+    let authoritative=["pics","cm_player"].contains(combined["libraryClassificationSource"]?.foundation as?String ?? "")
+    for (key,value) in metadata where catalogKeys.contains(key) && !membershipKeys.contains(key) {
+      if classificationKeys.contains(key),authoritative,let oldKind,newKind != oldKind{continue}
+      if key=="libraryClassificationSource",authoritative,oldKind != nil{continue}
+      combined[key]=value
+    }
+    if metadata["metadataComplete"] == .bool(true){combined["publicMetadataUnavailable"] = .bool(false)}
     state.games[index].metadata = combined
     if placeholderTitle(state.games[index]),case .string(let raw)=metadata["title"] {
       let title=String(raw.unicodeScalars.filter{!CharacterSet.controlCharacters.contains($0)}).trimmingCharacters(in:.whitespacesAndNewlines)
@@ -119,6 +151,12 @@ enum SteamLibraryMerge {
     if case .string(let image) = metadata["capsuleURL"], URL(string: image)?.scheme == "https" {
       state.games[index].artworkURL = image
     }
+  }
+  @discardableResult static func markPublicMetadataUnavailable(gameID:String,in state:inout LibraryState)->Bool {
+    guard let index=state.games.firstIndex(where:{$0.store == .steam && $0.storeID==gameID})else{return false}
+    let metadata=state.games[index].metadata ?? [:]
+    guard !(metadata["metadataComplete"] == .bool(true) && hasDescription(metadata)),metadata["publicMetadataUnavailable"] != .bool(true)else{return false}
+    state.games[index].metadata=(metadata.merging(["publicMetadataUnavailable":.bool(true)]){_,new in new});return true
   }
   /// Upgrade cached public metadata without any service, credential or network
   /// request. Bound startup work and report whether one repository save is due.
@@ -163,6 +201,10 @@ final class SteamLibraryCoordinator {
   private var detailRequests = [String: String]()
   private var cachedDetails = [String: [String: Any]]()
   private var metadataQueue=[String](),activeMetadata=Set<String>(),repairAttempted=Set<String>()
+  private var metadataRevisions=[String:Int](),metadataJobRevisions=[String:Int]()
+  private var metadataCooldown:DispatchWorkItem?
+  private var metadataResumeAfter=Date.distantPast
+  private(set) var lastMembershipComplete=true
   private var knownNetworkGeneration:UUID
   var onScopeChanged:(()->Void)?
   var onAccountChanged: ((String) -> Void)?
@@ -225,24 +267,38 @@ final class SteamLibraryCoordinator {
       if event["games"] != nil, pageCount==0, let values=decode(event["games"]) {games=values}
       else if !malformed,integer(event["gameCount"])==pages.count,integer(event["pageCount"])==pageCount {games=pages}
       else {self.synced=true;self.onError?("Risposta della libreria Steam non valida. La copia precedente è stata conservata.");return}
+      if let raw=event["licenseMembershipComplete"] {
+        guard let value=raw as?NSNumber,CFGetTypeID(value)==CFBooleanGetTypeID()else{self.synced=true;self.onError?("Risposta della libreria Steam non valida. La copia precedente è stata conservata.");return}
+        self.lastMembershipComplete=value.boolValue
+      }else{self.lastMembershipComplete=true}
       self.synced = true; self.onGames?(games, account)
     }
     if libraryFlight == flight { libraryRequest = id }
   }
-  func metadata(gameID: String, completion: @escaping Event) {
+  func metadata(gameID: String, refresh: Bool = false, priority: Bool = false, completion: @escaping Event) {
+    guard let value = UInt32(gameID), value > 0, String(value) == gameID else { completion(["type":"error", "code":"invalid_game_id"]); return }
     network.start()
     guard network.serviceRunning else{completion(["type":"error","code":"service_unavailable"]);return}
-    guard let value = UInt32(gameID), value > 0, String(value) == gameID else { completion(["type":"error", "code":"invalid_game_id"]); return }
-    if let cached = cachedDetails[gameID] { completion(cached); return }
-    if details[gameID] != nil { details[gameID]?.append(completion); return }
-    details[gameID] = [completion];metadataQueue.append(gameID);pumpMetadata()
+    if !refresh,details[gameID+"|refresh"] != nil {details[gameID+"|refresh"]?.append(completion);return}
+    if !refresh, let cached = cachedDetails[gameID] { completion(cached); return }
+    let key=gameID+(refresh ? "|refresh":"|cached")
+    if details[key] != nil {
+      details[key]?.append(completion)
+      if priority,let index=metadataQueue.firstIndex(of:key){metadataQueue.remove(at:index);metadataQueue.insert(key,at:0)}
+      return
+    }
+    metadataRevisions[gameID,default:0] += 1
+    metadataJobRevisions[key]=metadataRevisions[gameID]
+    details[key] = [completion]
+    if priority{metadataQueue.insert(key,at:0)}else{metadataQueue.append(key)}
+    pumpMetadata()
   }
-  /// A bounded pass over this profile's cached visible rows, never an owned
-  /// library request. Failed public lookups consume their one attempt too.
+  /// Warm every incomplete visible record once per service generation. Public
+  /// lookups never infer ownership; the queue limits concurrency and rate limits.
   func repairCached(games:[Game],prepare:([String])->Void,event:@escaping(String,[String:Any])->Void) {
     guard network.serviceRunning else{prepare([]);return}
     var selected=[String]()
-    for game in games.prefix(20000) where repairAttempted.count<64 {
+    for game in games.prefix(20000) {
       guard game.profileIDs==nil || game.profileIDs!.contains(profile),SteamLibraryMerge.needsPublicRepair(game),repairAttempted.insert(game.storeID).inserted else{continue}
       selected.append(game.storeID)
     }
@@ -250,25 +306,46 @@ final class SteamLibraryCoordinator {
     for id in selected {metadata(gameID:id){value in event(id,value)}}
   }
   private func pumpMetadata() {
+    guard network.serviceRunning else{return}
+    guard Date() >= metadataResumeAfter else {
+      if metadataCooldown == nil {
+        let work=DispatchWorkItem{[weak self] in self?.metadataCooldown=nil;self?.pumpMetadata()}
+        metadataCooldown=work;DispatchQueue.main.asyncAfter(deadline:.now()+metadataResumeAfter.timeIntervalSinceNow,execute:work)
+      }
+      return
+    }
     while activeMetadata.count<2,!metadataQueue.isEmpty {
-      let gameID=metadataQueue.removeFirst()
-      guard details[gameID] != nil else{continue}
-      activeMetadata.insert(gameID)
+      let key=metadataQueue.removeFirst(),gameID=key.components(separatedBy:"|")[0]
+      guard details[key] != nil,let revision=metadataJobRevisions[key]else{continue}
+      if metadataRevisions[gameID] != revision {
+        let callbacks=details.removeValue(forKey:key) ?? [];metadataJobRevisions.removeValue(forKey:key)
+        for callback in callbacks{callback(["type":"error","code":"superseded"])}
+        continue
+      }
+      activeMetadata.insert(key)
       let epoch=generation,networkEpoch=network.generation,identity=account
-      let id=network.request("catalog_metadata",options:["gameID":gameID,"language":"italian"]){[weak self]event in
+      let id=network.request("catalog_metadata",options:["gameID":gameID,"language":"italian","refresh":key.hasSuffix("|refresh")]){[weak self]event in
         guard let self,self.generation==epoch,self.network.generation==networkEpoch,self.account==identity else{return}
         guard ["result","error"].contains(event["type"]as?String ?? "")else{return}
-        let callbacks=self.details.removeValue(forKey:gameID) ?? []
-        self.detailRequests.removeValue(forKey:gameID);self.activeMetadata.remove(gameID)
+        let callbacks=self.details.removeValue(forKey:key) ?? []
+        self.detailRequests.removeValue(forKey:key);self.metadataJobRevisions.removeValue(forKey:key);self.activeMetadata.remove(key)
         var result=event
-        if event["type"]as?String=="result" {
+        if self.metadataRevisions[gameID] != revision {result=["type":"error","code":"superseded"]}
+        else if event["type"]as?String=="result" {
           if String(describing:event["appID"] ?? "")==gameID,event["metadata"]is[String:Any]{self.cachedDetails[gameID]=event}
           else{result=["type":"error","code":"invalid_catalog_response"]}
+        }
+        let code=event["code"]as?String ?? ""
+        let rateLimited=["rate_limited","metadata_rate_limited"].contains(code)
+        var retry:Double?
+        if let number=event["retryAfterSeconds"]as?NSNumber,CFGetTypeID(number) != CFBooleanGetTypeID(),number.doubleValue.isFinite,number.doubleValue>0{retry=min(3600,max(1,number.doubleValue))}
+        if rateLimited || (code=="metadata_unavailable" && retry != nil) {
+          self.metadataResumeAfter=max(self.metadataResumeAfter,Date().addingTimeInterval(retry ?? 60))
         }
         for callback in callbacks{callback(result)}
         self.pumpMetadata()
       }
-      if generation==epoch,activeMetadata.contains(gameID){detailRequests[gameID]=id}else{network.cancel(id)}
+      if generation==epoch,activeMetadata.contains(key){detailRequests[key]=id}else{network.cancel(id)}
     }
   }
   func stop() { invalidateRequests(); account = nil; synced = false; refreshRequested=false; online = false }
@@ -276,7 +353,8 @@ final class SteamLibraryCoordinator {
     generation = UUID()
     let requests = Array(detailRequests.values) + (libraryRequest.map { [$0] } ?? [])
     libraryRequest = nil; libraryFlight = nil; details.removeAll(); detailRequests.removeAll(); cachedDetails.removeAll()
-    metadataQueue.removeAll();activeMetadata.removeAll();repairAttempted.removeAll()
+    metadataQueue.removeAll();activeMetadata.removeAll();repairAttempted.removeAll();metadataRevisions.removeAll();metadataJobRevisions.removeAll()
+    metadataCooldown?.cancel();metadataCooldown=nil;metadataResumeAfter = .distantPast
     for id in requests { network.cancel(id) }
   }
 }

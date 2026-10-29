@@ -5,7 +5,7 @@ import LauncherCore
 /// Public artwork candidates only. Constructed Steam URLs are unverified
 /// attempts until ArtworkCache downloads and decodes an actual image.
 enum GameArtwork {
-  enum Role {case card,banner,icon}
+  enum Role:String,Codable,CaseIterable {case card,banner,icon}
   static func steamAppID(_ game:Game)->String? {
     guard game.store == .steam,!game.storeID.isEmpty,game.storeID.utf8.count<=10,
       game.storeID.utf8.allSatisfy({(48...57).contains($0)}),let value=UInt32(game.storeID),value>0,String(value)==game.storeID else{return nil}
@@ -39,7 +39,7 @@ enum GameArtwork {
       return unique(known+[base+"library_600x900.jpg",capsule,game.artworkURL,icon])
     case .banner:
       return unique([hero,base+"library_hero.jpg",banner,game.artworkURL,base+"header.jpg"].filter{$0 != icon})
-    case .icon:return unique([icon])
+    case .icon:return unique([icon,game.artworkURL,capsule,base+"header.jpg"])
     }
   }
   static func shouldAspectFit(imageSize:CGSize,role:Role)->Bool {

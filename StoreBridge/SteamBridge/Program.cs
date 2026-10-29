@@ -114,35 +114,11 @@ static class Program
             if(op=="library")
             {
                 stage=SteamOperationStage.Library;observedResult=null;
-                var licenseList=await licenses.Task.WaitAsync(deadline.Token);
-                observedResult=licenseList.Result;
-                if(licenseList.Result!=EResult.OK)throw new Exception("license_error");
-                var ids=new HashSet<uint>();
-                foreach(var chunk in licenseList.LicenseList.Chunk(100))
-                {
-                    var requests=chunk.Select(l=>new SteamApps.PICSRequest(l.PackageID,l.AccessToken));
-                    var packages=await apps.PICSGetProductInfo(Array.Empty<SteamApps.PICSRequest>(),requests).ToTask().WaitAsync(deadline.Token);
-                    if(!packages.Complete || packages.Failed || packages.Results is null)throw new Exception("license_error");
-                    foreach(var part in packages.Results)foreach(var p in part.Packages.Values)
-                        if(p.KeyValues is not null)foreach(var id in p.KeyValues["appids"].Children)if(uint.TryParse(id.Value,out var n))ids.Add(n);
-                }
                 var games=new List<object>();
-                foreach(var chunk in ids.Chunk(100))
-                {
-                    var access=await apps.PICSGetAccessTokens(chunk,Array.Empty<uint>()).ToTask().WaitAsync(deadline.Token);
-                    var requests=chunk.Select(id=>new SteamApps.PICSRequest(id,access.AppTokens.GetValueOrDefault(id)));
-                    var infos=await apps.PICSGetProductInfo(requests,Array.Empty<SteamApps.PICSRequest>()).ToTask().WaitAsync(deadline.Token);
-                    if(!infos.Complete || infos.Failed || infos.Results is null)throw new Exception("license_error");
-                    var records=new Dictionary<uint,KeyValue>();
-                    foreach(var part in infos.Results)foreach(var app in part.Apps.Values)
-                        if(app.KeyValues is {} values)records[app.ID]=values;
-                    foreach(uint id in chunk)
-                    {
-                        records.TryGetValue(id,out var values);
-                        if(SteamCatalogMetadata.IsLibraryApp(values))games.Add(SteamCatalogMetadata.LibraryGame(id,values));
-                    }
-                    Emit(new {type="progress",phase="library",completed=games.Count});
-                }
+                await SteamOwnedGamesCatalog.CollectAsync(token=>SteamOwnedGamesCatalog.FetchSelfAsync(client,token),
+                    token=>SteamOwnedGamesCatalog.PackageIDsAsync(apps,licenses.Task,token),
+                    (ids,token)=>SteamOwnedGamesCatalog.AppInfoAsync(apps,ids,token),page=>
+                    {games.AddRange(page);Emit(new{type="progress",phase="library",completed=games.Count});},deadline.Token);
                 Emit(new {type="result",games,steamID=client.SteamID?.ConvertToUInt64().ToString()});
             }
             else if(op=="launch_info")

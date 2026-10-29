@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: GPL-3.0-only
+import AppKit
+import Metal
+import QuartzCore
+
+/// Rare chrome updates use immutable uploads. Drawable acquisition/encoding is
+/// outside Main; at most two jobs exist, with GPU completion owning resources.
+final class CanvasShellRenderer {
+  private let device:MTLDevice,queue:MTLCommandQueue,pipeline:MTLRenderPipelineState
+  private let worker=DispatchQueue(label:"app.ready.canvas-shell",qos:.userInteractive)
+  private let lock=NSLock()
+  private var stopped=false,generation=0,jobs=0
+  private var current:MTLTexture?
+  private(set) var submitted=0
+  var canSubmit:Bool{lock.lock();defer{lock.unlock()};return !stopped && jobs<2}
+  var allocatedBytes:Int{lock.lock();defer{lock.unlock()};return stopped ? 0:(current.map{$0.width*$0.height*4} ?? 0)}
+  var inFlight:Int{lock.lock();defer{lock.unlock()};return jobs}
+  init(device:MTLDevice)throws{
+    self.device=device
+    guard let queue=device.makeCommandQueue()else{throw NSError(domain:"CanvasQueue",code:1)};self.queue=queue
+    let library=try device.makeLibrary(source:CanvasShader.source,options:nil),descriptor=MTLRenderPipelineDescriptor()
+    descriptor.vertexFunction=library.makeFunction(name:"vertexMain");descriptor.fragmentFunction=library.makeFunction(name:"fragmentMain");descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+    pipeline=try device.makeRenderPipelineState(descriptor:descriptor)
+  }
+  @discardableResult func submit(_ raster:CanvasRaster,layer:CAMetalLayer,completion:@escaping(Bool)->Void)->Bool{
+    submit(raster,target:nil,drawable:{layer.nextDrawable()},completion:completion)
+  }
+  /// Own UI tests can render the exact shader/queue into a readback texture,
+  /// without creating/ordering a window or involving WindowServer pacing.
+  @discardableResult func submit(_ raster:CanvasRaster,target:MTLTexture,completion:@escaping(Bool)->Void)->Bool{
+    submit(raster,target:target,drawable:{nil},completion:completion)
+  }
+  private func submit(_ raster:CanvasRaster,target:MTLTexture?,drawable:@escaping()->CAMetalDrawable?,completion:@escaping(Bool)->Void)->Bool{
+    lock.lock();guard !stopped,jobs<2 else{lock.unlock();return false};jobs+=1;let epoch=generation;lock.unlock()
+    let descriptor=MTLTextureDescriptor.texture2DDescriptor(pixelFormat:.bgra8Unorm,width:raster.width,height:raster.height,mipmapped:false);descriptor.storageMode = .shared;descriptor.usage = .shaderRead
+    guard let texture=device.makeTexture(descriptor:descriptor)else{finish(epoch,success:false,completion:completion);return true}
+    texture.replace(region:MTLRegionMake2D(0,0,raster.width,raster.height),mipmapLevel:0,withBytes:raster.data,bytesPerRow:raster.bytesPerRow)
+    lock.lock();if !stopped{current=texture};submitted+=1;lock.unlock()
+    worker.async{[self]in autoreleasepool{
+      lock.lock();let valid = !stopped && epoch==generation;lock.unlock()
+      guard valid else{finish(epoch,success:false,completion:completion);return}
+      let output=target==nil ? drawable():nil
+      lock.lock();let stillValid = !stopped && epoch==generation;lock.unlock()
+      guard stillValid else{finish(epoch,success:false,completion:completion);return}
+      guard let destination=target ?? output?.texture,destination.width==texture.width,destination.height==texture.height,
+        let command=queue.makeCommandBuffer()else{finish(epoch,success:false,completion:completion);return}
+      let pass=MTLRenderPassDescriptor();pass.colorAttachments[0].texture=destination;pass.colorAttachments[0].loadAction = .dontCare;pass.colorAttachments[0].storeAction = .store
+      guard let encoder=command.makeRenderCommandEncoder(descriptor:pass)else{finish(epoch,success:false,completion:completion);return}
+      encoder.setRenderPipelineState(pipeline);encoder.setFragmentTexture(texture,index:0);encoder.drawPrimitives(type:.triangle,vertexStart:0,vertexCount:3);encoder.endEncoding()
+      command.addCompletedHandler{[self,texture]done in withExtendedLifetime(texture){finish(epoch,success:done.status == .completed,completion:completion)}}
+      if let output{command.present(output)};command.commit()
+    }}
+    return true
+  }
+  private func finish(_ epoch:Int,success:Bool,completion:@escaping(Bool)->Void){
+    lock.lock();jobs-=1;let valid = !stopped && epoch==generation;lock.unlock()
+    DispatchQueue.main.async{completion(success && valid)}
+  }
+  func stop(){lock.lock();stopped=true;generation+=1;current=nil;lock.unlock()}
+}
+
+final class CanvasDisplayLinkTarget:NSObject {
+  weak var canvas:MetalCanvas?
+  @objc func tick(_ displayLink:CADisplayLink){canvas?.renderDisplayTick()}
+}

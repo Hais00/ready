@@ -37,8 +37,8 @@ extension AppDelegate {
     library.onGames = { [weak self, weak library] games, account in
       guard let self, let library, self.steamLibrary === library, self.state.activeProfile == profile,
         network.state.online, network.state.steamID == account else { return }
-      SteamLibraryMerge.apply(games, to: &self.state, profile: profile, account: account)
-      self.canvas.message = "\(games.count) giochi sincronizzati da Steam"
+      SteamLibraryMerge.apply(games, to: &self.state, profile: profile, account: account, retainMissing: !library.lastMembershipComplete)
+      self.canvas.message = "\(games.count) contenuti sincronizzati da Steam"
       do { try self.persist() } catch { self.showError(error) }
       self.repairSteamLibraryCache()
       if !self.session.running { self.refreshGameDetails() }
@@ -100,19 +100,7 @@ extension AppDelegate {
     // Startup is nonblocking even when Keychain authorization is locked.
     network.start()
     repairSteamLibraryCache()
-    // A small first-screen prefetch also enriches already installed games:
-    // catalogue availability/artwork is public and does not need account login.
-    // The complete owned catalogue still comes only from the authenticated CM.
-    var prefetched=Set<String>()
-    for game in canvas.visibleGames where game.store == .steam {
-      guard prefetched.count<6 else{break}
-      guard prefetched.insert(game.storeID).inserted,
-        (game.metadata?["metadataComplete"]?.foundation as?Bool) != true else{continue}
-      requestSteamGameDetails(gameID:game.storeID){[weak self] _ in
-        guard let self,self.state.activeProfile==profile else{return}
-        self.refreshGameDetails()
-      }
-    }
+    canvas.artworkCache.prepare(games:canvas.allProfileGames,visibleGameIDs:canvas.visibleGames.prefix(24).map(\.id))
   }
   @MainActor func showSteamDownloads() {
     if canvas.section == .downloads, steamDownloadsView != nil, pages.isPresenting { return }
@@ -194,19 +182,20 @@ extension AppDelegate {
     if steamNetwork == nil { configureSteamNetwork() }
     steamLibrary?.sync()
   }
-  @MainActor func requestSteamGameDetails(gameID: String, completion: @escaping ([String:Any]) -> Void) {
+  @MainActor func requestSteamGameDetails(gameID: String, refresh: Bool = false, completion: @escaping ([String:Any]) -> Void) {
     if steamNetwork == nil { configureSteamNetwork() }
     let profile = state.activeProfile
     guard let library = steamLibrary, let network = steamNetwork else {
       completion(["type":"error", "code":"service_unavailable"]); return
     }
-    library.metadata(gameID: gameID) { [weak self, weak library, weak network] event in
+    library.metadata(gameID: gameID, refresh: refresh, priority: refresh) { [weak self, weak library, weak network] event in
       guard let self, let library, let network, self.steamLibrary === library, self.steamNetwork === network,
         self.state.activeProfile == profile else { return }
       if event["type"] as? String == "result", let value = event["metadata"] as? [String:Any],
         let data = try? JSONSerialization.data(withJSONObject: value),
         let metadata = try? JSONDecoder().decode([String:JSONValue].self, from: data) {
-        SteamLibraryMerge.enrich(metadata, gameID: gameID, in: &self.state); try? self.persist()
+        SteamLibraryMerge.enrich(metadata, gameID: gameID, in: &self.state)
+        self.scheduleSteamCatalogUpdate(gameID:gameID)
       }
       completion(event)
     }
@@ -219,15 +208,39 @@ extension AppDelegate {
       guard let self,self.steamLibrary===library,self.state.activeProfile==profile else{return}
       var changed=false
       for id in ids {if SteamLibraryMerge.addArtworkFallback(gameID:id,in:&self.state){changed=true}}
-      if changed{try?self.persist()}
+      if changed{self.scheduleSteamCatalogUpdate()}
     },event:{[weak self,weak library,weak network]id,event in
-      guard let self,let library,let network,self.steamLibrary===library,self.steamNetwork===network,self.state.activeProfile==profile,
-        event["type"]as?String=="result",let value=event["metadata"]as?[String:Any],
-        let bytes=try?JSONSerialization.data(withJSONObject:value),let metadata=try?JSONDecoder().decode([String:JSONValue].self,from:bytes)else{return}
-      SteamLibraryMerge.enrich(metadata,gameID:id,in:&self.state)
-      try?self.persist()
-      if !self.session.running{self.refreshGameDetails()}
+      guard let self,let library,let network,self.steamLibrary===library,self.steamNetwork===network,self.state.activeProfile==profile else{return}
+      if event["type"]as?String=="result",let value=event["metadata"]as?[String:Any],
+        let bytes=try?JSONSerialization.data(withJSONObject:value),let metadata=try?JSONDecoder().decode([String:JSONValue].self,from:bytes) {
+        SteamLibraryMerge.enrich(metadata,gameID:id,in:&self.state)
+        self.scheduleSteamCatalogUpdate(gameID:id)
+      } else if event["code"]as?String=="metadata_not_found",
+        SteamLibraryMerge.markPublicMetadataUnavailable(gameID:id,in:&self.state) {
+        self.scheduleSteamCatalogUpdate(gameID:id)
+      }
+
     })
+  }
+
+  /// Metadata arrives in batches. Keep serialization and fsync off the input
+  /// thread and coalesce model publication rather than rebuild on every reply.
+  @MainActor func scheduleSteamCatalogUpdate(gameID:String?=nil) {
+    if let gameID,let game=state.games.first(where:{$0.store == .steam && $0.storeID==gameID}) {
+      canvas.artworkCache.prepare(games:[game])
+      if gameDetailID==game.id{refreshGameDetails()}
+    }
+    guard steamCatalogUpdate==nil else{return}
+    let work=DispatchWorkItem{[weak self]in
+      guard let self else{return};self.steamCatalogUpdate=nil
+      let snapshot=self.state
+      self.repository.saveAsync(snapshot){[weak self]result in
+        if case .failure = result{self?.canvas.message="Impossibile salvare la cache della libreria."}
+      }
+      self.canvas.state=snapshot
+      if !self.session.running{self.canvas.refresh()}
+    }
+    steamCatalogUpdate=work;DispatchQueue.main.asyncAfter(deadline:.now()+0.6,execute:work)
   }
 
 }
