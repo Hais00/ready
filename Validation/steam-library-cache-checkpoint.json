@@ -80,7 +80,7 @@
     "steam-library-tests": {
       "passed": true,
       "count": 49,
-      "reportSHA256": "097b4b9b3d3fb6efe004ab5b0acc9bd26e0b0fc273715346165006c8010c4c8d"
+      "reportSHA256": "57362dd877ff8bb35054ef092c860ce4441333c0a44575c7fe9954311862f417"
     },
     "steam-metadata-repair-tests": {
       "passed": true,
