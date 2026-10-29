@@ -21,6 +21,12 @@ protocol SteamGameSessionLease: AnyObject {
   func keeperInput(prefixLease: FileHandle) throws -> SteamKeeperHandoff
   func takeGameHealthReadFD() throws -> Int32
   func stop()
+  func stop(completion: @escaping () -> Void)
+}
+extension SteamGameSessionLease {
+  // Simple fixtures/leases have no asynchronous process to reap. Real native
+  // hosts override this barrier and complete only after process AND reader EOF.
+  func stop(completion: @escaping () -> Void) { stop(); completion() }
 }
 
 /// Main-queue lifecycle + a worker for prefix initialization. Every Wine process is supervised.
@@ -43,6 +49,7 @@ final class SessionManager {
     var reportedStart = false
     var pendingExit: Int32?
     var finishing = false  // Main-queue-only exit de-duplication.
+    var cleaning = false, cleanupCompleted = false  // Main-queue-only barrier ownership.
     var selectedEngine: GraphicsEngine = .automatic
     var logURL: URL?
     var gameLogOffset: UInt64 = 0
@@ -491,37 +498,44 @@ final class SessionManager {
     }
   }
   private func startupFailed(_ ctx: Context, error: Error) {
-    guard isCurrent(ctx) else { return }
+    guard isCurrent(ctx), !ctx.cleaning else { return }
     let callback = ctx.completion
     ctx.completion = nil
-    cleanup(ctx)
-    callback?(.failure(error))
+    cleanup(ctx) { callback?(.failure(error)) }
   }
-  private func cleanup(_ ctx: Context) {
+  private func cleanup(_ ctx: Context, completion: @escaping () -> Void) {
+    guard isCurrent(ctx), !ctx.cleaning else { return }
+    ctx.cleaning = true
+    setPhase(.stopping)
     monitor?.invalidate()
     monitor = nil
     try? ctx.log?.close()
     ctx.log = nil
     ctx.steamSession?.onInvalidated = nil
-    ctx.steamSession?.stop()
-    ctx.steamHandoff = nil
-    // Break Context -> Process -> terminationHandler -> Context retention after exit.
-    // A timed-out native keeper is independent and continues holding its own fd0.
-    if let task = ctx.currentProcess(), !task.isRunning { task.terminationHandler = nil }
-    ctx.setProcess(nil)
-    // A handed-off lease only closes here. It never LOCK_UNs a surviving keeper.
-    ctx.lease = nil
-    stateLock.lock()
-    if context === ctx {
-      context = nil
-      phase = .idle
+    let stopped = { [self, ctx] in
+      onMain { [self, ctx] in
+        guard isCurrent(ctx), ctx.cleaning, !ctx.cleanupCompleted else { return }
+        ctx.cleanupCompleted = true
+        ctx.steamHandoff = nil
+        // Break Context -> Process -> terminationHandler -> Context retention after exit.
+        // A timed-out native keeper is independent and keeps its own inherited lease.
+        if let task = ctx.currentProcess(), !task.isRunning { task.terminationHandler = nil }
+        ctx.setProcess(nil)
+        // Retain the parent lease and stopping context through native host reap.
+        // A handed-off lease only closes; it never unlocks a surviving keeper.
+        ctx.lease = nil
+        stateLock.lock()
+        if context === ctx { context = nil; phase = .idle }
+        stateLock.unlock()
+        completion()
+      }
     }
-    stateLock.unlock()
+    if let steam = ctx.steamSession { steam.stop(completion: stopped) }
+    else { stopped() }
   }
   private func finish(_ ctx: Context, _ message: String) {
-    guard isCurrent(ctx) else { return }
-    cleanup(ctx)
-    onFinish?(message)
+    guard isCurrent(ctx), !ctx.cleaning else { return }
+    cleanup(ctx) { [self] in onFinish?(message) }
   }
   private func stopCurrent(_ ctx: Context) {
     guard let process = ctx.currentProcess() else { return }

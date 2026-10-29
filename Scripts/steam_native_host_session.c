@@ -60,7 +60,7 @@ int main(int argc,char **argv) {
         else if(!strcmp(key,"--sdk")&&!sdk)sdk=value;
         else return 64;
     }
-    if(!library||!mode||!discovery||!service||!sdk||life<3||event<1||life==event||(!strcmp(mode,"cached")?0:strcmp(mode,"credentials")))return 64;
+    if(!library||!mode||!discovery||!service||!sdk||life<3||event<1||life==event||(strcmp(mode,"cached")&&strcmp(mode,"credentials")&&strcmp(mode,"automatic")))return 64;
     if(!ready_session_environment(service))return 64;
     /* No arbitrary library can opt itself into the measured production ABI. */
     if(!ready_session_image(library))return 67;
@@ -86,7 +86,7 @@ int main(int argc,char **argv) {
     int null=open("/dev/null",O_WRONLY);if(null<0)return 73;
     if(dup2(null,STDOUT_FILENO)<0||dup2(null,STDERR_FILENO)<0)return 73;if(null>2)close(null);
     if(ready_session_begin(life,event))return 65;
-    if(setenv("READY_STEAM_DISCOVERY_LIBRARY",discovery,1)||setenv("READY_STEAM_DISCOVERY_SERVICE",service,1)||setenv("READY_STEAM_DISCOVERY_SDK",sdk,1))return 73;
+    if(setenv("READY_STEAM_DISCOVERY_LIBRARY",discovery,1)||setenv("READY_STEAM_DISCOVERY_SERVICE",service,1)||setenv("READY_STEAM_DISCOVERY_SDK",sdk,1)||setenv("READY_STEAM_PREFER_CACHED_LOGIN",!strcmp(mode,"automatic")?"1":"0",1))return 73;
     char *bootstrap[]={argv[0],(char *)library,"CLIENTENGINE_INTERFACE_VERSION005","--create-user",!strcmp(mode,"cached")?"--cached-login":"--authenticate",NULL};
     return ready_steam_native_bootstrap(5,bootstrap);
 }

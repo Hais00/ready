@@ -26,7 +26,7 @@ def main():
         names=['host','library','discoveryLibrary','sdk','fsAdapter','ipcAdapter','lookupAdapter']
         value={'schema':1,'kind':'ready-steam-native-host-binding-v1','fixtureOnly':True,'assets':{key:{'path':str(host if key=='host'else library),'sha256':sha(host if key=='host'else library)}for key in names},'extraFiles':[]}
         path=run/(name+'.json');path.write_text(json.dumps(value,sort_keys=True)+'\n');path.chmod(0o600);return path
-    normal=binding('normal',[]);binding('bad',['-DBAD_EVENT=1']);binding('lost-events',['-DDROP_EVENTS=1']);binding('hang',['-DIGNORE_LIFELINE=1']);binding('revoke',['-DREVOKE_HEALTH=1'])
+    normal=binding('normal',[]);binding('bad',['-DBAD_EVENT=1']);binding('lost-events',['-DDROP_EVENTS=1']);binding('hang',['-DIGNORE_LIFELINE=1']);binding('revoke',['-DREVOKE_HEALTH=1']);binding('delayed-eof',['-DDELAY_EVENT_EOF=1']);binding('delayed-exit',['-DDELAY_PROCESS_EXIT=1'])
     probe=run/'ReadySteamNativeHostProcessProbe'
     built=subprocess.run(['/usr/bin/xcrun','swiftc','-swift-version','5','-module-cache-path',str(WORK/'cache/swift-steam-host-supervisor'),str(sources[0]),str(sources[1]),'-o',str(probe)],env=env,capture_output=True,text=True,timeout=120)
     (run/'swift-build.log').write_text(built.stdout+built.stderr)

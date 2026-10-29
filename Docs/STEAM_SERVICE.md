@@ -104,8 +104,9 @@ missing Ready credential item. The old service/frontend did not preserve the
 exact server result/context, so the historical cause cannot be reconstructed
 and no token-rotation claim follows. The context separation and stale-result
 guards pass 177 service checks; frontend error/grant tests pass 100 checks.
-Live repeat-launch validation of this correction is pending renewed user login;
-the deleted credential cannot be recreated by installing the fix.
+That historical missing credential could not be recreated by installing the fix.
+The later native-restart validation below records renewed login and genuine
+repeat-launch evidence for the complete correction.
 
 Limits: 64 KiB input characters per complete JSONL frame, 4 MiB output characters,
 16 pending requests, 4096 unique requests per process, four-minute request budgets,
@@ -125,3 +126,46 @@ ownership/activity boundaries and bounded frames. Separate actual-SteamKit
 snapshot/shutdown and legacy self-test executions run under network denial.
 No genuine login, real friends update, real presence change, real activity packet,
 game launch, or download is claimed from those fixtures.
+
+## Persistent login and per-game native workers
+
+The profile's Steam login remains in its Ready Keychain item, and the persistent
+CM service handles account/friends/downloads independently of the game process.
+The native SDK worker is intentionally scoped to a game session and may exit
+when that game closes. Its private authenticated client cache survives worker
+exit; ending the game is not a user-requested account logout.
+
+Ready tracks a private credential revision per profile/game. A new revision
+initializes the native login once; only a strictly validated native ready event
+records that revision. Later launches with that revision use automatic login
+selection. The marker contains a credential digest, never the credential, and
+stays private; it is not an authorization grant or a value returned in logs.
+Unsafe/malformed marker entries fail closed. On the pinned Valve image, the worker asks the genuine interface for the cached account
+matching the currently authorized SteamID, checks cached-credential availability
+and selects that account. A selected cache logs on without calling the token
+seeding methods again. If local cache selection is unavailable, it uses the
+current authorization packet once. A server rejection after cached LogOn does
+not trigger an arbitrary second token attempt. Each launch still requires a
+current CM ownership grant and a genuine authenticated, identity-matching,
+subscribed native ready event. Cache availability alone cannot authorize play.
+
+Shutdown completion now requires both the exact native child's `waitpid` and
+its event-reader EOF. SessionManager retains its stopping context and lease
+until that barrier; cancelled preparations also retain their closing host and
+wait before preparing another one. Safe private native diagnostics distinguish
+account-triggered cancellation from an autonomous host exit, recording only
+fixed phases/login method, booleans, numeric reasons and exit results. UI
+progress terminates on failure/cancel and reports the actual launch stage.
+
+The native cache ABI remains tied to the pinned client image. Native workers
+are not kept alive indefinitely by this change. Windows runtime behavior and
+unrelated Steam service/CDN workflows require their separate validation.
+
+The [native persistent-login checkpoint](../Validation/steam-persistent-login-checkpoint.json)
+records two actual Cyberpunk launches on this M1: one initialization with a new
+credential revision, then a new worker using the genuine cached login. Both
+reached game UI, exited normally and were reaped; CM stayed online. Ready was
+then quit/reopened and restored its saved login without another QR. This is not
+a gameplay benchmark or certification of every game/client version. The earlier
+reproduction with repeated token reseeding revoked CM before native readiness;
+its safe timeline is retained privately.

@@ -20,7 +20,7 @@ FAKE=r'''
 typedef struct {void **table;} Object;
 static void *client_table[80],*engine_table[80],*internal_table[100],*user_table[10],*apps_table[10];
 static Object client={client_table},engine={engine_table},internal={internal_table},user={user_table},apps={apps_table};
-static int logged,callback_pending;static uint32_t app;static double began;
+static int logged,callback_pending,reject_pending;static uint32_t app;static double began;
 static double now(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec+t.tv_nsec/1e9;}
 static int mode(const char *s){const char *m=getenv("READY_FIXTURE_MODE");return m&&!strcmp(m,s);}
 static int later(void){return logged&&now()-began>.65;}
@@ -28,15 +28,15 @@ static void note(const char *s){const char *p=getenv("READY_FIXTURE_LOG");if(p){
 void *ready_fixture_method_7d9f18(void*a,int b,int c,const char*d){(void)a;(void)b;(void)c;(void)d;return &user;}
 void *ready_fixture_method_7da034(void*a,int b,int c,const char*d){(void)a;(void)b;(void)c;(void)d;return &apps;}
 _Bool ready_fixture_method_806114(void*a){(void)a;return logged&&!(later()&&mode("logged-off"));}
-uint64_t ready_fixture_method_806124(void*a){(void)a;return UINT64_C(76561197960265729)+(later()&&mode("identity-changed"));}
+uint64_t ready_fixture_method_806124(void*a){(void)a;return UINT64_C(76561197960265729)+((later()&&mode("identity-changed"))||mode("startup-identity-mismatch"));}
 _Bool ready_fixture_method_7d3bd4(void*a,uint32_t id){(void)a;return logged&&callback_pending==2&&id==app&&!(later()&&mode("license-lost"));}
 void *ready_fixture_method_a0fd38(void*a,int b,int c){(void)a;(void)b;(void)c;return &internal;}
-void ready_fixture_method_8a69ec(void*a,const char*b,const char*c,_Bool d){(void)a;(void)b;(void)c;(void)d;}
-void ready_fixture_method_8a6ccc(void*a,const char*b,const char*c){(void)a;(void)b;(void)c;}
-uint32_t ready_fixture_method_8a15cc(void*a,uint64_t id){(void)a;(void)id;if(mode("wedged-startup"))sleep(500);logged=!mode("auth-never-ready");began=now();return 1;}
-_Bool ready_fixture_method_8a9104(void*a,uint64_t id,char*out,int32_t n){(void)a;(void)id;snprintf(out,(size_t)n,"synthetic_account");return 1;}
-_Bool ready_fixture_method_8a623c(void*a,const char*b){(void)a;(void)b;return 1;}
-_Bool ready_fixture_method_8a63b8(void*a,const char*b,_Bool c){(void)a;(void)b;(void)c;return 1;}
+void ready_fixture_method_8a69ec(void*a,const char*b,const char*c,_Bool d){(void)a;(void)b;(void)c;(void)d;note("set-info");}
+void ready_fixture_method_8a6ccc(void*a,const char*b,const char*c){(void)a;(void)b;(void)c;note("set-token");}
+uint32_t ready_fixture_method_8a15cc(void*a,uint64_t id){(void)a;(void)id;note("log-on");if(mode("wedged-startup"))sleep(500);logged=!mode("auth-never-ready")&&!mode("cached-rejected");reject_pending=mode("cached-rejected");began=now();return 1;}
+_Bool ready_fixture_method_8a9104(void*a,uint64_t id,char*out,int32_t n){(void)a;(void)id;note(id==UINT64_C(76561197960265729)?"get-name-expected-identity":"get-name-WRONG-identity");if(mode("cache-name-missing"))return 0;snprintf(out,(size_t)n,"%s",mode("cache-name-invalid")?"bad/name":"synthetic_account");return 1;}
+_Bool ready_fixture_method_8a623c(void*a,const char*b){(void)a;(void)b;note("has-cache");return !mode("cache-empty");}
+_Bool ready_fixture_method_8a63b8(void*a,const char*b,_Bool c){(void)a;(void)b;(void)c;note("select-cache");return !mode("cache-select-fails");}
 _Bool ready_fixture_method_8a8000(void*a,uint32_t id,_Bool flags){(void)a;(void)flags;app=id;callback_pending=1;return 1;}
 __attribute__((constructor))static void setup(void){
 client_table[5]=ready_fixture_method_7d9f18;client_table[15]=ready_fixture_method_7da034;
@@ -50,6 +50,7 @@ void Steam_ReleaseUser(int p,int u){(void)p;(void)u;note("user-released");}
 _Bool Steam_BReleaseSteamPipe(int p){(void)p;note("pipe-released");return 1;}
 typedef struct {int32_t user,id;void *payload;int32_t size;} Message;
 _Bool Steam_BGetCallback(int pipe,Message*m){(void)pipe;static uint32_t fields[2];
+if(reject_pending){reject_pending=0;*m=(Message){1,103,NULL,0};return 1;}
 if(callback_pending==1){fields[0]=1;fields[1]=app;*m=(Message){1,mode("startup-disconnected")?103:1020028,fields,8};callback_pending=2;return 1;}
 if(later()&&(mode("disconnect-callback")||mode("malformed-callback"))){*m=(Message){1,mode("disconnect-callback")?103:900,NULL,mode("malformed-callback")?8:0};return 1;}
 return 0;}
@@ -97,11 +98,12 @@ def main():
     source={'username':'synthetic_account','refresh_token':'synthetic_fixture_not_a_real_token','steamID':'76561197960265729','appID':480}
     # pack_credentials uses the genuine protocol shape, with deliberately fake values.
     frame=pack_credentials(source)
-    def launch(mode='normal',cached=False,binary=fixture,raw=None,stdout_events=False):
+    def launch(mode='normal',cached=False,binary=fixture,raw=None,stdout_events=False,automatic=False,ambient_prefer=None):
         nonlocal counter
         counter+=1;d=run/f'case-{counter}';d.mkdir(mode=0o700);ep=d/'events.jsonl';ef=os.open(ep,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600);rd,wr=os.pipe();log=d/'fake.log'
         child_env=dict(env,READY_FIXTURE_MODE=mode,READY_FIXTURE_LOG=str(log))
-        cmd=[str(binary),'--host-session','--library',str(fake),'--lifeline-fd',str(rd),'--events-fd','1'if stdout_events else str(ef),'--mode','cached'if cached else'credentials','--discovery-library',str(fake),'--discovery-service','app.ready.steam.ipctool.'+'1'*32,'--sdk',str(fake)]
+        if ambient_prefer is not None:child_env['READY_STEAM_PREFER_CACHED_LOGIN']=ambient_prefer
+        cmd=[str(binary),'--host-session','--library',str(fake),'--lifeline-fd',str(rd),'--events-fd','1'if stdout_events else str(ef),'--mode','cached'if cached else'automatic'if automatic else'credentials','--discovery-library',str(fake),'--discovery-service','app.ready.steam.ipctool.'+'1'*32,'--sdk',str(fake)]
         child=subprocess.Popen(cmd,stdin=subprocess.PIPE,stdout=ef if stdout_events else subprocess.PIPE,stderr=subprocess.PIPE,pass_fds=(rd,ef),env=child_env)
         os.close(rd);os.close(ef)
         payload=raw if raw is not None else pack_credentials(dict(source,refresh_token='READY_USE_GENUINE_CACHED_LOGIN'))if cached else frame
@@ -116,6 +118,21 @@ def main():
         assert 'synthetic_'not in ep.read_text();return True
     checks['credentialReadyAndEOFRelease']=close_check()
     checks['cachedSentinelReadyAndEOFRelease']=close_check(cached=True)
+    for mode,expected in [('cache-empty','credentials'),('normal','cached'),('cache-name-missing','credentials'),('cache-name-invalid','credentials'),('cache-select-fails','credentials')]:
+        for token in (['synthetic_first_token','synthetic_different_token']if mode=='normal'else['synthetic_first_token']):
+            p,w,ep,log=launch(mode,automatic=True,raw=pack_credentials(dict(source,refresh_token=token)),ambient_prefer='0');await_type(ep,'ready');os.close(w);assert p.wait(timeout=3)==42
+            decisions=[x for x in events(ep)if x.get('type')=='login'];assert len(decisions)==1 and decisions[0]=={'schema':1,'type':'login','loginMethod':expected,'fixtureOnly':True}
+            calls=log.read_text().splitlines();assert calls.count('log-on')==1 and 'get-name-expected-identity'in calls and 'get-name-WRONG-identity'not in calls
+            assert calls.count('set-token')==(expected=='credentials')and calls.count('set-info')==(expected=='credentials')
+            assert events(ep).index(decisions[0])<next(i for i,x in enumerate(events(ep))if x.get('type')=='ready')
+        checks['automatic-'+mode+'-single-selected-method-no-reseed']=True
+    p,w,ep,log=launch('cached-rejected',automatic=True);assert p.wait(timeout=3)==43;os.close(w)
+    calls=log.read_text().splitlines();assert calls.count('log-on')==1 and 'set-info'not in calls and 'set-token'not in calls and not any(x.get('type')=='ready'for x in events(ep));assert [x['loginMethod']for x in events(ep)if x.get('type')=='login']==['cached']
+    checks['cachedAuthRejectionNeverFallsBackToCredentials']=True
+    p,w,ep,log=launch('startup-identity-mismatch',automatic=True);await_type(ep,'login');time.sleep(.15);assert not any(x.get('type')=='ready'for x in events(ep));os.close(w);assert p.wait(timeout=3)==42
+    assert 'set-token'not in log.read_text();checks['automaticStillRequiresGenuineExpectedIdentityBeforeReady']=True
+    p,w,ep,log=launch(ambient_prefer='1');await_type(ep,'ready');os.close(w);assert p.wait(timeout=3)==42;calls=log.read_text().splitlines();assert calls.count('set-token')==1 and 'has-cache'not in calls;assert [x['loginMethod']for x in events(ep)if x.get('type')=='login']==['credentials'];checks['explicitCredentialsModeOverridesAmbientCachedPreference']=True
+
     p,w,ep,log=launch(stdout_events=True);r=await_type(ep,'ready');assert r['privateName'].endswith(r['namespace'])and r['masterEndpoint']!=r['serviceEndpoint'];os.close(w);assert p.wait(timeout=3)==42;checks['EventsOnFD1AndValidatedContext']=True
     for mode,code in [('logged-off',43),('identity-changed',43),('license-lost',43),('disconnect-callback',43),('malformed-callback',45)]:
         p,w,ep,log=launch(mode);await_type(ep,'ready');assert p.wait(timeout=4)==code;os.close(w);state=await_type(ep,'state');assert state['revoked']and not state['authenticated'];assert 'discovery-stopped-revoked'in log.read_text();checks[mode]=True

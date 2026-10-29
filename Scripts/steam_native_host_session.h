@@ -23,6 +23,23 @@ static double ready_session_now(void) {
     return (double)t.tv_sec+(double)t.tv_nsec/1000000000.0;
 }
 static void ready_session_stop(int reason);
+static int ready_session_login(_Bool cached) {
+    // One fixed-vocabulary decision, emitted before any token setter/LogOn.
+    // This says which path is attempted, never that authentication succeeded.
+    static _Bool emitted;
+    if(emitted){ready_session_stop(66);return -1;}
+    emitted=1;
+    char text[160];int n=snprintf(text,sizeof text,"{\"schema\":1,\"type\":\"login\",\"loginMethod\":\"%s\",\"fixtureOnly\":%s}\n",cached?"cached":"credentials",
+#ifdef READY_STEAM_HOST_SESSION_FIXTURE
+        "true"
+#else
+        "false"
+#endif
+    );
+    ssize_t written;do{written=write(ready_session_event,text,(size_t)n);}while(written<0&&errno==EINTR);
+    if(written!=n){ready_session_stop(46);return -1;}
+    return 0;
+}
 static void ready_session_emit(const char *phase,int reason) {
     /* phase is always a literal chosen below, never library/server text. */
     _Bool ready=!strcmp(phase,"ready"),heartbeat=!strcmp(phase,"heartbeat"),revoked=!strcmp(phase,"revoked");

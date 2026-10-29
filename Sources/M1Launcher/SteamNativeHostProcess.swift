@@ -9,7 +9,7 @@ import Darwin
 /// This supervisor does not authenticate accounts or grant game entitlements.
 final class SteamNativeHostProcess: @unchecked Sendable {
   enum Failure: Error { case invalidBinding, invalidStateRoot, invalidPacket, healthUnavailable, system(Int32) }
-  enum Mode: String, Sendable { case credentials, cached }
+  enum Mode: String, Sendable { case credentials, cached, automatic }
   struct Exit: Sendable {
     let code: Int32?
     let signal: Int32?
@@ -98,6 +98,9 @@ final class SteamNativeHostProcess: @unchecked Sendable {
   private var reaped=false, readerEnded=false, exited=false, cancelled=false, invalidEvents=false
   private var childStatus: Int32?
   private var stopping=false
+  private var stopWaiters=[() -> Void]()
+  private var diagnosticFD:Int32 = -1
+  private let startedAt=DispatchTime.now().uptimeNanoseconds
   private var readyReceived=false
   private let publicLock=NSLock()
   private var publicPID: pid_t?
@@ -119,7 +122,7 @@ final class SteamNativeHostProcess: @unchecked Sendable {
     publicLock.lock();defer{publicLock.unlock()}
     if healthRead>=0{close(healthRead);healthRead = -1}
   }
-  deinit { closeUnusedHealthRead() }
+  deinit { closeUnusedHealthRead(); if diagnosticFD>=0 { close(diagnosticFD) } }
 
   private init(binding:Binding, profile:UUID, sessionID:UUID, gameID:UInt32, sessionRoot:URL,
                master:String, serviceEndpoint:String, onEvent:@escaping EventHandler, onExit:@escaping ExitHandler) {
@@ -148,6 +151,9 @@ final class SteamNativeHostProcess: @unchecked Sendable {
     let ports=try allocatePorts()
     let instance=SteamNativeHostProcess(binding:binding,profile:profile,sessionID:sessionID,gameID:gameID,sessionRoot:session,
       master:"127.0.0.1:\(ports.0)",serviceEndpoint:"127.0.0.1:\(ports.1)",onEvent:onEvent,onExit:onExit)
+    instance.diagnosticFD=open(session.appendingPathComponent("host-events.jsonl").path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0o600)
+    guard instance.diagnosticFD>=0 else { throw Failure.invalidStateRoot }
+    instance.recordDiagnostic("created")
     let policy=instance.policy(privateRoot:profileStateRoot,sessionRoot:session,ports:ports)
     let policyURL=session.appendingPathComponent("host.sb")
     try writePrivate(Data(policy.utf8),to:policyURL)
@@ -249,9 +255,18 @@ final class SteamNativeHostProcess: @unchecked Sendable {
       self.guardian.async { self.input = -1;if !success{self.stopInternal(invalid:true)} }
     }
   }
-  func stop() {
+  func stop() { stop(completion:{}) }
+  /// Completion follows waitpid and event-reader EOF, never merely a stop request.
+  /// Callers may retain their state/installation lease until this barrier fires.
+  func stop(completion:@escaping () -> Void) {
     publicLock.lock();publicReadySuppressed=true;publicLock.unlock()
-    guardian.async { self.cancelled=true;self.stopInternal(invalid:false) }
+    guardian.async {
+      if self.exited { DispatchQueue.main.async(execute:completion); return }
+      self.stopWaiters.append(completion)
+      self.cancelled=true
+      self.recordDiagnostic("stop_requested")
+      self.stopInternal(invalid:false)
+    }
   }
   private func stopInternal(invalid:Bool) {
     invalidEvents = invalidEvents || invalid
@@ -302,6 +317,7 @@ final class SteamNativeHostProcess: @unchecked Sendable {
         guard line.count<=65536,let raw=try? JSONSerialization.jsonObject(with:line) as? [String:Any],let safe=sanitize(raw) else{invalid=true;break}
         if safe["type"]as?String=="ready" {if sawReady{invalid=true;break};sawReady=true;guardian.async{self.readyReceived=true}}
         if safe["type"]as?String=="stopped" {sawStopped=true}
+        self.guardian.async { self.recordDiagnostic("event", event:safe) }
         DispatchQueue.main.async{
           self.publicLock.lock();let suppressed=self.publicReadySuppressed;self.publicLock.unlock()
           if safe["type"]as?String != "ready" || !suppressed{self.callbacks(safe)}
@@ -314,8 +330,12 @@ final class SteamNativeHostProcess: @unchecked Sendable {
     guardian.async { self.events = -1;self.readerEnded=true;if channelFailed{self.stopInternal(invalid:true)};self.finishIfPossible() }
   }
   private func sanitize(_ value:[String:Any])->[String:Any]? {
-    guard let type=value["type"]as?String,["starting","ready","state","stopped"].contains(type) else{return nil}
+    guard let type=value["type"]as?String,["starting","login","ready","state","stopped"].contains(type) else{return nil}
     var safe:[String:Any] = ["type":type,"profileID":profile.uuidString,"sessionID":sessionID.uuidString]
+    if type=="login" {
+      guard let method=value["loginMethod"]as?String,["cached","credentials"].contains(method)else{return nil}
+      safe["loginMethod"]=method
+    }
     for key in ["authenticated","identityMatches","ownedSubscription","fixtureOnly","revoked","userReleased","pipeReleased"] {
       if let value=value[key] {guard let number=value as?NSNumber,CFGetTypeID(number)==CFBooleanGetTypeID() else{return nil};safe[key]=number.boolValue}
     }
@@ -338,7 +358,37 @@ final class SteamNativeHostProcess: @unchecked Sendable {
     guard reaped,readerEnded,!exited else{return};exited=true
     let status=childStatus
     let result=Exit(code:status.flatMap{($0&0x7f)==0 ? ($0>>8)&0xff:nil},signal:status.flatMap{($0&0x7f)>0&&($0&0x7f) != 0x7f ? $0&0x7f:nil},cancelled:cancelled,invalidEvents:invalidEvents)
-    DispatchQueue.main.async{self.completion(result)}
+    recordDiagnostic("exited", exit:result)
+    if diagnosticFD>=0 { close(diagnosticFD); diagnosticFD = -1 }
+    let waiters=stopWaiters;stopWaiters.removeAll()
+    DispatchQueue.main.async{self.completion(result);for callback in waiters{callback()}}
+  }
+  /// Fixed event vocabulary, booleans and numeric results only. Never raw output,
+  /// account identity, credential/ticket bytes, endpoint or environment values.
+  private func recordDiagnostic(_ phase:String,event:[String:Any]?=nil,exit:Exit?=nil) {
+    guard diagnosticFD>=0 else{return}
+    var value:[String:Any] = ["schema":1,"phase":phase,
+      "elapsedMilliseconds":(DispatchTime.now().uptimeNanoseconds-startedAt)/1_000_000]
+    if let event {
+      value["event"]=event["type"]
+      if let method=event["loginMethod"]{value["loginMethod"]=method}
+      for key in ["reason","authenticated","identityMatches","ownedSubscription","revoked","fixtureOnly","network","userReleased","pipeReleased"] {
+        if let field=event[key]{value[key]=field}
+      }
+    }
+    if let exit {
+      value["exitCode"]=exit.code as Any? ?? NSNull();value["signal"]=exit.signal as Any? ?? NSNull()
+      value["cancelled"]=exit.cancelled;value["invalidEvents"]=exit.invalidEvents
+    }
+    guard var data=try?JSONSerialization.data(withJSONObject:value,options:[.sortedKeys])else{return}
+    data.append(10)
+    data.withUnsafeBytes { raw in
+      var offset=0
+      while offset<raw.count {
+        let count=Darwin.write(diagnosticFD,raw.baseAddress!.advanced(by:offset),raw.count-offset)
+        if count<0 && errno==EINTR{continue};if count<=0{break};offset+=count
+      }
+    }
   }
   private func policy(privateRoot:URL,sessionRoot:URL,ports:(UInt16,UInt16))->String {
     func quote(_ value:String)->String {String(decoding:try! JSONSerialization.data(withJSONObject:value,options:[.fragmentsAllowed,.withoutEscapingSlashes]),as:UTF8.self)}

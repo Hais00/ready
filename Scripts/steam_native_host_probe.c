@@ -147,6 +147,8 @@ int main(int argc,char **argv) {
     if(argc==5 && strcmp(argv[4],"--invalid-login") && strcmp(argv[4],"--authenticate") && strcmp(argv[4],"--cached-login"))return 64;
     _Bool cached_login=argc==5&&!strcmp(argv[4],"--cached-login");
     _Bool real_auth=argc==5&&(!strcmp(argv[4],"--authenticate")||cached_login);
+    const char *prefer=getenv("READY_STEAM_PREFER_CACHED_LOGIN");
+    _Bool prefer_cached=real_auth&&!cached_login&&prefer&&!strcmp(prefer,"1");
     _Bool authenticated=0,ownership=0;
     if(!getenv("READY_STEAM_NATIVE_REEXEC")) {
         /* sandbox-exec strips inherited DYLD settings. Re-enter only this
@@ -283,8 +285,8 @@ int main(int argc,char **argv) {
 #ifdef READY_STEAM_HOST_SESSION
                     ready_session_context=(ReadySteamSessionContext){public_user,public_apps,user_status,identity,subscription,expected_id,app_id};
 #endif
-                    uint32_t result=0;_Bool logon_attempted=0;
-                    if(cached_login) {
+                    uint32_t result=0;_Bool logon_attempted=0,cache_selected=0;
+                    if(cached_login||prefer_cached) {
                         typedef _Bool (*account_name_fn)(void *,uint64_t,char *,int32_t);
                         typedef _Bool (*has_cached_fn)(void *,const char *);
                         typedef _Bool (*select_cached_fn)(void *,const char *,_Bool);
@@ -304,17 +306,32 @@ int main(int argc,char **argv) {
                         }
                         _Bool available=name_ok&&has_cached&&has_cached(internal,account_name);
                         _Bool selected=available&&select_cached&&select_cached(internal,account_name,1);
+                        cache_selected=selected;
                         fprintf(events,",\"cachedLoginMethodsMatchExactImage\":%s,\"genuineAccountNameResolved\":%s,\"genuinePrivateCachedCredentialsAvailable\":%s,\"genuineCachedAccountSelected\":%s",get_account&&has_cached&&select_cached?"true":"false",name_ok?"true":"false",available?"true":"false",selected?"true":"false");
                         memset(account_name,0,sizeof account_name);
                         /* The structural sentinel is NEVER a login token. Only
                          * Valve's actual cached-credential path is invoked. */
-                        if(selected){result=log_on(internal,expected_id);logon_attempted=1;}
-                    } else {
+                    }
+                    if(cache_selected) {
+#ifdef READY_STEAM_HOST_SESSION
+                        if(!ready_session_login(1)&&!atomic_load(&ready_session_reason))
+#endif
+                        {result=log_on(internal,expected_id);logon_attempted=1;}
+                    } else if(!cached_login) {
+                        // Automatic mode falls back ONLY when local cache selection
+                        // was unavailable. Once LogOn is attempted, no retry/reseed
+                        // occurs after any server rejection, disconnect or timeout.
+#ifdef READY_STEAM_HOST_SESSION
+                        if(!ready_session_login(0)&&!atomic_load(&ready_session_reason)) {
+#endif
                         /* The inspected token-seeding caller passes true here;
                          * real credentials remain in this owned private state. */
                         set_info(internal,real_auth?credential.account:"ready_offline_invalid_account","",real_auth);
                         set_token(internal,real_auth?credential.token:"ready.invalid.synthetic.token",real_auth?credential.account:"ready_offline_invalid_account");
                         result=log_on(internal,expected_id);logon_attempted=1;
+#ifdef READY_STEAM_HOST_SESSION
+                        }
+#endif
                     }
                     ready_steam_credential_clear(&credential);
                     /* A successful dispatch is not a successful login. */

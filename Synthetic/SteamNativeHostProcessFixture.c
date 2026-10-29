@@ -66,6 +66,17 @@ int main(int argc,char**argv){
  signal(SIGTERM,stop_handler);signal(SIGINT,stop_handler);char byte;
  while(!stopped){count=read(3,&byte,1);if(count==0)break;if(count<0&&errno==EINTR)continue;if(count<0)return 94;}
  close(4); /* No bytes: EOF revokes the health lease before remaining cleanup. */
- printf("{\"type\":\"stopped\",\"reason\":%d,\"userReleased\":true,\"pipeReleased\":true}\n",stopped?44:42);fflush(stdout);return stopped?44:42;
+ printf("{\"type\":\"stopped\",\"reason\":%d,\"userReleased\":true,\"pipeReleased\":true}\n",stopped?44:42);fflush(stdout);
+#ifdef DELAY_EVENT_EOF
+ /* Parent exits now; a self-bounded OWN child retains only the event writer.
+  * The Swift supervisor must not confuse waitpid with event-channel EOF. */
+ pid_t holder=fork();if(holder<0)return 95;
+ if(holder==0){close(3);close(4);usleep(700000);close(1);_exit(0);}
+#endif
+#ifdef DELAY_PROCESS_EXIT
+ /* The inverse ordering: channel EOF while this exact child is still live. */
+ close(1);usleep(700000);
+#endif
+ return stopped?44:42;
 #endif
 }

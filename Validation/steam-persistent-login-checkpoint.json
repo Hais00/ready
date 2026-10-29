@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "date": "2026-10-29",
+  "scope": "native macOS Cyberpunk repeat launch and saved account reuse on this pinned local runtime",
+  "passed": true,
+  "gameID": 1091500,
+  "liveSessions": [
+    {
+      "loginMethod": "credentials",
+      "readyMilliseconds": 5425,
+      "authenticated": true,
+      "identityMatched": true,
+      "ownedSubscription": true,
+      "normalClosureReaped": true,
+      "journalSHA256": "a89e8fa506f63a63a95f9474d1bf4d98dcd40ed2693d2dd383c94efc1bf7ce1e"
+    },
+    {
+      "loginMethod": "cached",
+      "readyMilliseconds": 10488,
+      "authenticated": true,
+      "identityMatched": true,
+      "ownedSubscription": true,
+      "normalClosureReaped": true,
+      "journalSHA256": "0fafe6cbac66410c71b56acc99a0ab560ff1b9d276c1d0f818ea1808c4a4cfb4"
+    }
+  ],
+  "readyQuitAndRelaunchReusedSavedLogin": true,
+  "newQRRequiredBetweenSuccessfulLaunchesOrReadyRelaunch": false,
+  "networkAfterReadyRelaunch": {
+    "connection": "online",
+    "steamResult": "OK",
+    "context": "logon_response"
+  },
+  "workerRemainsPerGameSession": true,
+  "installedComponent": "native-13ce8be1c7b11909532b6455",
+  "componentManifestSHA256": "6ca1f6d0862cf503e06b0997f57204b070aa3f16862dada4851d9cec7cc8e162",
+  "bindingSHA256": "ea5dd52c23221d6aebfd52f5fb0978392e81e52dd9912d6f82cec2c5f9785a90",
+  "sourceHashes": {
+    "Sources/M1Launcher/SteamGameLaunch.swift": "a038557e324ff434a471c1d714cc59b55803fe2525c4902d8d5bfbad280ab975",
+    "Sources/M1Launcher/SteamNativeGameSession.swift": "6f040fd3483d1f5fdb3eb1259817c1e09fc697dd764c012a12281dfccaaa6c77",
+    "Sources/M1Launcher/SteamNativeCacheRevision.swift": "910d3a38c0d75d99d5842a381fb8b23df11c196a06025532004afb2f1d49c6e3",
+    "Sources/M1Launcher/SteamNativeHostProcess.swift": "dc2abb49ebc0739df1df33ff31b4722fda316272aaf7c9a980e55b39b59d64f3",
+    "Sources/M1Launcher/SessionManager.swift": "76bc7578256997ee30c64e0c474fa439fc40575ed574864df2ae791711aa2dfa",
+    "Scripts/steam_native_host_probe.c": "c52975715b2d4f36b7cfc58523320f5bfd9bb2bf7b74b08bdb3bf3e3fc6e3762",
+    "Scripts/steam_native_host_session.c": "a01c37bcfbe78a7ba85bfd5d5ab417b25b50579ef7f0d9e933c35b1fc078627a",
+    "Scripts/steam_native_host_session.h": "709011d873cd4f2e1e2e2ad131ccd391ac172c567a26b2e4670c4e39794c9347"
+  },
+  "testReportHashes": {
+    "nativeWorkerQuick": "4f555997f544f5e76ba304b6ca5de8b318fa86ed8a06df438acf97cc62a482f5",
+    "nativeSupervisor": "3520594fdcd7f506971ae20c59b44f65d9ec5732e4e69dc8d3903e86cffae548",
+    "launchUI": "b22114360cf9a112cc60f2621f0a79c19fe7bbe0d3b44232c4ff53b391308ac0",
+    "frontendLifecycle": "b64120df255cbcbe60216a92a65fb6cb6f9e7a71352904a83ec8504a2c2d6386",
+    "nativeCacheRevision": "6bd1ab2d32f01fb38a68c79130d36d3ccdc72ff37dc62de4b5e02955f92670a8",
+    "nativeSessionBarrier": "e718e53146de651d4a5711dd3a4a2c2db0c8ed5fd354456e1b374f0a5710582a",
+    "sessionManagerBarrier": "7b63a70411db8498ec6bb4b8b254dbeaad6bc2e41c945824d5d2a430a6a268de",
+    "relocatedFrontendPackage": "6e74ed9a1e5ab63405115b1e3c91a8ab8f1250a3a8ea85f8bc645a1825955891"
+  },
+  "checks": {
+    "nativeWorkerQuick": 26,
+    "nativeSupervisor": 26,
+    "launchUI": 25,
+    "nativeCacheRevision": 15,
+    "nativeSessionBarrier": 21,
+    "sessionManagerBarrier": 10,
+    "frontendLifecycle": 13,
+    "relocatedFrontendPackage": 14
+  },
+  "screenshots": {
+    "firstLaunchSHA256": "27ab5cc1f4d156df0e96f83126eef60bd9809a584e3c757bb1ca3063303b3ced",
+    "secondLaunchSHA256": "e6bb4e1b03e2bc613b826fad06948a9092c0c0880f0acb8c41f5ca3e507bd3b2",
+    "published": false
+  },
+  "diagnosticsContainCredentialBytesOrRevisions": false,
+  "limits": [
+    "Intro/initial game UI and normal exit were verified, not a gameplay benchmark or long play session.",
+    "No new QR was needed during successful repeat-launch/Ready-restart verification; earlier diagnosis required reauthorization after a reproduced revocation.",
+    "The private cached-login ABI is limited to the pinned Valve client image.",
+    "Windows games, live CDN downloads, physical controllers and network/remote-revocation recovery remain separate validation gates."
+  ],
+  "additionalObservedLaunchAfterReadyRelaunch": {
+    "loginMethod": "cached",
+    "authenticated": true,
+    "identityMatched": true,
+    "ownedSubscription": true,
+    "readyMilliseconds": 1549,
+    "journalSHA256": "f3a86ea2a0c7499b89ff33242074c8d7357e38c378966f04bdbf1c65edc55371",
+    "normalClosureVerified": false
+  }
+}

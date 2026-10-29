@@ -651,6 +651,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard let self else { return }
         switch result {
         case .success:
+          self.canvas.message = "In esecuzione · " + game.title
+          // SessionManager already detached the canvas. Do not redraw it here.
           if let i = self.state.games.firstIndex(where: { $0.id == game.id }) {
             self.state.games[i].lastPlayed = Date()
             try? self.repository.save(self.state)

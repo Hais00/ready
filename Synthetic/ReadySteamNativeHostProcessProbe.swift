@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import Foundation
+import CoreFoundation
 import CryptoKit
 import Darwin
 
@@ -27,6 +28,37 @@ private func healthEOF(_ fd:Int32)throws->Bool {
   return false
 }
 private func descriptorCount()->Int { (0..<256).filter{fcntl(Int32($0),F_GETFD)>=0}.count }
+private func safeDiagnostics(_ host:SteamNativeHostProcess)throws->[[String:Any]] {
+  let path=host.receiptURL.deletingLastPathComponent().appendingPathComponent("host-events.jsonl")
+  var info=stat();try check(lstat(path.path,&info)==0&&(info.st_mode&S_IFMT)==S_IFREG&&info.st_uid==getuid()&&info.st_mode&0o777==0o600,"private diagnostic file")
+  let bytes=try Data(contentsOf:path),text=String(decoding:bytes,as:UTF8.self)
+  for forbidden in ["fixture_private_not_forwarded","fixture_account","76561197960265729","rawCredential","username","steamID","refresh_token","access_token","namespace","privateName","masterEndpoint","serviceEndpoint","127.0.0.1","app.ready.steam.ipctool.","profileID","sessionID","gameID"] {
+    try check(!text.localizedCaseInsensitiveContains(forbidden),"diagnostics contain forbidden identity/secret/endpoint field")
+  }
+  try check(text.hasSuffix("\n"),"diagnostic complete JSONL")
+  var rows=[[String:Any]](),elapsed:UInt64=0
+  let base:Set<String>=["schema","phase","elapsedMilliseconds"]
+  let eventFields:Set<String>=["reason","authenticated","identityMatches","ownedSubscription","revoked","fixtureOnly","network","userReleased","pipeReleased"]
+  let booleanFields:Set<String>=["authenticated","identityMatches","ownedSubscription","revoked","fixtureOnly","userReleased","pipeReleased","cancelled","invalidEvents"]
+  for line in text.split(separator:"\n") {
+    let value=try JSONSerialization.jsonObject(with:Data(line.utf8))as![String:Any]
+    guard let phase=value["phase"]as?String,["created","event","stop_requested","exited"].contains(phase),let schema=value["schema"]as?NSNumber,CFGetTypeID(schema) != CFBooleanGetTypeID(),schema.intValue==1,let time=value["elapsedMilliseconds"]as?NSNumber,CFGetTypeID(time) != CFBooleanGetTypeID(),let milliseconds=UInt64(time.stringValue) else{throw ProbeFailure.check("diagnostic base vocabulary/types")}
+    try check(milliseconds>=elapsed,"diagnostic monotonic elapsed time");elapsed=milliseconds
+    let keys=Set(value.keys)
+    if phase=="event" {
+      try check(keys.isSubset(of:base.union(eventFields).union(["event"]))&&keys.isSuperset(of:base.union(["event"])),"diagnostic exact event whitelist")
+      try check(["starting","ready","state","stopped"].contains(value["event"]as?String ?? ""),"diagnostic fixed event vocabulary")
+    }else if phase=="exited" {try check(keys==base.union(["exitCode","signal","cancelled","invalidEvents"]),"diagnostic exact exit whitelist")}
+    else{try check(keys==base,"diagnostic exact phase whitelist")}
+    for key in booleanFields where value[key] != nil {guard let number=value[key]as?NSNumber,CFGetTypeID(number)==CFBooleanGetTypeID()else{throw ProbeFailure.check("diagnostic boolean type")}}
+    for key in ["reason","exitCode","signal"] where value[key] != nil && !(value[key]is NSNull) {guard let number=value[key]as?NSNumber,CFGetTypeID(number) != CFBooleanGetTypeID(),Int32(number.stringValue) != nil else{throw ProbeFailure.check("diagnostic numeric type")}}
+    if let network=value["network"] {try check(["unknown","connected","disconnected"].contains(network as?String ?? ""),"diagnostic fixed network vocabulary")}
+    rows.append(value)
+  }
+  try check(rows.first?["phase"]as?String=="created","diagnostic created first")
+  return rows
+}
+
 @main private struct ReadySteamNativeHostProcessProbe {
   @MainActor static func main() {
     do {try run()}
@@ -67,7 +99,17 @@ private func descriptorCount()->Int { (0..<256).filter{fcntl(Int32($0),F_GETFD)>
     try check(repeated&&fcntl(healthA,F_GETFD)>=0,"health reader transferred only once")
     checks["healthReaderTransferredOnceWithReadOnlyCLOEXEC"]=true
     try check(hostA.processID != hostB.processID,"separate exact child PID")
-    hostA.stop();hostA.stop();try pump{exitA != nil}
+    var stopAFirst=0,stopASecond=0,stopAfterExitFirst=0,stopAfterExitSecond=0,earlyStopCompletion=false
+    hostA.stop(completion:{if exitA==nil{earlyStopCompletion=true};stopAFirst+=1})
+    hostA.stop(completion:{if exitA==nil{earlyStopCompletion=true};stopASecond+=1})
+    try pump{exitA != nil&&stopAFirst==1&&stopASecond==1}
+    try check(!earlyStopCompletion,"stop completion preceded onExit")
+    hostA.stop(completion:{if exitA==nil{earlyStopCompletion=true};stopAfterExitFirst+=1})
+    hostA.stop(completion:{if exitA==nil{earlyStopCompletion=true};stopAfterExitSecond+=1})
+    try pump{stopAfterExitFirst==1&&stopAfterExitSecond==1}
+    RunLoop.current.run(until:Date().addingTimeInterval(0.04))
+    try check(!earlyStopCompletion&&stopAFirst==1&&stopASecond==1&&stopAfterExitFirst==1&&stopAfterExitSecond==1,"repeated stop completion is not exactly once")
+    checks["queuedAndAlreadyExitedStopCompletionsEachFireExactlyOnce"]=true
     try check(exitA?.code==42&&exitA?.cancelled==true&&exitA?.invalidEvents==false,"EOF orderly release")
     try check(exitB==nil&&kill(hostB.processID!,0)==0,"other host remains live")
     let closedA=try healthEOF(healthA),stillAliveB=try healthEOF(healthB)
@@ -96,6 +138,33 @@ private func descriptorCount()->Int { (0..<256).filter{fcntl(Int32($0),F_GETFD)>
       try pump{ended != nil};try check(ended?.code==43,"revoked host own exit")
       checks["healthEOFPrecedesRevokedHostCleanup"]=true
     }
+    for(name,reapFirst)in [("delayed-eof",true),("delayed-exit",false)] {
+      let path=root.appendingPathComponent(name+".json"),selected=try SteamNativeHostProcess.Binding.load(manifestURL:path,expectedSHA256:digest(path))
+      var input=packet(),seen=[[String:Any]](),ended:SteamNativeHostProcess.Exit?,stops=0,orderFailed=false,exitCount=0
+      let child=try SteamNativeHostProcess.spawn(binding:selected,credentialPacket:&input,profile:profile,sessionID:UUID(),gameID:480,profileStateRoot:state,onEvent:{seen.append($0)},onExit:{ended=$0;exitCount+=1})
+      try pump{seen.contains{$0["type"]as?String=="ready"}}
+      let pid=child.processID!,started=ProcessInfo.processInfo.systemUptime
+      child.stop(completion:{if ended==nil{orderFailed=true};stops+=1})
+      if reapFirst {
+        // Read-only existence check; the supervisor remains the sole waitpid owner.
+        try pump({kill(pid,0)<0&&errno==ESRCH},seconds:0.45)
+        try check(ended==nil&&stops==0,"completion ran on waitpid before delayed reader EOF")
+      }else{
+        try pump{seen.contains{$0["type"]as?String=="stopped"}}
+        RunLoop.current.run(until:Date().addingTimeInterval(0.12))
+        try check(kill(pid,0)==0&&ended==nil&&stops==0,"completion ran on reader EOF before child exit")
+      }
+      child.stop(completion:{if ended==nil{orderFailed=true};stops+=1})
+      try pump{ended != nil&&stops==2}
+      child.stop(completion:{stops+=1});try pump{stops==3}
+      RunLoop.current.run(until:Date().addingTimeInterval(0.04))
+      try check(!orderFailed&&stops==3&&exitCount==1&&ProcessInfo.processInfo.systemUptime-started>=0.6&&ended?.code==42&&ended?.invalidEvents==false,"split stop barrier order/exactly-once")
+      let rows=try safeDiagnostics(child);try check(rows.last?["phase"]as?String=="exited"&&rows.filter{$0["phase"]as?String=="exited"}.count==1,"terminal diagnostic precedes stop completion")
+      checks[reapFirst ? "stopCompletionWaitsForReaderEOFAfterWaitpid":"stopCompletionWaitsForWaitpidAfterReaderEOF"]=true
+    }
+    let diagnosticA=try safeDiagnostics(hostA),diagnosticB=try safeDiagnostics(hostB)
+    try check(diagnosticA.last?["phase"]as?String=="exited"&&diagnosticB.last?["phase"]as?String=="exited","final diagnostics complete before stop barrier")
+    checks["diagnosticJSONLExactWhitelistTypesPrivacyAndTerminalOrdering"]=true
     try check(!String(describing:eventsA+eventsB).contains("fixture_private"),"no raw credentials forwarded")
     checks["eventWhitelistDropsUnexpectedSecretFields"]=true
     let beforeUntaken=descriptorCount()

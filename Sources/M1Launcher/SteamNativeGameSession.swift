@@ -14,6 +14,22 @@ final class SteamNativeGameSession: SteamGameSessionLease, @unchecked Sendable {
     case invalidSDK, invalidStateRoot, incompatibleSignature, grantUnavailable
     case hostSetupFailed, startupFailed, invalidated, stopped, healthUnavailable, alreadyHandedOff
   }
+  struct FailureDetail:Encodable {
+    let failure:String
+    let stopOrigin:String?
+    let hostExitCode:Int32?
+    let hostExitSignal:Int32?
+    let hostCancelled:Bool?
+    let invalidEvents:Bool?
+    let lastHostReason:Int32?
+    let loginMethod:String?
+    let readyReceived:Bool
+    let elapsedMilliseconds:UInt64
+    func writePrivate(logs:URL)throws {
+      let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
+      try AtomicFile.writePrivate(encoder.encode(self),to:logs.appendingPathComponent("steam-last-native-failure.json"))
+    }
+  }
   typealias Completion = @MainActor (Result<SteamNativeGameSession, Failure>) -> Void
 
   let sessionID=UUID()
@@ -33,6 +49,7 @@ final class SteamNativeGameSession: SteamGameSessionLease, @unchecked Sendable {
   private let selectedVariant:GameVariant
   private let profileStateRoot:URL
   private let selection:Selection
+  private let credentialRevision:SteamNativeCacheRevision.Selection?
   private let lock=NSLock()
   private var host:SteamNativeHostProcess?
   private var completion:Completion?
@@ -40,6 +57,20 @@ final class SteamNativeGameSession: SteamGameSessionLease, @unchecked Sendable {
   private var healthTaken=false,keeperIssued=false,invalidationDelivered=false
   private var invalidationHandler:(()->Void)?
   private var endpointEnvironment=[String:String]()
+  private let startedAt=DispatchTime.now().uptimeNanoseconds
+  private var stopOrigin:String?
+  private var lastHostReason:Int32?
+  private var loginMethod:String?
+  private var lastExit:SteamNativeHostProcess.Exit?
+  private var firstFailure:Failure?
+  var lastFailureDetail:FailureDetail? {
+    lock.lock();defer{lock.unlock()}
+    guard let firstFailure else{return nil}
+    return FailureDetail(failure:firstFailure.rawValue,stopOrigin:stopOrigin,
+      hostExitCode:lastExit?.code,hostExitSignal:lastExit?.signal,hostCancelled:lastExit?.cancelled,
+      invalidEvents:lastExit?.invalidEvents,lastHostReason:lastHostReason,loginMethod:loginMethod,readyReceived:wasReady,
+      elapsedMilliseconds:(DispatchTime.now().uptimeNanoseconds-startedAt)/1_000_000)
+  }
 
   var isReady:Bool {lock.lock();defer{lock.unlock()};return ready && !stopped && !invalidated}
   /// Assignment may occur on the session worker. Delivery always occurs on main,
@@ -56,11 +87,12 @@ final class SteamNativeGameSession: SteamGameSessionLease, @unchecked Sendable {
   }
   @MainActor private init(binding:SteamNativeHostProcess.Binding,grant:SteamGameAuthorizationGrant,
                game:Game,variant:GameVariant,profileStateRoot:URL,selection:Selection,
-               completion:@escaping Completion) {
+               credentialRevision:SteamNativeCacheRevision.Selection?=nil,completion:@escaping Completion) {
     self.binding=binding;profile=grant.profile;gameID=grant.gameID;steamID=grant.steamID
     title=game.title;gameIdentifier=game.id;storeIdentifier=game.storeID;selectedVariant=variant
     self.profileStateRoot=profileStateRoot;self.selection=selection;executable=selection.executable
     self.completion=completion
+    self.credentialRevision=credentialRevision
   }
   /// Setup errors throw without invoking completion. A returned handle receives
   /// exactly one asynchronous startup completion, and may be stopped immediately.
@@ -76,14 +108,15 @@ final class SteamNativeGameSession: SteamGameSessionLease, @unchecked Sendable {
     guard environmentPaths(assets,profileStateRoot:profileStateRoot) else{throw Failure.invalidSDK}
     let selection=try Selection.inspect(variant:variant,assets:assets)
     try validateStateRoot(profileStateRoot,installation:selection.installation)
-    let session=SteamNativeGameSession(binding:binding,grant:grant,game:game,variant:variant,
-      profileStateRoot:profileStateRoot,selection:selection,completion:completion)
     var packet:Data
     do{packet=try grant.consume()}catch{throw Failure.grantUnavailable}
     defer{packet.resetBytes(in:0..<packet.count);packet.removeAll(keepingCapacity:false)}
+    let revision=try SteamNativeCacheRevision.select(packet:packet,root:profileStateRoot)
+    let session=SteamNativeGameSession(binding:binding,grant:grant,game:game,variant:variant,
+      profileStateRoot:profileStateRoot,selection:selection,credentialRevision:revision,completion:completion)
     do {
       let host=try SteamNativeHostProcess.spawn(binding:binding,credentialPacket:&packet,profile:session.profile,
-        sessionID:session.sessionID,gameID:session.gameID,profileStateRoot:profileStateRoot,mode:.credentials,
+        sessionID:session.sessionID,gameID:session.gameID,profileStateRoot:profileStateRoot,mode:revision.mode == .fresh ? .credentials:.automatic,
         onEvent:{[weak session] event in session?.receive(event)},onExit:{[weak session] result in session?.hostExited(result)})
       session.lock.lock();session.host=host;session.lock.unlock()
     } catch {
@@ -93,6 +126,12 @@ final class SteamNativeGameSession: SteamGameSessionLease, @unchecked Sendable {
     return session
   }
   @MainActor private func receive(_ event:[String:Any]) {
+    if event["type"]as?String=="login",let method=event["loginMethod"]as?String,["cached","credentials"].contains(method) {
+      lock.lock();loginMethod=method;lock.unlock()
+    }
+    if let reason=event["reason"]as?NSNumber,let parsed=Int32(reason.stringValue) {
+      lock.lock();lastHostReason=parsed;lock.unlock()
+    }
     if event["type"]as?String=="ready" {
       guard strictTrue(event["authenticated"]),strictTrue(event["identityMatches"]),strictTrue(event["ownedSubscription"]),
         strictFalse(event["fixtureOnly"]),number(event["gameID"])==UInt64(gameID),
@@ -105,6 +144,8 @@ final class SteamNativeGameSession: SteamGameSessionLease, @unchecked Sendable {
       }
       lock.lock()
       guard !stopped,!invalidated,!wasReady else{lock.unlock();return}
+      do{try credentialRevision?.recordReady()}
+      catch{lock.unlock();invalidate(.startupFailed,stopHost:true);return}
       endpointEnvironment=["READY_STEAM_IPC_NAMESPACE":namespace,"READY_STEAM_DISCOVERY_SERVICE":service,
         "steam_master_ipc_name_override":master,"Steam3Master":master,"SteamClientService":clientService]
       ready=true;wasReady=true;let callback=completion;completion=nil
@@ -119,11 +160,12 @@ final class SteamNativeGameSession: SteamGameSessionLease, @unchecked Sendable {
     }
   }
   @MainActor private func hostExited(_ result:SteamNativeHostProcess.Exit) {
-    lock.lock();let started=wasReady;lock.unlock()
+    lock.lock();lastExit=result;let started=wasReady;lock.unlock()
     invalidate(started ? .invalidated:.startupFailed,stopHost:false)
   }
   private func invalidate(_ reason:Failure,stopHost:Bool) {
     lock.lock()
+    if firstFailure==nil { firstFailure=reason }
     ready=false;stopped=true;invalidated=true;endpointEnvironment.removeAll()
     let ownedHost=host
     let startup=completion;completion=nil
@@ -131,10 +173,29 @@ final class SteamNativeGameSession: SteamGameSessionLease, @unchecked Sendable {
     if notify != nil{invalidationDelivered=true}
     lock.unlock()
     if stopHost{ownedHost?.stop()}
-    if let startup{DispatchQueue.main.async{startup(.failure(reason))}}
+    if let startup {
+      // A failed/cancelled preparation must not enable another login against
+      // the same private client/cache until its worker has actually been reaped.
+      if stopHost,let ownedHost {
+        ownedHost.stop { DispatchQueue.main.async{startup(.failure(reason))} }
+      } else { DispatchQueue.main.async{startup(.failure(reason))} }
+    }
     if let notify{DispatchQueue.main.async{notify()}}
   }
-  func stop() { invalidate(.stopped,stopHost:true) }
+  func stop() {
+    lock.lock();if stopOrigin==nil{stopOrigin="owner_stop"};lock.unlock()
+    invalidate(.stopped,stopHost:true)
+  }
+  func stopForAccountChange() {
+    lock.lock();if stopOrigin==nil{stopOrigin="account_session_changed"};lock.unlock()
+    invalidate(.stopped,stopHost:true)
+  }
+  func stop(completion:@escaping () -> Void) {
+    stop()
+    lock.lock();let owned=host;lock.unlock()
+    if let owned { owned.stop(completion:completion) }
+    else { DispatchQueue.main.async(execute:completion) }
+  }
   deinit{host?.stop()}
 
   /// Preflight before building a native launch plan. The keeper acquires the
