@@ -18,11 +18,24 @@
     "detailRevalidatesIconAndBanner": true,
     "unchangedBytesDoNotInvalidate": true,
     "networkFailurePreservesGoodAsset": true,
-    "maximumConcurrentImageRequests": 2,
+    "maximumConcurrentImageRequests": 5,
     "selectedURLPinnedDuringDetailRevalidation": true,
     "selectedURLFailureDoesNotSubstituteDifferentImage": true,
     "canonicalSteamHeroPreferredForNewSelection": true,
-    "cachedBannerDiskReadDoesNotFlashIcon": true
+    "cachedBannerDiskReadDoesNotFlashIcon": true,
+    "reservedRequestSlots": {
+      "visibleOrDetail": 2,
+      "lookAhead": 1,
+      "background": 2
+    },
+    "cardThumbnailMaximumPixels": 512,
+    "separateInteractiveReaders": 2,
+    "cardRAMLimitBytes": 100663296,
+    "detailRAMLimitBytes": 67108864,
+    "cardOnlyDirectionalLookAhead": true,
+    "durableURLReceipts": true,
+    "recoverySnapshotAndDirtyMarker": true,
+    "healthyStartupDirectoryScan": false
   },
   "classification": {
     "authoritativePICSAndSelfOwnedGamesCM": true,
@@ -59,18 +72,19 @@
     "tileCount": 32,
     "chromeRastersDuringScroll": 0,
     "onScreenSmoothnessVerified": false,
-    "measurementPrecedesBannerStabilityFix": true
+    "measurementPrecedesBannerStabilityFix": true,
+    "measurementPrecedesViewportArtworkFix": true
   },
   "tests": {
     "artwork-index-tests": {
       "passed": true,
-      "count": 26,
-      "reportSHA256": "e7d465af14adf26f783c828922fa03a44e06935fd5000da0d4bf0a3fecee9579"
+      "count": 30,
+      "reportSHA256": "9f48d4281dca5c547083533393215e035322db825e7fbab14fe7f7da48239449"
     },
     "launch-splash-ui-tests": {
       "passed": true,
       "count": 34,
-      "reportSHA256": "9c01a0173cd2da72608d91761793e2f701ff3b8f0e17e8b9587efb31e5c0ab7c"
+      "reportSHA256": "ad0038e0b0ff9ff028dcef8463eeefc75c8a62dffc5e80d077ea72de902b8dff"
     },
     "library-scroll-ui-tests": {
       "passed": true,
@@ -80,7 +94,7 @@
     "library-detail-ui-tests": {
       "passed": true,
       "count": 47,
-      "reportSHA256": "a9102d4fe37444ccd2153212d6e1bb967b750208f86641a5518fb314ef33ce63"
+      "reportSHA256": "c5a4eb90d6f6b64f45e2f2d404cefae16dd7e2188bdf97cecbbde75db338e666"
     },
     "steam-library-tests": {
       "passed": true,
@@ -91,6 +105,16 @@
       "passed": true,
       "count": 21,
       "reportSHA256": "19bb4fcaa68cf49f20a91b52304dbe0b5815b9e5bb6f1fa7cb55a549afef28bc"
+    },
+    "artwork-durability-tests": {
+      "passed": true,
+      "count": 24,
+      "reportSHA256": "bf7a5e26ffba013206c4e0eaef633e1731644e39299368b0cfb723744b51f9fc"
+    },
+    "viewport-artwork-ui-tests": {
+      "passed": true,
+      "count": 19,
+      "reportSHA256": "a255660c26e57d1b92c384b2fca448f588945fb3c7058ee5b4cb77f78f58bb51"
     }
   },
   "backend": {
@@ -108,7 +132,7 @@
   "frontend": {
     "buildPassed": true,
     "relocationChecksPassed": 14,
-    "executableSHA256": "b3ec6180205a899046ba6e55da7812ac37e1af26475ab3cc63425b069abdad8c",
+    "executableSHA256": "bd01901f7d4dbd768ea2599cecba813c2a11376e6bf746cca7e637235ba1f93f",
     "correspondingSourceMatchesBundle": true,
     "sourceHashes": {
       "Sources/LauncherCore/ArchitectureProbe.swift": "c76c2768a6b0343880ffcbc6963e3a565c0f9ed22696cd473ed97d5730fae8a1",
@@ -131,8 +155,8 @@
       "Sources/LauncherCore/RuntimeLocationStore.swift": "6bdd15fa7466507740e11c8a4ad680072ac6b8f882cb2ce5b1ccee1e8bbd1252",
       "Sources/LauncherCore/StoreToolsLocation.swift": "feb97a5b06a39387105118c1b11e267f7ad960d55499d75faf0f6fde61e5fc2e",
       "Sources/LauncherCore/WindowsBuiltinBootstrap.swift": "1a27614bf254f40d06354d25e948d6f1a636eed8e87a8f486f9899e5e9d20cfa",
-      "Sources/M1Launcher/ArtworkCache.swift": "c03ea6135558176da0b0c3dda4b13bcaa1432b6a90225bf4cacf42058fba84f8",
-      "Sources/M1Launcher/ArtworkIndexStore.swift": "868360c4ada32a3b18399aa1fa77811bfaf776fda3711dd0a8c24e34bfa3462d",
+      "Sources/M1Launcher/ArtworkCache.swift": "baaf694cdbfc5163fa4dc76415bfcd7102660ed5728d23403d863a338891f532",
+      "Sources/M1Launcher/ArtworkIndexStore.swift": "15a53d615842db7ea2bea937d385a099fbed840299905d5cf4973d40e5a90235",
       "Sources/M1Launcher/CanvasDrawing.swift": "67181a6fdaf482f9c3e69c1779819237dbbe730199bf187b9135d336272b87f7",
       "Sources/M1Launcher/CanvasShellRenderer.swift": "d96d2bcad0756e44d99967482cd068e8714f95a1a8cf6fb27bc2d79be2f83b1f",
       "Sources/M1Launcher/ControllerNavigation.swift": "caac8212a2a05845b3ca48b421178004da2ace4a1e1479dad237fc1f23cb2c80",
@@ -148,7 +172,7 @@
       "Sources/M1Launcher/HostedGamePresentation.swift": "579910b77a326416680eaa96862399ff199faff4f4664546f67c69bc7267826d",
       "Sources/M1Launcher/LibraryEntryPresentation.swift": "68589d4dc1e2f1f5ef2c8f2e9b979cf17d53b76705674b866b050f18b24913fc",
       "Sources/M1Launcher/LibraryGridSurface.swift": "c915c0505e18de9ad539c5820faa193cdf88157e79b73e845df1c607f4088f97",
-      "Sources/M1Launcher/MetalCanvas.swift": "6b7e00b9dd064a65cd06acc8882d598860b771030e6e56fe79a5d7e924a51129",
+      "Sources/M1Launcher/MetalCanvas.swift": "e8fec420aabbfc34e7943a5560ae6bb763d55897adace400ca648473dea1bbb8",
       "Sources/M1Launcher/NavigationPages.swift": "45cc9d2ad319899610d5c2cfe150eefe9def90aeea5b0b7f5175faadf663069f",
       "Sources/M1Launcher/PrivateCredentialFile.swift": "ccb853d1c404b61949d50af756ed7b557df6eb0af133c6288a5b4fc342b852db",
       "Sources/M1Launcher/ReadyDialogs.swift": "1496a67c1377e16a31a332a105d5e5ca85e36210dc3afe7834d285a2a5e002a9",
@@ -182,11 +206,12 @@
     }
   },
   "limits": [
-    "On-screen scrolling smoothness remains unmeasured; banner stability was visually checked across two detail openings for one title.",
+    "Three live library scroll captures showed artwork in the first post-scroll captures; physical frame pacing and display image latency remain unmeasured.",
     "Some license contents have no public Store title, description or publisher artwork.",
     "Initial background cache population and rate-limited metadata requests can remain in progress.",
     "Fresh private-file sign-in and authenticated self-owned-games CM response remain unverified.",
-    "Raw validation outputs and publisher images remain local and excluded from Git."
+    "Raw validation outputs and publisher images remain local and excluded from Git.",
+    "Controlled cold jumps took about 291\u2013439 ms to complete artwork tiles; the earlier concurrent-build stress exceeded the soft 100 ms predictive target (112 ms) and is retained as a failed performance check."
   ],
   "bannerStabilityFix": {
     "date": "2026-10-29",
@@ -214,5 +239,181 @@
     "gameLaunched": false,
     "screenshotsUploadedToRepository": false,
     "scope": "Selected URL remains pinned while still listed in metadata; changed bytes or a removed source can legitimately update the image."
+  },
+  "viewportArtworkLatencyFix": {
+    "date": "2026-10-29",
+    "steadyFunctionalPassed": true,
+    "steadySoftGoalUnder100msMet": true,
+    "steadyReportSHA256": "a255660c26e57d1b92c384b2fca448f588945fb3c7058ee5b4cb77f78f58bb51",
+    "results": [
+      {
+        "backgroundIndexWriterBlockedDuringMeasurement": true,
+        "cachedEligibleEntries": 18,
+        "cachedEntryToArtworkTileP95ms": 438.586166681489,
+        "completedWithActualArtwork": 18,
+        "dropped": 0,
+        "entries": 18,
+        "entryToArtworkTileP95ms": 438.586166681489,
+        "entryToRAMP95ms": 56.274583330377936,
+        "maxTileLatencyMs": 438.586166681489,
+        "mode": "default",
+        "pending": 0,
+        "tileCommitMeans": "actual CGImage artwork included in immutable card tile assigned to visible CALayer; not on-glass timestamp",
+        "trackingPublicationCallbacks": 0
+      },
+      {
+        "backgroundIndexWriterBlockedDuringMeasurement": true,
+        "cachedEligibleEntries": 24,
+        "completedWithActualArtwork": 24,
+        "entries": 24,
+        "entryToArtworkTileP95ms": 17.44395832065493,
+        "entryToRAMP95ms": 5.407124990597367,
+        "largestTileBatch": 2,
+        "maxTileLatencyMs": 17.444958328269422,
+        "mode": "default-predictive-continuous-scroll",
+        "pending": 0,
+        "ramSamples": 24,
+        "tileRasterP95ms": 8.401500002946705
+      },
+      {
+        "backgroundIndexWriterBlockedDuringMeasurement": true,
+        "cachedEligibleEntries": 12,
+        "cachedEntryToArtworkTileP95ms": 290.915416640928,
+        "completedWithActualArtwork": 12,
+        "dropped": 0,
+        "entries": 12,
+        "entryToArtworkTileP95ms": 290.915416640928,
+        "entryToRAMP95ms": 65.18808333203197,
+        "maxTileLatencyMs": 290.915416640928,
+        "mode": "tracking",
+        "pending": 0,
+        "tileCommitMeans": "actual CGImage artwork included in immutable card tile assigned to visible CALayer; not on-glass timestamp",
+        "trackingPublicationCallbacks": 24
+      },
+      {
+        "count": 1,
+        "mode": "tracking-pending-diagnostics",
+        "states": [
+          {
+            "indexedPositive": false,
+            "ramAvailable": false,
+            "revision": 0
+          }
+        ]
+      },
+      {
+        "backgroundIndexWriterBlockedDuringMeasurement": true,
+        "cachedEligibleEntries": 23,
+        "completedWithActualArtwork": 23,
+        "entries": 24,
+        "entryToArtworkTileP95ms": 63.579833338735625,
+        "entryToRAMP95ms": 6.044208334060386,
+        "largestTileBatch": 2,
+        "maxTileLatencyMs": 88.85949998511933,
+        "mode": "tracking-predictive-continuous-scroll",
+        "pending": 1,
+        "ramSamples": 23,
+        "tileRasterP95ms": 8.383208332816139
+      }
+    ],
+    "cacheUnitTimingsMilliseconds": {
+      "cachedCardEventTrackingMilliseconds": 6.4879655838012695,
+      "cachedCardWhileIndexWriterBlockedMilliseconds": 8.665919303894043,
+      "firstDownloadVisibleMilliseconds": 22.67301082611084
+    },
+    "cacheUnitNetworkTransport": "controlled in-process URLProtocol; not a Steam CDN latency measurement",
+    "durabilityChecks": 24,
+    "actualIsolatedSIGKILLCases": 2,
+    "stress": {
+      "passed": false,
+      "functionalPassed": true,
+      "softGoalUnder100msMet": false,
+      "reportSHA256": "3984614705971f9234590b9bae64192fb271edc7e60807b7cec8ec5332c82240",
+      "results": [
+        {
+          "backgroundIndexWriterBlockedDuringMeasurement": true,
+          "cachedEligibleEntries": 18,
+          "cachedEntryToArtworkTileP95ms": 497.77829166851006,
+          "completedWithActualArtwork": 18,
+          "dropped": 0,
+          "entries": 18,
+          "entryToArtworkTileP95ms": 497.77829166851006,
+          "entryToRAMP95ms": 66.19587499881163,
+          "maxTileLatencyMs": 497.77829166851006,
+          "mode": "default",
+          "pending": 0,
+          "tileCommitMeans": "actual CGImage artwork included in immutable card tile assigned to visible CALayer; not on-glass timestamp",
+          "trackingPublicationCallbacks": 0
+        },
+        {
+          "backgroundIndexWriterBlockedDuringMeasurement": true,
+          "cachedEligibleEntries": 24,
+          "completedWithActualArtwork": 24,
+          "entries": 24,
+          "entryToArtworkTileP95ms": 15.881666680797935,
+          "entryToRAMP95ms": 4.411833331687376,
+          "largestTileBatch": 2,
+          "maxTileLatencyMs": 15.882666659308597,
+          "mode": "default-predictive-continuous-scroll",
+          "pending": 0,
+          "ramSamples": 24,
+          "tileRasterP95ms": 7.941666670376435
+        },
+        {
+          "backgroundIndexWriterBlockedDuringMeasurement": true,
+          "cachedEligibleEntries": 12,
+          "cachedEntryToArtworkTileP95ms": 305.79720833338797,
+          "completedWithActualArtwork": 12,
+          "dropped": 0,
+          "entries": 12,
+          "entryToArtworkTileP95ms": 305.79720833338797,
+          "entryToRAMP95ms": 61.584041657624766,
+          "maxTileLatencyMs": 305.79720833338797,
+          "mode": "tracking",
+          "pending": 0,
+          "tileCommitMeans": "actual CGImage artwork included in immutable card tile assigned to visible CALayer; not on-glass timestamp",
+          "trackingPublicationCallbacks": 24
+        },
+        {
+          "count": 1,
+          "mode": "tracking-pending-diagnostics",
+          "states": [
+            {
+              "indexedPositive": false,
+              "ramAvailable": false,
+              "revision": 0
+            }
+          ]
+        },
+        {
+          "backgroundIndexWriterBlockedDuringMeasurement": true,
+          "cachedEligibleEntries": 23,
+          "completedWithActualArtwork": 23,
+          "entries": 24,
+          "entryToArtworkTileP95ms": 112.20545833930373,
+          "entryToRAMP95ms": 5.177291663130745,
+          "largestTileBatch": 2,
+          "maxTileLatencyMs": 143.79283334710635,
+          "mode": "tracking-predictive-continuous-scroll",
+          "pending": 1,
+          "ramSamples": 23,
+          "tileRasterP95ms": 8.761791686993092
+        }
+      ]
+    },
+    "liveReview": {
+      "scrollActions": 3,
+      "newRowsAndReturnToPreviousRowsObserved": true,
+      "artworkPresentInFirstPostScrollCaptures": true,
+      "physicalFrameOrImageLatencyMeasured": false,
+      "screenshotsUploadedToRepository": false,
+      "gamesLaunched": false
+    },
+    "tileBudget": {
+      "maximumPerTick": 6,
+      "softPrecheckMilliseconds": 4,
+      "singleCoreGraphicsDrawIsNonPreemptible": true
+    },
+    "scope": "Viewport entry to actual image in a committed CALayer tile; not physical display scan-out. Cold jumps and genuine first downloads are distinct from predictive cached scrolling."
   }
 }

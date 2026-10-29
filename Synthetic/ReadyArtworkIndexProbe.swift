@@ -35,7 +35,7 @@ private final class ImageProtocol:URLProtocol {
     func png(_ blue:Bool)->Data{let context=CGContext(data:nil,width:400,height:200,bitsPerComponent:8,bytesPerRow:0,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!;context.setFillColor((blue ? NSColor.blue:NSColor.red).cgColor);context.fill(CGRect(x:0,y:0,width:400,height:200));return NSBitmapImageRep(cgImage:context.makeImage()!).representation(using:.png,properties:[:])!}
     ImageProtocol.imageA=png(false);ImageProtocol.imageB=png(true)
     let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[ImageProtocol.self];let session=URLSession(configuration:config)
-    var checks=[String:Bool](),notices=[[String:Any]]()
+    var checks=[String:Bool](),notices=[[String:Any]](),timings=[String:Double]()
     func check(_ value:Bool,_ label:String)throws{checks[label]=value;if !value{throw ArtworkCheck.failed(label)}}
     func spin(_ condition:()->Bool)throws{let end=Date().addingTimeInterval(10);while !condition() && Date()<end{_=RunLoop.main.run(mode:.default,before:Date().addingTimeInterval(0.005))};if !condition(){throw ArtworkCheck.failed("deadline")}}
     func settle(_ delay:Double=0.2){let end=Date().addingTimeInterval(delay);while Date()<end{_=RunLoop.main.run(mode:.default,before:Date().addingTimeInterval(0.005))}}
@@ -45,11 +45,11 @@ private final class ImageProtocol:URLProtocol {
     let observer=NotificationCenter.default.addObserver(forName:.readyArtworkChanged,object:cache,queue:.main){note in notices.append(note.userInfo as? [String:Any] ?? [:])};defer{NotificationCenter.default.removeObserver(observer)}
     cache.prepare(games:games,visibleGameIDs:[games[2].id])
     try spin{disk(directory)?.roles.values.filter{$0.hash != nil}.count==12}
-    try check(ImageProtocol.calls.count==12 && ImageProtocol.maximum<=2,"initialPrepareDownloadsAllCardsIconsAndBannersWithBoundedConcurrency")
-    try check(GameArtwork.Role.allCases.allSatisfy{cache.image(for:games[2],role:$0,refresh:{}) != nil},"visibleGameRolesArePredecodedBeforeAnyDetailClick")
+    try check(ImageProtocol.calls.count==12 && ImageProtocol.maximum<=5,"initialPrepareDownloadsAllCardsIconsAndBannersWithBoundedConcurrency")
+    try check(cache.image(for:games[2],role:.card,refresh:{}) != nil && cache.image(for:games[2],role:.banner,refresh:{})==nil,"viewportPredecodesCardsWithoutPullingLargeBannersIntoScrollRAM")
     let preparedIndex=disk(directory)!
     try check(preparedIndex.roles.values.allSatisfy{record in
-      let size=record.role == .icon ? 128:record.role == .card ? 1024:2048
+      let size=record.role == .icon ? 128:record.role == .card ? 512:2048
       return record.hash.map{FileManager.default.fileExists(atPath:directory.appendingPathComponent($0+"-\(size).png").path)} ?? false
     },"allPreparedRolesHaveIndexedDiskThumbnailsBeforeAnyDetailClick")
     let first=games[0]
@@ -119,6 +119,39 @@ private final class ImageProtocol:URLProtocol {
     try check(ObjectIdentifier(cache.image(for:sameAsset,role:.banner,refresh:{})!) != sameBefore,"selectedBannerStillUpdatesWhenBytesAtTheSameURLActuallyChange")
     var steam=game(31);steam.store = .steam;steam.storeID="31";steam.metadata?["heroURL"] = .string("https://artwork.invalid/store-background.png")
     try check(GameArtwork.candidates(for:steam,role:.banner).first=="https://cdn.akamai.steamstatic.com/steam/apps/31/library_hero.jpg","steamLibraryHeroPriorityDoesNotDependOnStoreBackgroundMetadata")
+    let priorityDir=root.appendingPathComponent("priority"),priorityCache=ArtworkCache(directory:priorityDir,session:session)
+    ImageProtocol.clear();priorityCache.prepare(games:[game(20),game(21)]);try spin{ImageProtocol.calls.count>=2}
+    let visible=game(60),coldStarted=Date();priorityCache.prepareViewport(games:[visible],visibleGameIDs:[visible.id],lookAheadGameIDs:[])
+    try spin{priorityCache.image(for:visible,role:.card,refresh:{}) != nil};let coldMilliseconds=Date().timeIntervalSince(coldStarted)*1000
+    timings["firstDownloadVisibleMilliseconds"]=coldMilliseconds
+    try check(coldMilliseconds<400 && ImageProtocol.calls.contains{$0.0=="/60/card.png"},"visibleColdCardDoesNotWaitForSlowBackgroundDownloadSlots")
+    settle(1.0);priorityCache.purge();ImageProtocol.clear()
+    let warmStarted=Date();priorityCache.prepareViewport(games:[visible],visibleGameIDs:[visible.id],lookAheadGameIDs:[])
+    let warmEnd=Date().addingTimeInterval(2)
+    while priorityCache.image(for:visible,role:.card,refresh:{})==nil && Date()<warmEnd{_=RunLoop.main.run(mode:.eventTracking,before:Date().addingTimeInterval(0.005))}
+    let warmMilliseconds=Date().timeIntervalSince(warmStarted)*1000;timings["cachedCardEventTrackingMilliseconds"]=warmMilliseconds
+    try check(priorityCache.image(for:visible,role:.card,refresh:{}) != nil && warmMilliseconds<300 && ImageProtocol.calls.isEmpty,"cachedCardPublishesDuringContinuousEventTrackingWithoutNetwork")
+    let writeEntered=DispatchSemaphore(value:0),writeRelease=DispatchSemaphore(value:0),writeLock=NSLock();var blockOnce=true
+    let blocked=ArtworkCache(directory:priorityDir,session:session,networkEnabled:false,backgroundWriteGate:{
+      writeLock.lock();let shouldBlock=blockOnce;blockOnce=false;writeLock.unlock()
+      if shouldBlock{writeEntered.signal();_=writeRelease.wait(timeout:.now()+5)}
+    })
+    try spin{blocked.hasCachedImage(gameID:visible.id,role:.card)}
+    blocked.prepare(games:[game(61)]);var entered=false
+    try spin{if !entered{entered=writeEntered.wait(timeout:.now()) == .success};return entered}
+    let blockedStarted=Date(),blockedEnd=Date().addingTimeInterval(2)
+    while blocked.image(for:visible,role:.card,refresh:{})==nil && Date()<blockedEnd{_=RunLoop.main.run(mode:.eventTracking,before:Date().addingTimeInterval(0.005))}
+    let blockedMilliseconds=Date().timeIntervalSince(blockedStarted)*1000;timings["cachedCardWhileIndexWriterBlockedMilliseconds"]=blockedMilliseconds
+    let bypassed=blocked.image(for:visible,role:.card,refresh:{}) != nil;writeRelease.signal()
+    try check(bypassed && blockedMilliseconds<300,"cachedViewportReadBypassesBlockedIndexWriterAndStillPublishesInTrackingMode");blocked.purge();settle()
+    let failedDir=root.appendingPathComponent("failed-index"),failedStore=ArtworkIndexStore(failedDir,beforeWrite:{$0 != "index.json"})
+    let failedCache=ArtworkCache(directory:failedDir,session:session,indexStore:failedStore),recoverGame=game(62)
+    failedCache.prepare(games:[recoverGame]);try spin{GameArtwork.Role.allCases.allSatisfy{failedCache.image(for:recoverGame,role:$0,refresh:{}) != nil}};settle(0.5);failedCache.purge()
+    let primaryPublicationFailed = !FileManager.default.fileExists(atPath:failedDir.appendingPathComponent("index.json").path)
+    ImageProtocol.clear();let recoveredCache=ArtworkCache(directory:failedDir,session:session,networkEnabled:false);recoveredCache.prefetch(game:recoverGame)
+    try spin{GameArtwork.Role.allCases.allSatisfy{recoveredCache.image(for:recoverGame,role:$0,refresh:{}) != nil}}
+    try check(ImageProtocol.calls.isEmpty && primaryPublicationFailed,"failedIndexPublicationRetainsRecoverableCachedAssetsWithoutRefetch")
+    recoveredCache.purge();priorityCache.purge()
     let indexMode=(try FileManager.default.attributesOfItem(atPath:directory.appendingPathComponent("index.json").path)[.posixPermissions]as!NSNumber).intValue
     try check(indexMode==0o600 && (try FileManager.default.attributesOfItem(atPath:directory.path)[.posixPermissions]as!NSNumber).intValue==0o700,"indexAndDirectoryRemainOwnerPrivate")
     let sentinel=directory.appendingPathComponent("unrelated-cache-file");try Data("keep".utf8).write(to:sentinel)
@@ -126,7 +159,7 @@ private final class ImageProtocol:URLProtocol {
     let unsafe=root.appendingPathComponent("unsafe"),outside=root.appendingPathComponent("outside");try FileManager.default.createDirectory(at:outside,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700]);try FileManager.default.createSymbolicLink(at:unsafe,withDestinationURL:outside)
     let store=ArtworkIndexStore(unsafe);store.save(ArtworkDiskIndex())
     try check(!FileManager.default.fileExists(atPath:outside.appendingPathComponent("index.json").path),"aliasedCacheDirectoryCannotReceiveIndexWrites")
-    let report:[String:Any]=["passed":checks.values.allSatisfy{$0},"count":checks.count,"checks":checks,"fixtureOnly":true,"realNetworkAccountKeychainGameOrWindowUsed":false]
+    let report:[String:Any]=["passed":checks.values.allSatisfy{$0},"count":checks.count,"checks":checks,"fixtureOnly":true,"realNetworkAccountKeychainGameOrWindowUsed":false,"timings":timings]
     print(String(decoding:try JSONSerialization.data(withJSONObject:report,options:[.sortedKeys]),as:UTF8.self))
   }
 }

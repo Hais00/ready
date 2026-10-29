@@ -13,8 +13,9 @@ view rather than rasterizing/uploading the whole window for every wheel event.
 Configured/filter/sorted records are cached until the model or filter changes.
 Hover, selection and keyboard focus use separate layers. Immutable card tiles
 are cached by title, platform, installation state, dimensions and artwork
-revision, bounded to 96 tiles/64 MiB. At most two missing tiles are built per
-display tick; the display link pauses when idle.
+revision, bounded to 96 tiles/64 MiB. A tick builds at most six missing tiles, with a soft 4 ms precheck between
+non-preemptible Core Graphics draws; the display link pauses when idle. Existing
+artwork remains visible until a replacement tile is ready.
 
 Rare shell updates use a bounded asynchronous Metal queue with immutable texture
 uploads. The main thread no longer waits for GPU command completion. Session
@@ -34,13 +35,19 @@ The selected cache directory is `/Volumes/Dati APFS/Ready Cache/Artwork`.
 `ArtworkIndexStore` maintains a keyed durable index for game ID and image role
 (card, icon, banner), URL candidates, selected URL, content hash, ETag and
 Last-Modified. Originals and size-specific decoded thumbnails are stored by
-hash. Directory/index permissions are 0700/0600; cache files contain public
+hash. Card thumbnails are capped at 512 pixels, sufficient for the current grid
+size; existing 1024-pixel thumbnails are decoded locally without a download.
+Cards have their own bounded RAM cache, separate from detail banners/icons.
+Directory/index permissions are 0700/0600; cache files contain public
 artwork, not Steam authentication credentials. Cache data and publisher images
 are excluded from source distributions.
 
 Startup prepares every profile-visible owned entry, prioritizing the visible
-cards. It fetches missing assets in the background with two concurrent image
-requests, so banners and icons can be ready before the first detail click.
+cards. It fetches missing assets in the background, so banners and icons can be ready
+before the first detail click. Interactive work has two reserved request slots,
+look-ahead one, and background warming at most two (five total). A FIFO priority
+scheduler prevents newer background work from overtaking visible cards. Requests
+for obsolete visible rows are demoted or cancelled with generation tokens.
 Existing positive disk entries have no TTL and are not evicted by scrolling,
 restart or RAM cleanup. A persistent 404/410 is not repeatedly retried during
 scrolling. Standard Steam CDN URLs are candidates, never proof an image exists.
@@ -58,6 +65,36 @@ image. No image refresh timer invalidates this persistent cache. The first
 population still requires network transfer; prefetch cannot guarantee that every
 asset has finished before an immediate click or that unpublished content has
 publisher artwork.
+
+## Visible artwork latency and disk recovery
+
+Cached reads/decode run on two user-initiated workers, independently of the
+serial index/blob writer. A visible row prepares cards only, with directional
+look-ahead; scrolling no longer loads full-size banners/icons into the same RAM
+working set. Publication is scheduled in normal, event-tracking and modal run-loop
+modes. A newly decoded image can reach the view before thumbnail encoding/fsync.
+Downloaded bytes waiting for persistence are bounded; background transfer pauses
+before it can grow the staged-data budget indefinitely.
+
+URL-to-content receipts are committed with downloaded blobs. A dirty marker and
+an atomic recovery snapshot protect mappings if index publication fails or the
+app exits mid-write. A missing, corrupt or marked-dirty index triggers one bounded
+recovery pass, then the writer repairs the index. Healthy startup and scrolling
+do not enumerate the cache directory. Exact URL receipt lookup can recover a
+mapping missing from an older index. RAM cleanup never deletes these files.
+
+The earlier CPU-only scrolling measurement does not measure image arrival.
+Current validation records viewport entry, decoded card availability and assignment
+of a tile containing actual artwork separately, including blocked background
+writes and event-tracking operation. First network downloads are reported
+separately from cached reads. These timings are not display scan-out measurements. The final controlled steady run
+measured predictive cached artwork tile p95 of 17 ms in normal mode and 64 ms
+during event tracking, with the index writer deliberately blocked. Sudden jumps
+to unprepared rows took 291–439 ms. A prior run under concurrent compilation
+missed the soft 100 ms target at 112 ms; that failed performance result is retained.
+One uncached entrant remained an honest placeholder and is excluded from cached
+image timing. Three live scroll captures showed images in their first captured
+post-scroll frames, without establishing a frame-pacing or display-latency bound.
 
 ## Names, descriptions and classification
 

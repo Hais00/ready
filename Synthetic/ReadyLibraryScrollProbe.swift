@@ -50,7 +50,7 @@ private final class ScrollFixtureWindow:NSWindow {
     for _ in 0..<180{let t=ProcessInfo.processInfo.systemUptime;canvas.scrollLibrary(by:2);canvas.renderDisplayTick();cachedTimes.append((ProcessInfo.processInfo.systemUptime-t)*1000);pump(0.001)}
     let after=canvas.gridRenderSnapshot
     check("wheel-scroll-does-not-rasterize-or-upload-shell",after.chromeRasters==before.chromeRasters)
-    check("tile-raster-work-is-limited-to-two-per-tick",after.tileBuilds-before.tileBuilds<=2*(after.renderTicks-before.renderTicks))
+    check("tile-raster-work-is-limited-to-six-with-time-budget",after.tileBuilds-before.tileBuilds<=6*(after.renderTicks-before.renderTicks))
     check("cached-scroll-main-cpu-p95-below-full-raster-reference",percentile(cachedTimes,0.95)<percentile(referenceTimes,0.95))
     check("tile-cache-respects-count-and-byte-limits",after.tileCount<=96 && after.tileBytes<=64*1024*1024)
     check("shell-buffer-jobs-never-exceed-two",after.inFlight<=2)
