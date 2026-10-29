@@ -10,18 +10,30 @@ DRIVER=r'''
 #import <objc/runtime.h>
 #import "ReadyHostedGameProtocol.h"
 #include <unistd.h>
+#include <dlfcn.h>
 @interface UnsupportedWindow:NSWindow @end
 @implementation UnsupportedWindow @end
 @interface RHGFixtureWindow:NSWindow @end
 @implementation RHGFixtureWindow @end
 #define require(condition) do{if(!(condition)){fprintf(stderr,"fixture-check-line:%d\n",__LINE__);_exit(81);}}while(0)
 static void server(mach_port_t port,const char *mode){
+ double x=.75,y=.25;BOOL pollArmed=NO;
  for(;;){@autoreleasepool{
   RHGRequestReceive receive={0};kern_return_t result=mach_msg(&receive.message.h,MACH_RCV_MSG|MACH_RCV_TIMEOUT,0,sizeof receive,port,2000,MACH_PORT_NULL);if(result)_exit(82);
   RHGRequest request=receive.message;
   RHGReply reply={0};reply.h.msgh_bits=MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND_ONCE,0);reply.h.msgh_remote_port=request.h.msgh_remote_port;reply.h.msgh_size=sizeof reply;
   reply.magic=RHG_MAGIC;reply.version=RHG_VERSION;reply.op=request.op;reply.requestID=request.requestID;reply.status=RHG_OK;
   reply.window=4242;reply.width=640;reply.height=360;reply.pixelFormat=80;reply.deviceRegistryID=1;reply.backingScale=2;
+  reply.logicalWidth=320;reply.logicalHeight=180;
+  reply.cocoaOriginX=100;reply.cocoaOriginY=200;reply.quartzOriginX=100;reply.quartzOriginY=300;
+  if(request.op==RHG_POINTER_WARP){
+   if(!strcmp(mode,"pointer-inactive")){reply.status=RHG_REJECTED;reply.pointerError=kCGErrorInvalidOperation;}
+   else {x=request.pointerX;y=request.pointerY;}
+  }
+  if(!strcmp(mode,"poll-position")&&request.op==RHG_POINTER_CURSOR)pollArmed=YES;
+  if(pollArmed&&request.op==RHG_POLL){x=.125;y=.875;}
+  reply.pointerX=x;reply.pointerY=y;
+  if(!strcmp(mode,"bad-pointer"))reply.pointerX=INFINITY;
   if(!strcmp(mode,"bad-reply"))reply.requestID++;
   if(!strcmp(mode,"bad-metadata"))reply.width=0;
   if(mach_msg(&reply.h,MACH_SEND_MSG|MACH_SEND_TIMEOUT,sizeof reply,0,MACH_PORT_NULL,2000,MACH_PORT_NULL))_exit(83);
@@ -43,6 +55,35 @@ int main(int argc,char **argv){@autoreleasepool{
  require(![NSStringFromClass(object_getClass(window))isEqualToString:@"NSWindow"]);
  NSView *root=[[NSView alloc]initWithFrame:NSMakeRect(0,0,320,180)],*child=[[NSView alloc]initWithFrame:NSMakeRect(0,0,100,50)];[root addSubview:child];window.contentView=root;[window makeKeyAndOrderFront:nil];
  require(window.windowNumber==4242&&window.backingScaleFactor==2&&window.isVisible&&window.isKeyWindow);
+ // Actual game polling uses Cocoa screen coordinates, independently of pixels.
+ require(NSEqualPoints(NSEvent.mouseLocation,NSMakePoint(340,335)));
+ NSPoint local=[window convertPointFromScreen:NSEvent.mouseLocation];
+ require(NSEqualPoints(local,NSMakePoint(240,135)));
+ require(NSEqualPoints([window convertPointToScreen:local],NSEvent.mouseLocation));
+ // Own test-only entry calls the production virtual request directly; it cannot
+ // accidentally resolve CoreGraphics' physical warp in a test process.
+ CGError(*virtualWarp)(CGPoint)=dlsym(RTLD_DEFAULT,"RHGFixtureVirtualWarp");require(virtualWarp!=NULL);
+ CGError warpResult=virtualWarp(CGPointMake(180,435));
+ if(!strcmp(mode,"pointer-inactive")){
+  require(warpResult==kCGErrorInvalidOperation&&NSEqualPoints(NSEvent.mouseLocation,NSMakePoint(340,335)));
+ }else{
+  require(warpResult==kCGErrorSuccess&&NSEqualPoints(NSEvent.mouseLocation,NSMakePoint(180,245)));
+  require(NSEqualPoints([window convertPointFromScreen:NSEvent.mouseLocation],NSMakePoint(80,45)));
+ }
+ require(virtualWarp(CGPointMake(-10000,-10000))==kCGErrorIllegalArgument);
+ if(!strcmp(mode,"poll-position")){
+  CGError(*armPoll)(void)=dlsym(RTLD_DEFAULT,"RHGFixtureArmPoll");require(armPoll&&armPoll()==0);
+  NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:1];
+  while(!NSEqualPoints(NSEvent.mouseLocation,NSMakePoint(140,222.5))&&deadline.timeIntervalSinceNow>0)
+   [[NSRunLoop currentRunLoop]runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+  require(NSEqualPoints(NSEvent.mouseLocation,NSMakePoint(140,222.5)));
+ }
+ void(*controlOriginal)(BOOL)=dlsym(RTLD_DEFAULT,"RHGFixtureOriginalMouseControl");require(controlOriginal);controlOriginal(YES);
+ NSMethodSignature *mouseSignature=[NSEvent methodSignatureForSelector:@selector(mouseLocation)];
+ NSInvocation *mouseInvocation=[NSInvocation invocationWithMethodSignature:mouseSignature];mouseInvocation.selector=@selector(mouseLocation);
+ [mouseInvocation invokeWithTarget:NSEvent.class];NSPoint frameworkPoint=NSZeroPoint;[mouseInvocation getReturnValue:&frameworkPoint];
+ require(NSEqualPoints(frameworkPoint,NSMakePoint(901,902))&&!NSEqualPoints(NSEvent.mouseLocation,frameworkPoint));controlOriginal(NO);
+
  SEL titleBar=NSSelectorFromString(@"hasTitleBar");
  require(((BOOL(*)(id,SEL))[window methodForSelector:titleBar])(window,titleBar));
  window.styleMask=NSWindowStyleMaskBorderless;require(!((BOOL(*)(id,SEL))[window methodForSelector:titleBar])(window,titleBar));window.styleMask=NSWindowStyleMaskTitled;
@@ -103,19 +144,29 @@ int main(int argc,char **argv){@autoreleasepool{
 def main():
  run=pathlib.Path(tempfile.mkdtemp(prefix='hosted-shim-cpu-',dir=WORK/'tests'));run.chmod(0o700)
  include=ROOT/'Sources/ReadyHostedView/include';shim=ROOT/'NativeEmbedding/ReadyHostedGameShim.m';header=include/'ReadyHostedGameProtocol.h'
- before={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in[shim,header]}
+ paths=[shim,header,pathlib.Path(__file__).resolve()];before={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths}
+ testedShim=run/'shim-under-test.m';testedShim.write_text(shim.read_text()+r'''
+CGError RHGFixtureVirtualWarp(CGPoint p){return rhgWarpMouse(p);}
+CGError RHGFixtureArmPoll(void){return rhgPointerRequest(RHG_POINTER_CURSOR,RHG_CURSOR_HIDE,0,0);}
+static NSPoint RHGFixtureOriginalPoint(id object,SEL selector){(void)object;(void)selector;return NSMakePoint(901,902);}
+void RHGFixtureOriginalMouseControl(BOOL enable){
+ static IMP saved;Class type=object_getClass(NSEvent.class);NSString*key=[NSString stringWithFormat:@"%p:%s",type,"mouseLocation"];
+ [rhgHookLock lock];if(enable){saved=[rhgOriginals[key]pointerValue];rhgOriginals[key]=[NSValue valueWithPointer:(IMP)RHGFixtureOriginalPoint];}
+ else rhgOriginals[key]=[NSValue valueWithPointer:saved];[rhgHookLock unlock];
+}
+''')
  driver=run/'driver.m';driver.write_text(DRIVER);library=run/'shim.dylib'
  bundle=run/'HostedGuestFixture.app';contents=bundle/'Contents';macos=contents/'MacOS';macos.mkdir(parents=True,mode=0o700);binary=macos/'driver'
  (contents/'Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable':'driver','CFBundleIdentifier':'local.ready.hosted.fixture.'+uuid.uuid4().hex,'CFBundlePackageType':'APPL','LSUIElement':True,'NSHighResolutionCapable':True}))
  flags=['/usr/bin/clang','-fobjc-arc','-fblocks','-std=gnu11','-O1','-Wall','-Wextra','-Wno-deprecated-declarations','-I',str(include),'-framework','Cocoa','-framework','Metal','-framework','QuartzCore','-framework','IOSurface','-framework','CoreGraphics']
- for source,output,extra in [(shim,library,['-dynamiclib']),(driver,binary,[])]:
+ for source,output,extra in [(testedShim,library,['-dynamiclib']),(driver,binary,[])]:
   result=subprocess.run([*flags,*extra,str(source),'-o',str(output)],capture_output=True,text=True)
   (run/(output.name+'.build.log')).write_text(result.stdout+result.stderr)
   if result.returncode:raise RuntimeError(result.stderr[-6000:])
  checks={}
  regular=run/'RegularGuestFixture.app/Contents';(regular/'MacOS').mkdir(parents=True,mode=0o700);shutil.copy2(binary,regular/'MacOS/driver')
  (regular/'Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable':'driver','CFBundleIdentifier':'local.ready.hosted.regular.'+uuid.uuid4().hex,'CFBundlePackageType':'APPL','LSUIElement':False}))
- for mode,expected in [('logical',0),('regular-policy',0),('subclass',0),('unsupported',77),('multiple',77),('unknown-selector',77),('bad-reply',77),('bad-metadata',77)]:
+ for mode,expected in [('logical',0),('poll-position',0),('pointer-inactive',0),('bad-pointer',77),('regular-policy',0),('subclass',0),('unsupported',77),('multiple',77),('unknown-selector',77),('bad-reply',77),('bad-metadata',77)]:
   env={k:v for k,v in os.environ.items()if not k.startswith(('READY_','DYLD_','Steam','STEAM'))}
   env.update(DYLD_INSERT_LIBRARIES=str(library),READY_HOSTED_GAME_SERVICE='local.ready.hostedgame.fixture.'+uuid.uuid4().hex,READY_HOSTED_GAME_NONCE='a1'*32,MTL_HUD_ENABLED='0')
   executable=regular/'MacOS/driver'if mode=='regular-policy'else binary
@@ -128,7 +179,7 @@ def main():
    refusal=next(json.loads(line)for line in result.stderr.splitlines()if line.startswith('{')and json.loads(line).get('reason')=='unsupported-window-subclass')
    assert refusal['requestedClass']=='UnsupportedWindow'and refusal['selector']in('alloc','allocWithZone:')
   checks[mode]=True
- assert before=={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in[shim,header]}
+ assert before=={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths}
  report={'passed':True,'checks':checks,'count':len(checks),'sourceHashes':before,'fixtureOnly':True,'gameAccountOrSDKExecuted':False,'GPURenderingExecuted':False,'retainedRoot':str(run)}
  (run/'report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
 if __name__=='__main__':main()

@@ -1,14 +1,27 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 # Experimental presentation in the Ready window
 
-This opt-in experiment keeps Ready's existing NSWindow, fills its current
-display and exchanges the library canvas for a CAMetalLayer. It does not move
-another application's actual NSView/NSWindow objects into Ready. The guest uses
-local logical AppKit objects whose windowNumber identifies the host resource.
-The display-fill mode does not create a native fullscreen Space. Ready keeps
-this placement when the game exits, so the same fullscreen library returns.
-The Dock/menu are hidden rather than configured to reappear on edge hover.
-An explicit fullscreen exit restores the original placement.
+The current opt-in experiment keeps Ready's existing NSWindow and requests its
+native AppKit fullscreen Space before granting the presentation lease. It then
+exchanges the library canvas for a CAMetalLayer. It does not move another
+application's actual NSView/NSWindow objects into Ready: the guest uses local
+logical AppKit objects whose windowNumber identifies the host resource.
+Ready preserves native fullscreen when the game ends; explicit exit uses the
+inverse AppKit transition. See [the fullscreen contract](HOSTED_FULLSCREEN.md).
+
+An owned AppKit probe verifies native entry, primary/non-tiling flags, active
+Space membership, the same window resource and actual exit. Forty-seven controlled
+controller checks cover gating/cancellation/lifetime and failed-exit pointer
+restoration. A partial commercial run now presents in this Space. The user confirms
+physical cursor hiding and keyboard/mouse input, but the game's video cursor is
+stationary in that v2 run. The v3 cursor correction is now implemented and built,
+with 14 pointer CPU checks, 11 shim checks, a 30-frame/15-check offscreen GPU
+fixture and 14 relocation checks passing. A new live candidate presents frames
+with pointer capture and no reported pointer error; the user confirms the software cursor now follows. Input feel/parity and
+performance remain open: reported stutter and approximately 37.72 native versus
+34 hosted are user observations, not a controlled benchmark. Mission Control visuals and physical display corners
+remain unverified. The [new checkpoint](../Validation/ready-hosted-native-space-checkpoint.json)
+is separate from the historical commercial display-fill result below.
 
 The loading canvas stays above the target layer until a validated GPU-complete
 first PRESENT. A Core Animation transaction exchanges the UI for that surface;
@@ -16,13 +29,12 @@ blocking UI-resource cleanup runs only after the transaction commits. Input to
 the loading canvas is disabled. A presented-handler timestamp is separate
 telemetry; enqueueing a present is not called an on-glass observation.
 
-`--exclusive-hosted-view` additionally requests exclusive display ownership via
-Core Graphics, with the existing window above the shielding level. This opt-in
-path records API results/shielding metadata and must be validated on the actual
-OS/display; it is not inferred from display-fill geometry. Switching away or
-locking releases capture without terminating the game, and an eligible return
-to foreground can reacquire it. Stop/exit always release ownership and restore
-window level. Capture success alone does not prove Metal direct scanout.
+The new native-Space path suppresses physical display capture: the legacy
+`--exclusive-hosted-view` flag does not override that policy. Display capture,
+shielding and manually filling the display belonged to the earlier implementation
+and remain historical evidence below. A native Space, host-owned pointer and
+Metal HUD composition mode are distinct properties; none establishes direct
+scanout by itself.
 
 The host acquires its own real drawable and exports that texture's IOSurface as
 a Mach right. The injected guest imports that same storage and performs its
@@ -45,11 +57,20 @@ error. The prototype adapts the selectors actually exercised; it does not certif
 arbitrary Cocoa applications. The executable and its vendor signature are not
 modified. The source-built GPL shim is a separately injected local component.
 
-Mouse/key events originate in the host view and travel over the same authenticated
-session to the guest's local responder. Physical cursor warping/capture is not
-implemented: guest CGWarpMouseCursorPosition/CGAssociateMouseAndMouseCursorPosition
-return an explicit unsupported result. Cocoa gesture semantics, multiple displays,
-arbitrary dialogs, controllers and accessibility require their own validation.
+Mouse/key events originate in the host view and travel over the authenticated
+session to the guest's local responder. Pointer protocol v3 makes Ready the
+physical owner: eligibility requires a valid first frame, completed fullscreen,
+focus and active Space. Guest associate/warp/cursor requests express virtual
+policy; a guest acknowledgement cannot release Ready's physical pointer, and
+warps alter virtual coordinates only. Physical mouse hiding and keyboard/mouse
+input have partial user-confirmed evidence, while the stationary in-game video
+cursor was the observed v2 bug. V3 adds a coherent virtual-global cursor cache
+and caller-scoped `NSEvent.mouseLocation` reads without IPC or the original
+framework getter; static callsite checks and scoped regressions pass. The user
+confirms the in-game video cursor now follows, while different input feel remains
+reported; a system-curve cause is unproven. Complete relative movement
+and focus/Space/lock recovery are not certified. Cocoa gestures, multiple displays,
+arbitrary dialogs, controllers and accessibility remain separate validation.
 The guest Ready overlay is omitted in this experiment so only one transport owns
 the presentation hooks; ordinary launches retain their existing overlay path.
 
@@ -73,8 +94,8 @@ HUD instrumentation itself is additional diagnostic work.
 Developer entry points:
 
 ```sh
-Build/ready.app/Contents/MacOS/ready --host-game-view 1091500 --metal-hud \
-  --exclusive-hosted-view
+Build/ready.app/Contents/MacOS/ready --host-game-view 1091500 --metal-hud
+# The legacy --exclusive-hosted-view flag is suppressed for native Spaces.
 # Optional explicit local development override; each launch pins its bytes:
 Build/ready.app/Contents/MacOS/ready --host-game-view 1091500 --metal-hud \
   --host-game-shim /absolute/owned/libReadyHostedGame.dylib
@@ -84,7 +105,10 @@ The default path remains unchanged without the explicit experiment. A successful
 synthetic-app run is not a commercial-game compatibility certificate. Exact live
 checkpoints and remaining limits must accompany any claim of game support.
 
-## Successful bounded commercial presentation — 2026-10-29
+## Historical display-fill commercial presentation — 2026-10-29
+
+This run predates native-Space/pointer-v2 integration. It is retained unchanged
+and is not evidence that the new path works with this commercial game.
 
 Cyberpunk 2077 completed 7,038 valid PRESENT operations and 7,038 acquisitions in
 172,213.096 ms of host journal time (23,891 Mach requests). Ready PID 1694 kept its

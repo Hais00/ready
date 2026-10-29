@@ -4,45 +4,121 @@ import CryptoKit
 import LauncherCore
 import ReadyHostedView
 import QuartzCore
-import CoreGraphics
 
-/// Display-fill placement belongs to Ready, rather than to one game. Keeping it
-/// outside the presentation controller lets a failed/finished game return to
-/// the same fullscreen launcher instead of exposing the Dock between attempts.
+/// Native AppKit fullscreen belongs to Ready, rather than to one game. A
+/// completed/failed game returns to the same NSWindow in the same fullscreen
+/// Space. Display capture, shielding levels and manual display-fill are not used.
 @MainActor final class HostedWindowPlacement {
-  private weak var window:NSWindow?
-  private let originalFrame:NSRect
-  private let originalPresentation:NSApplication.PresentationOptions
-  private let originallyNativeFullscreen:Bool
-  private var windowButtons=[(NSButton,Bool)]()
-  private(set) var isDisplayFill=false
+  /// This small driver makes the real notification/cancellation state machine
+  /// testable without taking a display or changing an actual macOS Space.
+  struct Driver {
+    let notificationObject:AnyObject
+    let isFullscreen:()->Bool
+    let configure:()->Void
+    let toggle:()->Void
+    let restore:()->Void
+  }
+  enum Failure:Error {case busy,failed,timeout,cancelled,closed}
+  private let driver:Driver
+  private let center:NotificationCenter
+  private let timeout:TimeInterval
+  private var observers=[NSObjectProtocol]()
+  private var deadline:DispatchWorkItem?
+  private var pending:(id:UUID,completion:(Result<Void,Error>)->Void)?
+  private var entering=false
+  private var exiting=false
+  private var uncertainTransition=false
+  private var exitRequested=false
+  var isFullscreen:Bool {driver.isFullscreen() && !entering && !exiting}
+  var isFullscreenOrEntering:Bool {driver.isFullscreen() || entering || exiting}
 
-  init(window:NSWindow){
-    self.window=window;originalFrame=window.frame
-    originalPresentation=NSApp.presentationOptions
-    originallyNativeFullscreen=window.styleMask.contains(.fullScreen)
+  convenience init(window:NSWindow){
+    let collection=window.collectionBehavior
+    self.init(driver:Driver(notificationObject:window,
+      isFullscreen:{[weak window] in window?.styleMask.contains(.fullScreen)==true},
+      configure:{[weak window] in
+        guard let window else{return}
+        var behavior=window.collectionBehavior
+        behavior.subtract([.fullScreenAuxiliary,.fullScreenNone,.canJoinAllSpaces,.moveToActiveSpace,.fullScreenAllowsTiling])
+        behavior.formUnion([.fullScreenPrimary,.fullScreenDisallowsTiling])
+        window.collectionBehavior=behavior
+        window.styleMask.insert(.fullSizeContentView)
+        window.titleVisibility = .hidden;window.titlebarAppearsTransparent=true
+        window.isOpaque=true;window.backgroundColor = .black
+      },
+      toggle:{[weak window] in window?.toggleFullScreen(nil)},
+      restore:{[weak window] in window?.collectionBehavior=collection}))
   }
-  func fill(){
-    guard !isDisplayFill,let window,let screen=window.screen ?? NSScreen.main else{return}
-    for kind:NSWindow.ButtonType in [.closeButton,.miniaturizeButton,.zoomButton] {
-      if let button=window.standardWindowButton(kind){windowButtons.append((button,button.isHidden));button.isHidden=true}
+  init(driver:Driver,center:NotificationCenter = .default,timeout:TimeInterval=10){
+    self.driver=driver;self.center=center;self.timeout=timeout
+    observe(NSWindow.willEnterFullScreenNotification){[weak self] in self?.entering=true}
+    observe(NSWindow.didEnterFullScreenNotification){[weak self] in
+      guard let self else{return}
+      self.entering=false;self.exiting=false;self.uncertainTransition=false
+      guard self.driver.isFullscreen() else{self.complete(.failure(Failure.failed));return}
+      if self.exitRequested {
+        self.complete(.failure(Failure.cancelled))
+        DispatchQueue.main.async{[weak self] in self?.toggleExitIfNeeded()}
+      }else{self.complete(.success(()))}
     }
-    isDisplayFill=true
-    window.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)
-    var options=NSApp.presentationOptions
-    options.subtract([.autoHideDock,.autoHideMenuBar,.autoHideToolbar])
-    options.formUnion([.hideDock,.hideMenuBar])
-    NSApp.presentationOptions=options
-    if !originallyNativeFullscreen{window.setFrame(screen.frame,display:true,animate:false)}
-    window.layoutIfNeeded()
+    observe(NSWindow.willExitFullScreenNotification){[weak self] in self?.exiting=true}
+    observe(NSWindow.didExitFullScreenNotification){[weak self] in
+      guard let self else{return}
+      self.entering=false;self.exiting=false;self.uncertainTransition=false;self.exitRequested=false
+      self.driver.restore();self.complete(.failure(Failure.cancelled))
+    }
+    observe(NSWindow.willCloseNotification){[weak self] in self?.complete(.failure(Failure.closed))}
   }
-  /// Only an explicit fullscreen exit or application termination restores the
-  /// pre-experiment placement. Normal session teardown deliberately does not.
+  deinit{deadline?.cancel();for observer in observers{center.removeObserver(observer)}}
+  private func observe(_ name:Notification.Name,_ body:@escaping()->Void){
+    observers.append(center.addObserver(forName:name,object:driver.notificationObject,queue:.main){_ in
+      MainActor.assumeIsolated{body()}
+    })
+  }
+  @discardableResult func enter(completion:@escaping(Result<Void,Error>)->Void)->UUID {
+    let id=UUID()
+    guard pending==nil,!exitRequested,!uncertainTransition,!exiting else{
+      DispatchQueue.main.async{completion(.failure(Failure.busy))};return id
+    }
+    pending=(id,completion)
+    if driver.isFullscreen(),!entering{complete(.success(()));return id}
+    driver.configure()
+    let deadline=DispatchWorkItem{[weak self] in
+      guard let self,self.pending?.id==id else{return}
+      self.uncertainTransition=self.entering
+      self.complete(.failure(Failure.timeout))
+    }
+    self.deadline=deadline
+    DispatchQueue.main.asyncAfter(deadline:.now()+timeout,execute:deadline)
+    if !entering{entering=true;driver.toggle()}
+    return id
+  }
+  func cancelPending(_ id:UUID?){
+    guard let id,pending?.id==id else{return};complete(.failure(Failure.cancelled))
+  }
+  /// NSWindowDelegate supplies failures; AppKit has no matching failure
+  /// notification. A failed transition never authorizes host creation.
+  func failedToEnter(){
+    entering=false;uncertainTransition=false;exitRequested=false
+    driver.restore();complete(.failure(Failure.failed))
+  }
+  func failedToExit(){exiting=false;exitRequested=false}
+  /// Explicit fullscreen exit. A transition already in flight must finish before
+  /// asking AppKit to reverse it; cancelling a game alone does not exit Ready.
   func restore(){
-    guard isDisplayFill else{return};isDisplayFill=false
-    NSApp.presentationOptions=originalPresentation
-    for (button,hidden) in windowButtons{button.isHidden=hidden};windowButtons.removeAll()
-    if !originallyNativeFullscreen,let window{window.setFrame(originalFrame,display:true,animate:false)}
+    if exitRequested{return};exitRequested=true
+    complete(.failure(Failure.cancelled))
+    if !entering && !exiting{toggleExitIfNeeded()}
+  }
+  private func toggleExitIfNeeded(){
+    guard exitRequested else{return}
+    if driver.isFullscreen(){driver.toggle()}
+    else{exitRequested=false;driver.restore()}
+  }
+  private func complete(_ result:Result<Void,Error>){
+    guard let pending else{return};self.pending=nil
+    deadline?.cancel();deadline=nil
+    DispatchQueue.main.async{pending.completion(result)}
   }
 }
 
@@ -52,19 +128,16 @@ import CoreGraphics
   private weak var window:NSWindow?
   private weak var canvas:MetalCanvas?
   private var handle:RHGHostRef?
-  private var observers=[NSObjectProtocol]()
-  private var deadline:DispatchWorkItem?
   private var pending:((Result<SessionGamePresentation?,Error>)->Void)?
   private var activating=false
   private let placement:HostedWindowPlacement
   private weak var hostView:NSView?
   private(set) var isLoading=true
   private var transitionGeneration=UUID()
-  private var exclusive=false
   private var exclusiveRequested=false
-  private var capturedDisplay:CGDirectDisplayID?
-  private var originalWindowLevel:NSWindow.Level?
-  private var captureObservers=[NSObjectProtocol]()
+  private var placementRequest:UUID?
+  private var pointerObservers=[NSObjectProtocol]()
+  private var fullscreenTransitioning=false
   private var diagnostics:URL?
   private var onFailure:((Error)->Void)?
   private var captureFacts=[String:Any]()
@@ -85,19 +158,22 @@ import CoreGraphics
     }
     let digest:String
     do{digest=try Self.hash(shim)}catch{completion(.failure(error));return}
-    self.diagnostics=diagnostics;self.exclusive=exclusive;self.exclusiveRequested=exclusive
+    self.diagnostics=diagnostics;self.exclusiveRequested=exclusive
     if let canvas{previousCanvasInteraction=canvas.interactionEnabled;canvas.interactionEnabled=false}
-    if exclusive{armCaptureObservers()}
     pending=completion
     let originalWindowNumber=window.windowNumber
     let activate={ [weak self] in
       guard let self,!self.activating,self.pending != nil,let window=self.window else{return}
-      self.activating=true;self.removeObservers()
-      let placement:[String:Any] = ["schema":1,"mode":"existing-window-display-fill",
+      guard self.placement.isFullscreen else{
+        self.finish(.failure(LauncherError.unavailable("Ready ha lasciato lo Space a schermo intero prima dell’avvio.")));return
+      }
+      self.activating=true;self.placementRequest=nil
+      let placement:[String:Any] = ["schema":1,"mode":"existing-window-native-fullscreen-space",
         "windowBefore":originalWindowNumber,"windowAfter":window.windowNumber,
         "windowResourcePreserved":originalWindowNumber==window.windowNumber,
         "nativeFullscreenSpace":window.styleMask.contains(.fullScreen),
-        "coversDisplay":window.screen.map{window.frame==($0.frame)} ?? false]
+        "coversDisplay":window.screen.map{window.frame==($0.frame)} ?? false,
+        "displayCaptureUsed":false,"captureSuppressedForNativeSpace":exclusive]
       if let data=try?JSONSerialization.data(withJSONObject:placement,options:[.sortedKeys]) {
         try?AtomicFile.writePrivate(data,to:diagnostics.appendingPathExtension("placement.json"))
       }
@@ -109,6 +185,7 @@ import CoreGraphics
         self.finish(.failure(LauncherError.unavailable("La superficie diretta di Ready non è disponibile.")));return
       }
       self.handle=host
+      self.armPointerObservers()
       RHGHostSetFirstFrameCallback(host,Unmanaged.passUnretained(self).toOpaque(),{context in
         guard let context else{return}
         MainActor.assumeIsolated {
@@ -118,6 +195,7 @@ import CoreGraphics
       let view=Unmanaged<NSView>.fromOpaque(rawView).takeUnretainedValue()
       view.frame=window.contentView?.bounds ?? window.contentLayoutRect
       view.autoresizingMask=[.width,.height]
+      view.layer?.cornerRadius=0;view.layer?.maskedCorners=[]
       window.contentView=view;window.acceptsMouseMovedEvents=true;window.makeFirstResponder(nil)
       self.hostView=view
       // Keep the existing rendered launcher above the host layer until the
@@ -134,8 +212,15 @@ import CoreGraphics
         keepLauncherWindow:true,stop:{[weak self]in MainActor.assumeIsolated{self?.stop()}})
       self.finish(.success(lease))
     }
-    placement.fill()
-    DispatchQueue.main.async{activate()}
+    placementRequest=placement.enter{[weak self] result in
+      guard let self,self.pending != nil else{return}
+      switch result {
+      case .success:activate()
+      case .failure:
+        self.recordCapture(phase:"fullscreen-space-failed")
+        self.finish(.failure(LauncherError.unavailable("Ready non è riuscito a entrare nel proprio Space a schermo intero. Riprova al termine della transizione.")))
+      }
+    }
   }
 
   func resize(){if let handle{RHGHostResize(handle)}}
@@ -155,114 +240,80 @@ import CoreGraphics
       self.canvas?.releaseGraphics()
       self.captureFacts["firstValidPresentReceived"]=true
       self.recordCapture(phase:"first-valid-present")
-      if self.exclusive{self.captureDisplay()}
+      self.updatePointer()
     }
   }
-  /// Explicit fullscreen exit releases exclusive ownership immediately while
-  /// leaving the hosted game in this same window until normal session teardown.
-  func leaveFullscreen(){exclusive=false;removeCaptureObservers();releaseCapture();placement.restore()}
+  /// Explicit fullscreen exit uses AppKit's native Space transition. It does
+  /// not capture/release a display or change the window's shielding level.
+  func leaveFullscreen(){
+    fullscreenTransitioning=true
+    if let handle{RHGHostSetPointerEnabled(handle,false)}
+    placement.restore()
+  }
+  func fullscreenTransitionFailed(){
+    fullscreenTransitioning=false
+    updatePointer()
+  }
   func stop(preserveFullscreen:Bool=true){
     transitionGeneration=UUID()
-    exclusive=false
-    removeCaptureObservers()
-    releaseCapture()
+    placement.cancelPending(placementRequest);placementRequest=nil
+    removePointerObservers()
     restoreCanvasInteraction()
     if let canvas,canvas.superview === hostView{canvas.removeFromSuperview()}
     if let handle{
+      RHGHostSetPointerEnabled(handle,false)
       RHGHostSetFirstFrameCallback(handle,nil,nil)
       RHGHostStop(handle);RHGHostDestroy(handle);self.handle=nil
     }
     hostView=nil
     if pending != nil{finish(.failure(LauncherError.failed("Presentazione condivisa annullata.")))}
-    removeObservers()
     if !preserveFullscreen{placement.restore()}
   }
-  private func captureDisplay(){
-    guard exclusive,handle != nil,!isLoading,capturedDisplay==nil else{return}
-    guard let window,NSApp.isActive,window.isKeyWindow,
-      NSWorkspace.shared.frontmostApplication?.processIdentifier==getpid(),
-      let number=window.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
-      let session=CGSessionCopyCurrentDictionary() as? [String:Any],
-      (session[kCGSessionOnConsoleKey as String] as? NSNumber)?.boolValue==true,
-      (session[kCGSessionLoginDoneKey as String] as? NSNumber)?.boolValue==true else{
-      captureFacts["deferredReason"]="inactive-console";recordCapture(phase:"capture-deferred");return
+  private func armPointerObservers(){
+    let center=NotificationCenter.default
+    for name in [NSApplication.didBecomeActiveNotification,NSApplication.didResignActiveNotification,
+      NSWindow.didBecomeKeyNotification,NSWindow.didResignKeyNotification,
+      NSWindow.willEnterFullScreenNotification,NSWindow.willExitFullScreenNotification,NSWindow.didExitFullScreenNotification,
+      NSWindow.didEnterFullScreenNotification,NSWindow.didChangeOcclusionStateNotification] {
+      let object:AnyObject? = (name==NSApplication.didBecomeActiveNotification || name==NSApplication.didResignActiveNotification) ? NSApp:window
+      pointerObservers.append(center.addObserver(forName:name,object:object,queue:.main){[weak self] notification in
+        MainActor.assumeIsolated {
+          if notification.name==NSWindow.willExitFullScreenNotification || notification.name==NSWindow.willEnterFullScreenNotification {
+            self?.fullscreenTransitioning=true
+            if let handle=self?.handle{RHGHostSetPointerEnabled(handle,false)}
+          }else{
+            if notification.name==NSWindow.didEnterFullScreenNotification || notification.name==NSWindow.didExitFullScreenNotification{self?.fullscreenTransitioning=false}
+            self?.updatePointer()
+          }
+        }
+      })
     }
-    let display=CGDirectDisplayID(number.uint32Value)
-    let before=window.windowNumber
-    let shieldLevel=CGShieldingWindowLevel()
-    originalWindowLevel=window.level
-    captureFacts["windowLevelBefore"]=window.level.rawValue
-    // Keep the existing, already-presenting window above the shield before
-    // capture creates it, avoiding a black shield between visible frames.
-    window.level=NSWindow.Level(rawValue:Int(shieldLevel)+1)
-    captureFacts["windowLevelAfter"]=window.level.rawValue
-    let result=CGDisplayCaptureWithOptions(display,.noFill)
-    captureFacts["displayID"]=display;captureFacts["captureResult"]=result.rawValue
-    captureFacts["windowBefore"]=before;captureFacts["windowAfter"]=window.windowNumber
-    captureFacts["windowResourcePreserved"]=before==window.windowNumber
-    guard result == .success else{failCapture(reason:"capture-rejected");return}
-    capturedDisplay=display
-    let shield=CGShieldingWindowID(display)
-    captureFacts["shieldingWindowID"]=shield;captureFacts["shieldingWindowLevel"]=shieldLevel
-    guard shield != 0 else{failCapture(reason:"shield-unavailable");return}
-    guard NSApp.isActive,window.isKeyWindow,
-      NSWorkspace.shared.frontmostApplication?.processIdentifier==getpid() else{
-      suspendCapture(reason:"application-inactive");return
+    for name in [NSWorkspace.sessionDidResignActiveNotification,NSWorkspace.sessionDidBecomeActiveNotification] {
+      pointerObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:name,object:nil,queue:.main){[weak self] notification in
+        MainActor.assumeIsolated {
+          if notification.name==NSWorkspace.sessionDidResignActiveNotification {
+            if let handle=self?.handle{RHGHostSetPointerEnabled(handle,false)}
+          }else{self?.updatePointer()}
+        }
+      })
     }
-    window.makeKeyAndOrderFront(nil)
-    captureFacts.removeValue(forKey:"deferredReason")
-    recordCapture(phase:"display-captured")
-  }
-  private func armCaptureObservers(){
-    guard captureObservers.isEmpty else{return}
-    captureObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
-      forName:NSWorkspace.sessionDidResignActiveNotification,object:nil,queue:.main){[weak self] _ in
-        MainActor.assumeIsolated{self?.suspendCapture(reason:"console-inactive")}
-      })
-    captureObservers.append(NotificationCenter.default.addObserver(
-      forName:NSApplication.didResignActiveNotification,object:NSApp,queue:.main){[weak self] _ in
-        MainActor.assumeIsolated{self?.suspendCapture(reason:"application-inactive")}
-      })
-    captureObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
-      forName:NSWorkspace.sessionDidBecomeActiveNotification,object:nil,queue:.main){[weak self] _ in
-        MainActor.assumeIsolated{self?.captureDisplay()}
-      })
-    captureObservers.append(NotificationCenter.default.addObserver(
-      forName:NSApplication.didBecomeActiveNotification,object:NSApp,queue:.main){[weak self] _ in
-        MainActor.assumeIsolated{self?.captureDisplay()}
-      })
-    captureObservers.append(NotificationCenter.default.addObserver(
-      forName:NSWindow.didBecomeKeyNotification,object:window,queue:.main){[weak self] _ in
-        MainActor.assumeIsolated{self?.captureDisplay()}
+    pointerObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
+      forName:NSWorkspace.activeSpaceDidChangeNotification,object:nil,queue:.main){[weak self] _ in
+        MainActor.assumeIsolated{self?.updatePointer()}
       })
   }
-  private func suspendCapture(reason:String){
-    guard exclusive else{return}
-    releaseCapture();captureFacts["deferredReason"]=reason
-    recordCapture(phase:"capture-suspended")
+  private func updatePointer(){
+    guard let handle else{return}
+    let enabled = !isLoading && !fullscreenTransitioning && placement.isFullscreen && window?.styleMask.contains(.fullScreen)==true
+      && window?.isOnActiveSpace==true && window?.isKeyWindow==true && NSApp.isActive
+    RHGHostSetPointerEnabled(handle,enabled)
   }
-  private func failCapture(reason:String){
-    guard exclusive else{return};exclusive=false
-    removeCaptureObservers()
-    captureFacts["failure"]=reason
-    releaseCapture();recordCapture(phase:"capture-failed")
-    onFailure?(LauncherError.unavailable("Ready non ha ottenuto il controllo esclusivo del display. La sessione viene chiusa."))
-  }
-  private func removeCaptureObservers(){
-    for observer in captureObservers {
+  private func removePointerObservers(){
+    for observer in pointerObservers {
       NotificationCenter.default.removeObserver(observer)
       NSWorkspace.shared.notificationCenter.removeObserver(observer)
     }
-    captureObservers.removeAll()
-  }
-  private func releaseCapture(){
-    if let display=capturedDisplay {
-      capturedDisplay=nil
-      captureFacts["releaseResult"]=CGDisplayRelease(display).rawValue
-      recordCapture(phase:"display-released")
-    }
-    // The level is also restored if capture failed before a display was owned.
-    if let originalWindowLevel{window?.level=originalWindowLevel;self.originalWindowLevel=nil}
+    pointerObservers.removeAll()
   }
   private func restoreCanvasInteraction(){
     if let previousCanvasInteraction{canvas?.interactionEnabled=previousCanvasInteraction;self.previousCanvasInteraction=nil}
@@ -271,22 +322,19 @@ import CoreGraphics
     guard let diagnostics else{return}
     var facts=captureFacts
     facts["schema"]=1;facts["phase"]=phase;facts["exclusiveRequested"]=exclusiveRequested
-    // Exclusive WindowServer ownership is separate from Metal HUD composition
-    // mode and from addPresentedHandler's eventual on-glass observation.
+    facts["nativeFullscreenSpace"]=window?.styleMask.contains(.fullScreen)==true
+    facts["displayCaptureUsed"]=false;facts["captureSuppressedForNativeSpace"]=exclusiveRequested
+    // Native fullscreen Space and pointer confinement are separate from display
+    // exclusivity and from addPresentedHandler's on-glass observation.
     facts["directDisplayVerified"]=false;facts["onGlassVerified"]=false
     if let data=try?JSONSerialization.data(withJSONObject:facts,options:[.sortedKeys]){
       try?AtomicFile.writePrivate(data,to:diagnostics.appendingPathExtension("display.json"))
     }
   }
   private func finish(_ result:Result<SessionGamePresentation?,Error>){
-    guard let callback=pending else{return};pending=nil;removeObservers()
+    guard let callback=pending else{return};pending=nil
     if case .failure=result{restoreCanvasInteraction()}
     callback(result)
-  }
-  private func removeObservers(){
-    deadline?.cancel();deadline=nil
-    for observer in observers{NotificationCenter.default.removeObserver(observer)}
-    observers.removeAll()
   }
   private static func hash(_ path:URL)throws->String {
     let input=try FileHandle(forReadingFrom:path);defer{try?input.close()}

@@ -83,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     window.titlebarAppearsTransparent = true
     window.isOpaque = true
     window.backgroundColor = .black
+    window.collectionBehavior = [.fullScreenPrimary,.fullScreenDisallowsTiling]
     window.minSize = NSSize(width: 900, height: 620)
     window.delegate = self
     canvas = MetalCanvas(frame: NSRect(x: 0, y: 0, width: 1240, height: 760), device: device)
@@ -252,6 +253,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       if hostedPresentation?.active==true{hostedPresentation?.resize()}else{canvas?.refresh()}
     }
   }
+  func windowDidFailToEnterFullScreen(_ window:NSWindow) {
+    guard window === self.window else{return}
+    MainActor.assumeIsolated{hostedWindowPlacement?.failedToEnter()}
+  }
+  func windowDidFailToExitFullScreen(_ window:NSWindow) {
+    guard window === self.window else{return}
+    MainActor.assumeIsolated{
+      hostedWindowPlacement?.failedToExit()
+      hostedPresentation?.fullscreenTransitionFailed()
+    }
+  }
   // Called only at initial startup or while every session/store operation is idle.
   func configureRuntimeClients() {
     MainActor.assumeIsolated { steamNetwork?.stop(); steamNetwork = nil }
@@ -339,6 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       #selector(steamAccountAction),#selector(steamDownloadsAction),#selector(steamReconnectAction),#selector(steamOfflineAction),
     ]
     if let action = item.action, interfaceActions.contains(action) {
+      if action == #selector(toggleFullscreen),MainActor.assumeIsolated({hostedPresentation?.active==true}){return true}
       if action == #selector(profiles), authenticationSession != nil { return false }
       return !busy
     }
@@ -367,9 +380,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   }
   @objc func toggleFullscreen() {
     let restored=MainActor.assumeIsolated { () -> Bool in
-      guard let placement=hostedWindowPlacement,placement.isDisplayFill else{return false}
-      hostedPresentation?.leaveFullscreen()
-      placement.restore();hostedWindowPlacement=nil
+      guard let placement=hostedWindowPlacement,placement.isFullscreenOrEntering else{return false}
+      if let hostedPresentation{hostedPresentation.leaveFullscreen()}else{placement.restore()}
       return true
     }
     if !restored{window.toggleFullScreen(nil)}

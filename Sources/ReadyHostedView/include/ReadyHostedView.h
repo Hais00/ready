@@ -13,6 +13,10 @@ void *RHGHostGetView(RHGHostRef host);
 const char *RHGHostService(RHGHostRef host);
 const char *RHGHostNonce(RHGHostRef host);
 void RHGHostSetFirstFrameCallback(RHGHostRef host, void *context, RHGHostFirstFrameCallback callback);
+/* Physical pointer ownership remains in Ready. Enable only for the active
+ * hosted session; focus/Space/console loss releases independently of guest IPC. */
+void RHGHostSetPointerEnabled(RHGHostRef host, bool enabled);
+bool RHGHostPointerCaptured(RHGHostRef host);
 void RHGHostStop(RHGHostRef host);
 void RHGHostDestroy(RHGHostRef host);
 void RHGHostResize(RHGHostRef host);

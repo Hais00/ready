@@ -14,12 +14,14 @@
 #import <execinfo.h>
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
+#import <stdatomic.h>
 #import "ReadyHostedGameProtocol.h"
 
 typedef struct {
     uint32_t window,width,height;
     uint64_t pixelFormat,deviceRegistryID;
     double scale;
+    double logicalWidth,logicalHeight,quartzX,quartzY,cocoaX,cocoaY;
 } RHGWindowMetadata;
 static RHGWindowMetadata rhgMetadata;
 static void rhgConnect(void);
@@ -122,7 +124,7 @@ static NSMenu *rhgLogicalMainMenu;
 static NSRect rhgContentRect(void) {
     double scale=rhgMetadata.scale;
     if(!isfinite(scale)||scale<=0)rhgFail(@"invalid-host-scale");
-    return NSMakeRect(0,0,rhgMetadata.width/scale,rhgMetadata.height/scale);
+    return NSMakeRect(0,0,rhgMetadata.logicalWidth,rhgMetadata.logicalHeight);
 }
 @implementation RHGLogicalWindow
 -(instancetype)initWithContentRect:(NSRect)rect styleMask:(NSWindowStyleMask)style backing:(NSBackingStoreType)backing defer:(BOOL)defer {
@@ -145,10 +147,10 @@ static NSRect rhgContentRect(void) {
 -(NSRect)frameRectForContentRect:(NSRect)rect{return rect;}
 -(NSRect)convertRectToBacking:(NSRect)rect {CGFloat s=self.backingScaleFactor;return NSMakeRect(rect.origin.x*s,rect.origin.y*s,rect.size.width*s,rect.size.height*s);}
 -(NSRect)convertRectFromBacking:(NSRect)rect {CGFloat s=self.backingScaleFactor;return NSMakeRect(rect.origin.x/s,rect.origin.y/s,rect.size.width/s,rect.size.height/s);}
--(NSPoint)convertPointToScreen:(NSPoint)point {NSPoint origin=self.screen.frame.origin;return NSMakePoint(point.x+origin.x,point.y+origin.y);}
--(NSPoint)convertPointFromScreen:(NSPoint)point {NSPoint origin=self.screen.frame.origin;return NSMakePoint(point.x-origin.x,point.y-origin.y);}
--(NSRect)convertRectToScreen:(NSRect)rect {NSPoint origin=self.screen.frame.origin;return NSOffsetRect(rect,origin.x,origin.y);}
--(NSRect)convertRectFromScreen:(NSRect)rect {NSPoint origin=self.screen.frame.origin;return NSOffsetRect(rect,-origin.x,-origin.y);}
+-(NSPoint)convertPointToScreen:(NSPoint)point {return NSMakePoint(point.x+rhgMetadata.cocoaX,point.y+rhgMetadata.cocoaY);}
+-(NSPoint)convertPointFromScreen:(NSPoint)point {return NSMakePoint(point.x-rhgMetadata.cocoaX,point.y-rhgMetadata.cocoaY);}
+-(NSRect)convertRectToScreen:(NSRect)rect {return NSOffsetRect(rect,rhgMetadata.cocoaX,rhgMetadata.cocoaY);}
+-(NSRect)convertRectFromScreen:(NSRect)rect {return NSOffsetRect(rect,-rhgMetadata.cocoaX,-rhgMetadata.cocoaY);}
 -(void)setContentView:(NSView*)view {
     if(_contentView)objc_setAssociatedObject(_contentView,&rhgViewWindowKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     _contentView=view;
@@ -314,7 +316,18 @@ static uint64_t rhgFrames;
 static BOOL rhgConfigured;
 static uint32_t rhgConfiguredWidth,rhgConfiguredHeight,rhgConfiguredFormat;
 static uint64_t rhgConfiguredDevice;
+static _Atomic uint32_t rhgVirtualHideCount;
+static _Atomic bool rhgVirtualHiddenUntilMove;
 static char rhgInputKey;
+// A coherent cached snapshot: a getter never performs IPC or reads the anchored
+// physical cursor. Framework callers retain AppKit's original implementation.
+static os_unfair_lock rhgPointerLocationLock=OS_UNFAIR_LOCK_INIT;
+static NSPoint rhgPointerScreenLocation;
+static NSPoint rhgMouseLocation(id type,SEL selector) {
+    if(!RHG_MAIN_CALLER())return ((NSPoint(*)(id,SEL))rhgOriginal(type,selector))(type,selector);
+    rhgConnect();os_unfair_lock_lock(&rhgPointerLocationLock);
+    NSPoint point=rhgPointerScreenLocation;os_unfair_lock_unlock(&rhgPointerLocationLock);return point;
+}
 
 static BOOL rhgFormat(uint64_t format) {
     return format==MTLPixelFormatBGRA8Unorm || format==MTLPixelFormatBGRA8Unorm_sRGB ||
@@ -324,9 +337,11 @@ static BOOL rhgFormat(uint64_t format) {
 static void rhgMetadataFromReply(RHGReply reply) {
     if(!reply.window || !reply.width || !reply.height || reply.width>8192 || reply.height>8192 ||
        (uint64_t)reply.width*reply.height>33554432 || !rhgFormat(reply.pixelFormat) || !reply.deviceRegistryID ||
-       !isfinite(reply.backingScale) || reply.backingScale<=0 || reply.backingScale>8)rhgFail(@"invalid-host-metadata");
+       !isfinite(reply.backingScale) || reply.backingScale<=0 || reply.backingScale>8 ||
+       !isfinite(reply.logicalWidth)||!isfinite(reply.logicalHeight)||reply.logicalWidth<=0||reply.logicalHeight<=0||reply.logicalWidth>16384||reply.logicalHeight>16384||
+       !isfinite(reply.quartzOriginX)||!isfinite(reply.quartzOriginY)||!isfinite(reply.cocoaOriginX)||!isfinite(reply.cocoaOriginY))rhgFail(@"invalid-host-metadata");
     if(rhgMetadata.window && (reply.window!=rhgMetadata.window || reply.deviceRegistryID!=rhgMetadata.deviceRegistryID))rhgFail(@"host-identity-changed");
-    rhgMetadata=(RHGWindowMetadata){reply.window,reply.width,reply.height,reply.pixelFormat,reply.deviceRegistryID,reply.backingScale};
+    rhgMetadata=(RHGWindowMetadata){reply.window,reply.width,reply.height,reply.pixelFormat,reply.deviceRegistryID,reply.backingScale,reply.logicalWidth,reply.logicalHeight,reply.quartzOriginX,reply.quartzOriginY,reply.cocoaOriginX,reply.cocoaOriginY};
 }
 static RHGReply rhgExchange(uint32_t operation,RHGRequest fields) {
     pthread_mutex_lock(&rhgRPCLock);
@@ -342,7 +357,8 @@ static RHGReply rhgExchange(uint32_t operation,RHGRequest fields) {
     if(result)rhgFail(@"host-reply-deadline");
     RHGReply reply=received.message;
     if(reply.h.msgh_size!=sizeof reply || reply.magic!=RHG_MAGIC || reply.version!=RHG_VERSION ||
-       reply.op!=operation || reply.requestID!=request.requestID || reply.status!=RHG_OK || reply.eventCount>RHG_MAX_EVENTS) {
+       reply.op!=operation || reply.requestID!=request.requestID || reply.eventCount>RHG_MAX_EVENTS ||
+       (reply.status!=RHG_OK && !(operation>=RHG_POINTER_ASSOCIATE&&operation<=RHG_POINTER_CURSOR))) {
         mach_msg_destroy(&received.message.h);rhgFail(@"host-rejected-request");
     }
     BOOL complex=(reply.h.msgh_bits&MACH_MSGH_BITS_COMPLEX)!=0;
@@ -352,6 +368,18 @@ static RHGReply rhgExchange(uint32_t operation,RHGRequest fields) {
             mach_msg_destroy(&received.message.h);rhgFail(@"invalid-host-surface-descriptor");
         }
     } else if(complex) {mach_msg_destroy(&received.message.h);rhgFail(@"unexpected-host-descriptor");}
+    if(reply.status==RHG_OK){
+        if(reply.pointerHideCount>1024||reply.pointerAssociated>1||reply.pointerCaptured>1||reply.pointerHiddenUntilMove>1)rhgFail(@"invalid-virtual-pointer-reply");
+        if(!isfinite(reply.pointerX)||!isfinite(reply.pointerY)||reply.pointerX<0||reply.pointerX>1||reply.pointerY<0||reply.pointerY>1||
+           !isfinite(reply.logicalWidth)||!isfinite(reply.logicalHeight)||reply.logicalWidth<=0||reply.logicalHeight<=0||reply.logicalWidth>16384||reply.logicalHeight>16384||
+           !isfinite(reply.cocoaOriginX)||!isfinite(reply.cocoaOriginY))rhgFail(@"invalid-virtual-pointer-position");
+        // Same coordinate space as logicalWindow.convertPointToScreen:. Host
+        // normalized y is top-down; NSEvent.mouseLocation is Cocoa bottom-up.
+        NSPoint point=NSMakePoint(reply.cocoaOriginX+reply.pointerX*reply.logicalWidth,
+            reply.cocoaOriginY+(1-reply.pointerY)*reply.logicalHeight);
+        os_unfair_lock_lock(&rhgPointerLocationLock);rhgPointerScreenLocation=point;os_unfair_lock_unlock(&rhgPointerLocationLock);
+        atomic_store(&rhgVirtualHideCount,reply.pointerHideCount);atomic_store(&rhgVirtualHiddenUntilMove,reply.pointerHiddenUntilMove!=0);
+    }
     pthread_mutex_unlock(&rhgRPCLock);return reply;
 }
 static int rhgHex(unsigned char value) {
@@ -652,14 +680,29 @@ static NSArray<id<MTLDevice>>*rhgAllDevices(void){NSArray *devices=MTLCopyAllDev
 #define RHG_INTERPOSE(replacement,original) __attribute__((used))static struct{const void *replace,*original;}rhg_interpose_##original __attribute__((section("__DATA,__interpose")))={(const void *)&replacement,(const void *)&original}
 RHG_INTERPOSE(rhgDefaultDevice,MTLCreateSystemDefaultDevice);
 RHG_INTERPOSE(rhgAllDevices,MTLCopyAllDevices);
-static void rhgPointerUnavailable(void){static dispatch_once_t once;dispatch_once(&once,^{
-    const char text[]="{\"type\":\"hosted-shim-limitation\",\"reason\":\"relative-pointer-capture-unverified\",\"physicalPointerChanged\":false}\n";
-    (void)write(STDERR_FILENO,text,sizeof text-1);
-});}
-static CGError rhgAssociateMouse(boolean_t connected){(void)connected;rhgPointerUnavailable();return kCGErrorInvalidOperation;}
-static CGError rhgWarpMouse(CGPoint point){(void)point;rhgPointerUnavailable();return kCGErrorInvalidOperation;}
+static CGError rhgPointerRequest(uint32_t operation,uint32_t action,double x,double y){
+    rhgConnect();RHGRequest request={0};request.pointerAction=action;request.pointerX=x;request.pointerY=y;
+    RHGReply reply=rhgExchange(operation,request);
+    if(reply.status!=RHG_OK)return reply.pointerError?(CGError)reply.pointerError:kCGErrorInvalidOperation;
+    rhgMetadataFromReply(reply);rhgVirtualHideCount=reply.pointerHideCount;rhgVirtualHiddenUntilMove=reply.pointerHiddenUntilMove!=0;
+    return kCGErrorSuccess; // Authenticated virtual policy ACK; host owns physical capture.
+}
+static CGError rhgAssociateMouse(boolean_t connected){return rhgPointerRequest(RHG_POINTER_ASSOCIATE,connected?1:0,0,0);}
+static CGError rhgWarpMouse(CGPoint point){
+    rhgConnect();double x=(point.x-rhgMetadata.quartzX)/rhgMetadata.logicalWidth,y=(point.y-rhgMetadata.quartzY)/rhgMetadata.logicalHeight;
+    if(!isfinite(x)||!isfinite(y)||x<0||x>1||y<0||y>1)return kCGErrorIllegalArgument;
+    return rhgPointerRequest(RHG_POINTER_WARP,0,x,y); // Never move a physical cursor here.
+}
+static CGError rhgHideCursor(CGDirectDisplayID display){(void)display;return rhgPointerRequest(RHG_POINTER_CURSOR,RHG_CURSOR_HIDE,0,0);}
+static CGError rhgShowCursor(CGDirectDisplayID display){(void)display;return rhgPointerRequest(RHG_POINTER_CURSOR,RHG_CURSOR_SHOW,0,0);}
+static void rhgCursorHide(id type,SEL selector){(void)type;(void)selector;(void)rhgHideCursor(0);}
+static void rhgCursorUnhide(id type,SEL selector){(void)type;(void)selector;(void)rhgShowCursor(0);}
+static void rhgCursorUntilMove(id type,SEL selector,BOOL hidden){(void)type;(void)selector;(void)rhgPointerRequest(RHG_POINTER_CURSOR,hidden?RHG_CURSOR_HIDE_UNTIL_MOVE:RHG_CURSOR_CANCEL_UNTIL_MOVE,0,0);}
+static BOOL rhgCursorHidden(id type,SEL selector){(void)type;(void)selector;return rhgVirtualHideCount>0||rhgVirtualHiddenUntilMove;}
 RHG_INTERPOSE(rhgAssociateMouse,CGAssociateMouseAndMouseCursorPosition);
 RHG_INTERPOSE(rhgWarpMouse,CGWarpMouseCursorPosition);
+RHG_INTERPOSE(rhgHideCursor,CGDisplayHideCursor);
+RHG_INTERPOSE(rhgShowCursor,CGDisplayShowCursor);
 
 static id rhgNextDrawable(CAMetalLayer *layer,SEL selector) {
     (void)selector;rhgConnect();
@@ -701,6 +744,7 @@ static id rhgNextDrawable(CAMetalLayer *layer,SEL selector) {
 static void rhgInstallMetal(void) {
     rhgPrepareHookStorage();
     rhgReplace(CAMetalLayer.class,@selector(nextDrawable),(IMP)rhgNextDrawable);
+    rhgHook(object_getClass(NSEvent.class),@selector(mouseLocation),(IMP)rhgMouseLocation);
     rhgHook(NSEvent.class,@selector(deltaX),(IMP)rhgEventDelta);rhgHook(NSEvent.class,@selector(deltaY),(IMP)rhgEventDelta);
     rhgHook(NSEvent.class,@selector(scrollingDeltaX),(IMP)rhgEventDelta);rhgHook(NSEvent.class,@selector(scrollingDeltaY),(IMP)rhgEventDelta);
     rhgHook(NSEvent.class,@selector(locationInWindow),(IMP)rhgEventLocation);rhgHook(NSEvent.class,@selector(window),(IMP)rhgEventWindow);
@@ -717,6 +761,8 @@ static void rhgInstallMetal(void) {
     rhgHook(NSView.class,@selector(addCursorRect:cursor:),(IMP)rhgAddCursorRect);
     rhgHook(NSView.class,@selector(removeCursorRect:cursor:),(IMP)rhgRemoveCursorRect);
     rhgHook(NSView.class,@selector(discardCursorRects),(IMP)rhgDiscardCursorRects);
+    Class cursor=object_getClass(NSCursor.class);rhgHook(cursor,@selector(hide),(IMP)rhgCursorHide);rhgHook(cursor,@selector(unhide),(IMP)rhgCursorUnhide);
+    rhgHook(cursor,@selector(setHiddenUntilMouseMoves:),(IMP)rhgCursorUntilMove);rhgHook(cursor,NSSelectorFromString(@"isHidden"),(IMP)rhgCursorHidden);
 }
 __attribute__((constructor))static void rhgInstall(void) {@autoreleasepool{
     const char *service=getenv("READY_HOSTED_GAME_SERVICE"),*nonce=getenv("READY_HOSTED_GAME_NONCE");

@@ -1,0 +1,261 @@
+{
+  "schema": 1,
+  "date": "2026-10-29",
+  "status": "experimental-native-space-v3-cursor-user-confirmed-input-parity-and-performance-issues-open",
+  "defaultLaunchBehaviorUnchanged": true,
+  "nativeFullscreenSpace": {
+    "ownAppKitProbePassed": true,
+    "fixtureOnly": true,
+    "nativeFullscreenAtEntry": true,
+    "driverFullscreenAtEntry": true,
+    "fullScreenPrimary": true,
+    "fullScreenDisallowsTiling": true,
+    "onActiveSpaceAtEntry": true,
+    "sameWindowBeforeAfter": true,
+    "windowBefore": 8626,
+    "windowAfter": 8626,
+    "windowLevel": 0,
+    "actualNativeExitObserved": true,
+    "reportSHA256": "f8a77a9c009b8cc665887cce101a162f9fa19983f743fefd90e000c7d285180b",
+    "gameOrAccountExecuted": false,
+    "MissionControlVisuallyVerified": false,
+    "MissionControlObservationLimit": "AX Dock inspection timed out; native API entry is not a Mission Control screenshot.",
+    "manualMissionControlOrCornerConfirmationReceived": false
+  },
+  "controllerFixtures": {
+    "passed": true,
+    "checks": 47,
+    "reportSHA256": "6399d0b04bfedcd6be67762e602761309f123af1146241d1f756b6afe0ce98e3",
+    "sourceSHA256": "2cfde8e89b08fc659eefbbc0fbece3218e9664e4cd8fee64af150a3d4035fa46",
+    "actualSpaceTransitionPerformed": false,
+    "productionHostGPUExecuted": false,
+    "accountOrGameOrSDKUsed": false,
+    "additionalScope": "Six new controlled eligibility/failed-exit pointer-restoration checks; no physical input."
+  },
+  "displayCapturePolicy": {
+    "captureSuppressedForNativeSpace": true,
+    "legacyExclusiveFlagDoesNotOverrideNativeSpace": true,
+    "shieldAboveWindowNotUsedByNewSpacePath": true,
+    "policyIsNotDirectScanoutProof": true
+  },
+  "displayCorners": {
+    "visuallyVerified": false,
+    "nativeGeometryOnly": true,
+    "privateDisplayRadiusAPIUsed": false,
+    "inventedDesignMaskClaimed": false,
+    "observationLimit": "Own-window CUA image had white margins and does not establish the physical display corners."
+  },
+  "historicalDisplayFillEvidence": {
+    "checkpoint": "ready-hosted-presentation-checkpoint.json",
+    "sha256": "b1fc8b74127961996abeba022969b97dc41b031fc9d9203bfc7861513eeb6d70",
+    "presentedFrames": 7038,
+    "exitCode": 0,
+    "MetalHUDModeObserved": "Composited",
+    "provesNewNativeSpace": false,
+    "provesPointerV2": false,
+    "scope": "Earlier bounded commercial display-fill/capture session; retained unchanged."
+  },
+  "limits": [
+    "Protocol v3 software-cursor following is user-confirmed in the observed Cyberpunk interaction; input feel/parity and performance/stutter issues remain open.",
+    "Earlier v2 stationary-cursor evidence stays historical; the v3 confirmation does not certify general mouse compatibility or acceleration parity.",
+    "Current live candidate facts are a partial observation, not a finalized game session or gameplay/performance benchmark.",
+    "Mission Control visuals, physical display corners, controller hardware and complete focus/Space/lock recovery are not certified.",
+    "Forty-seven controller, fourteen pointer and eleven shim CPU checks plus the thirty-frame/fifteen-check GPU transport fixture are separately scoped from physical/live evidence.",
+    "The earlier 7038-present display-fill/capture proof stays historical and is not reused to verify the native-Space/pointer implementation.",
+    "No direct scanout, zero total overhead, general Cocoa/game compatibility or whole-application distribution approval is claimed.",
+    "Raw account identifiers, credentials, full journals, screenshots and proprietary binaries remain excluded."
+  ],
+  "historicalControllerFixtures": {
+    "passed": true,
+    "checks": 41,
+    "reportSHA256": "d4349aa18dacc30cf503be4af10af9990c09eaeba0b54b00daeddf7a0bec5b09",
+    "sourceSHA256": "62f11b389548153caa299d637f6c6ea0abbb56607803688bdda416d6529f6581",
+    "actualSpaceTransitionPerformed": false,
+    "productionHostGPUExecuted": false,
+    "accountOrGameOrSDKUsed": false
+  },
+  "regressions": {
+    "pointerCPU": {
+      "passed": true,
+      "checks": 14,
+      "reportSHA256": "7efcde4fb1f1f8e301cfd779ef4eb2a69daa78e877102354c9c3a21b44970005"
+    },
+    "shimCPU": {
+      "passed": true,
+      "checks": 11,
+      "reportSHA256": "494b68c3c401102386cfe210e535f92e4d59afa0e311b6681c0c61442a7e26b7"
+    },
+    "offscreenTransport": {
+      "passed": true,
+      "frames": 30,
+      "checks": 15,
+      "reportSHA256": "fd53cde95d50ae9e99faf02be52ddb634caabb2072ef2d55c36d66bdc122d042",
+      "gameOrAccountExecuted": false,
+      "onGlassVerified": false,
+      "elapsedSeconds": 0.9753066666598897,
+      "CPUSeconds": 0.139826,
+      "performanceBenchmark": false
+    },
+    "releaseBuildPassed": true,
+    "relocationChecksPassed": 14,
+    "relocationReportSHA256": "e04a77deaab12cab2f03bc433defaaa3ad09c8fde0a68a34c587ffb5f06247bf",
+    "exactBuildWithV3FixPassed": true,
+    "userCursorRetestPending": false,
+    "priorOffscreenAttempt": {
+      "retainedRun": "ready-hosted-transport-nxp59w4y",
+      "status": "aborted-by-activation-guard",
+      "causeReportedByRoot": "Offscreen harness unexpectedly became active after Ready quit.",
+      "productFailureClaimed": false,
+      "historicalAttemptPreserved": true
+    }
+  },
+  "testedBuildSourceHashes": {
+    "Sources/M1Launcher/HostedGamePresentation.swift": "2cfde8e89b08fc659eefbbc0fbece3218e9664e4cd8fee64af150a3d4035fa46",
+    "Sources/ReadyHostedView/ReadyHostedView.m": "1eeca406c9cd872c41b491b52abf5f17b07a194e2152d60cae36c76748129c9d",
+    "Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h": "053b8d7f838e794f31ba9422f748f5af4937791a3bb245d5adbe12321bc1315f",
+    "NativeEmbedding/ReadyHostedGameShim.m": "37342b9476d6b7fdb9c6b9ba41e384fdb9fcba4e194683a2c77444f776b3b1cf"
+  },
+  "openBugs": [
+    {
+      "id": "hosted-input-parity",
+      "status": "open-user-reported",
+      "observed": "User reports different input feel; possible system acceleration curve is a hypothesis, not an established cause.",
+      "controlledParityTestCompleted": false
+    },
+    {
+      "id": "hosted-performance-stutter",
+      "status": "open-user-reported",
+      "observed": "User reports evident stutter and approximately 37.72 native versus 34 hosted.",
+      "nativeReportedValue": 37.72,
+      "hostedReportedValue": 34,
+      "measurementUnitVerified": false,
+      "rootControlledBenchmark": false,
+      "performanceParityClaimAllowed": false
+    }
+  ],
+  "historicalRegressionsBeforeV3": {
+    "pointerCPU": {
+      "passed": true,
+      "checks": 14,
+      "reportSHA256": "dc1e5ed818d23158c17be2d15accec082c99ec9419782e63c75c98076d366175"
+    },
+    "shimCPU": {
+      "passed": true,
+      "checks": 8,
+      "reportSHA256": "e7b1bcc3eb3d8eb9b0af5a1d6a8f6148c4eab089271819c18c666110ffcfdbce"
+    },
+    "offscreenTransport": {
+      "passed": true,
+      "frames": 30,
+      "checks": 15,
+      "reportSHA256": "72d4fb32f3d6366dd3d4b56c3c9e955566b2b1a3b853c8f60462b898d38cc4f2",
+      "gameOrAccountExecuted": false,
+      "onGlassVerified": false
+    },
+    "releaseBuildPassed": true,
+    "relocationChecksPassed": 14,
+    "exactFinalBuildAfterCursorFixPending": true
+  },
+  "historicalTestedBuildSourceHashesBeforeV3": {
+    "Sources/M1Launcher/HostedGamePresentation.swift": "2cfde8e89b08fc659eefbbc0fbece3218e9664e4cd8fee64af150a3d4035fa46",
+    "Sources/ReadyHostedView/ReadyHostedView.m": "3e43bb5b297277ba86e118ff0957fd1eadcec972ad6e877d70aad6a3d93347a8",
+    "NativeEmbedding/ReadyHostedGameShim.m": "65954bc1e65ac564eb0c9b079c387eadf0228b96411eaef132898681e7823c81"
+  },
+  "historicalPointerV2": {
+    "protocolVersion": 2,
+    "implementationPresent": true,
+    "physicalOwnership": "Ready host; conditioned on first frame, completed fullscreen, focus and active Space",
+    "guestPolicyAcknowledgementIsNotPhysicalReleaseAuthority": true,
+    "guestWarpsAreVirtualCoordinatesOnly": true,
+    "physicalMouseHiddenVisuallyVerified": true,
+    "physicalMouseRelativeMovementVerified": false,
+    "focusSpaceLockRecoveryLiveVerified": false,
+    "commercialGameNewSpaceVerified": true,
+    "status": "partial-live-input-confirmed-in-game-absolute-cursor-bug-open",
+    "physicalMouseHiddenEvidence": "User confirmation, not inferred from a cursor-free screenshot.",
+    "mouseInputReportedWorkingByUser": true,
+    "keyboardInputReportedWorkingByUser": true,
+    "captureReleaseReacquireObserved": true,
+    "pointerErrorObserved": 0,
+    "absoluteCursorPositionComplete": false,
+    "inGameCursorImageMoves": false
+  },
+  "historicalNativeSpacePartialRunBeforeV3": {
+    "presentationVerified": true,
+    "completeRun": false,
+    "readyPID": 8704,
+    "guestPID": 8740,
+    "windowBefore": 8699,
+    "windowAfter": 8699,
+    "sameWindowResource": true,
+    "nativeFullscreen": true,
+    "coversDisplay": true,
+    "displayCaptureUsed": false,
+    "observedPresentsAtLeast": 26760,
+    "journalElapsedMillisecondsAtSnapshot": 355391.51,
+    "journalRequestsAtSnapshot": 69385,
+    "journalSnapshotSHA256": "9ce1e110bb35b6ddfd0d29348115db0af022fbbf1987edcc656f712ef020e836",
+    "journalPrefixSHA256": "1d86627f23ee8bd52055a14696acdd9b6bbd0189ca1050016748f2fcfee4c603",
+    "MetalHUDModeObserved": "Composited",
+    "settingsVisibleReportedByRoot": true,
+    "screenshotScope": "Earlier intro image in this native-Space session; not a screenshot of the later settings screen.",
+    "screenshotSHA256": "29682cf769f0243ac686e9de37ae18fc1bdefe5c74b19e5c8d29ade522b3a15b",
+    "screenshotsPublished": false,
+    "exitCode": null,
+    "fullGameplayVerified": false,
+    "fullMenuCoverageVerified": false,
+    "performanceBenchmarkCompleted": false,
+    "exactFinalBuildAfterCursorFixPending": true
+  },
+  "pointerV3": {
+    "protocolVersion": 3,
+    "implementationPresent": true,
+    "virtualGlobalCursorCacheImplemented": true,
+    "mainExecutableNSEventMouseLocationCallsitesStaticallyMatched": true,
+    "positionGetterPerformsIPCOrOriginalFrameworkQuery": false,
+    "physicalOwnership": "Ready host; conditioned on first frame, completed fullscreen, focus and active Space",
+    "absoluteCursorPositionComplete": true,
+    "inGameCursorImageMoves": true,
+    "userConfirmationForV3Pending": false,
+    "status": "in-game-cursor-following-user-confirmed",
+    "previousV2CursorBugRetainedAsHistory": true,
+    "completeMouseCompatibilityClaimAllowed": false,
+    "confirmationScope": "User confirms Cyberpunk arrow now follows in Ready 10290 / guest 10337; complete input parity remains unverified."
+  },
+  "latestNativeSpaceCandidate": {
+    "readyPID": 10290,
+    "guestPID": 10337,
+    "observedPresentsAtLeast": 120,
+    "pointerCapturedObserved": true,
+    "pointerErrorObserved": 0,
+    "launchMode": "host-game-view with Metal HUD",
+    "evidenceSource": "Root observation of current normal journal; bounded candidate facts, not a finalized run",
+    "completeRun": false,
+    "userSoftCursorFeedbackPending": false,
+    "gameplayPerformanceVerified": false,
+    "userSoftwareCursorFollowsConfirmed": true
+  },
+  "historicalTransportObservedInV2PartialLiveRun": {
+    "hostCommandQueues": 0,
+    "hostCommandBuffers": 0,
+    "hostEncoders": 0,
+    "applicationSurfaceCopies": 0,
+    "pixelReadbacks": 0
+  },
+  "resolvedIssues": [
+    {
+      "id": "hosted-absolute-cursor-position",
+      "status": "resolved-in-observed-v3-interaction-user-confirmed",
+      "scope": "Cyberpunk software arrow follows in live candidate Ready 10290 / guest 10337; no general mouse compatibility claim."
+    }
+  ],
+  "userReportedPerformance": {
+    "nativeValue": 37.72,
+    "hostedValue": 34,
+    "stutterReported": true,
+    "source": "User report from observed interaction; not a controlled Root benchmark.",
+    "measurementUnitVerified": false,
+    "causalAttributionEstablished": false,
+    "performanceParityVerified": false
+  }
+}
