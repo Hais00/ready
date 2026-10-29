@@ -11,6 +11,9 @@
 #import <servers/bootstrap.h>
 #import <pthread.h>
 #import <math.h>
+#import <execinfo.h>
+#import <dlfcn.h>
+#import <mach-o/dyld.h>
 #import "ReadyHostedGameProtocol.h"
 
 typedef struct {
@@ -29,11 +32,33 @@ static void rhgNoGestureProvider(void) {
         (void)write(STDERR_FILENO,text,sizeof text-1);
     });
 }
+static BOOL rhgMainImageCaller(void *address) {
+    // DYLD_INSERT_LIBRARIES can occupy image index zero. Identify the unique
+    // executable header by its Mach-O type instead of assuming load-list order.
+    static const struct mach_header *executable;static dispatch_once_t once;
+    dispatch_once(&once,^{
+        uint32_t count=_dyld_image_count();if(count>8192)return;
+        for(uint32_t i=0;i<count;i++){const struct mach_header *header=_dyld_get_image_header(i);
+            if(header&&header->filetype==MH_EXECUTE){if(executable){executable=NULL;return;}executable=header;}}
+    });
+    Dl_info info={0};return executable&&address&&dladdr(address,&info)&&info.dli_fbase==(const void*)executable;
+}
+#define RHG_MAIN_CALLER() rhgMainImageCaller(__builtin_extract_return_addr(__builtin_return_address(0)))
 static void rhgFail(NSString *reason) __attribute__((noreturn));
 static NSString *rhgSafeMetadata(const char *value) {
     if(!value)return nil;size_t length=strnlen(value,257);if(!length||length>256)return nil;
     for(size_t i=0;i<length;i++)if((unsigned char)value[i]<32||(unsigned char)value[i]>126)return nil;
     return [[NSString alloc]initWithBytes:value length:length encoding:NSASCIIStringEncoding];
+}
+static NSArray *rhgSafeCalleeStack(void) {
+    void *frames[12];int count=backtrace(frames,12);NSMutableArray *result=[NSMutableArray new];
+    for(int i=2;i<count&&result.count<8;i++){
+        Dl_info info={0};if(!dladdr(frames[i],&info))continue;
+        const char *image=info.dli_fname?strrchr(info.dli_fname,'/'):NULL;
+        image=image?image+1:info.dli_fname;
+        [result addObject:@{@"image":rhgSafeMetadata(image)?:@"unavailable",@"symbol":rhgSafeMetadata(info.dli_sname)?:@"unavailable"}];
+    }
+    return result;
 }
 static void rhgFailSelector(NSString *reason,Class requested,SEL selector) __attribute__((noreturn));
 static void rhgFailSelector(NSString *reason,Class requested,SEL selector) {
@@ -44,6 +69,9 @@ static void rhgFailSelector(NSString *reason,Class requested,SEL selector) {
     Method method=requested&&selector?class_getInstanceMethod(requested,selector):NULL;
     NSString *encoding=rhgSafeMetadata(method?method_getTypeEncoding(method):NULL);
     value[@"selector"]=name?:@"unavailable";value[@"requestedClass"]=type?:@"unavailable";value[@"methodEncoding"]=encoding?:@"unavailable";
+    if(NSApp){NSApplicationActivationPolicy policy=NSApp.activationPolicy;
+        value[@"guestActivationPolicy"]=policy==NSApplicationActivationPolicyAccessory?@"accessory":policy==NSApplicationActivationPolicyRegular?@"regular":policy==NSApplicationActivationPolicyProhibited?@"prohibited":@"unavailable";}
+    value[@"calleeStack"]=rhgSafeCalleeStack(); // Names only; never addresses, paths or arguments.
     NSData *data=[NSJSONSerialization dataWithJSONObject:value options:0 error:nil];
     if(data){fwrite(data.bytes,1,data.length,stderr);fputc('\n',stderr);fflush(stderr);}_exit(77);
 }
@@ -167,6 +195,9 @@ static NSRect rhgContentRect(void) {
 -(void)WaitForCompletion:(BOOL)value{(void)value;}
 -(void)close{self.visible=NO;self.contentView=nil;if(rhgWindow==self)rhgWindow=nil;}
 -(void)performClose:(id)sender{(void)sender;[self close];}
+-(id)touchBar{return nil;}
+-(id)makeTouchBar{return nil;}
+-(void)setTouchBar:(id)value{(void)value;}
 -(void)doesNotRecognizeSelector:(SEL)selector{rhgFailSelector(@"unsupported-window-selector",self.requestedClass?:NSWindow.class,selector);}
 @end
 
@@ -180,12 +211,12 @@ static id rhgAllocateWindow(id type,SEL selector,NSZone *zone) {
 }
 static id rhgAllocateWindowSimple(id type,SEL selector) __attribute__((ns_returns_retained));
 static id rhgAllocateWindowSimple(id type,SEL selector){return rhgAllocateWindow(type,selector,NULL);}
-static id rhgApplicationWindows(id app,SEL selector){(void)app;(void)selector;return rhgWindow?@[rhgWindow]:@[];}
-static id rhgApplicationWindow(id app,SEL selector){(void)app;return rhgWindow.visible&&(selector!=@selector(keyWindow)||rhgFocused)?rhgWindow:nil;}
-static BOOL rhgApplicationActive(id app,SEL selector){(void)app;(void)selector;return rhgWindow.visible&&rhgFocused;}
-static NSApplicationPresentationOptions rhgPresentationOptions(id app,SEL selector){(void)app;(void)selector;return rhgLogicalPresentationOptions;}
+static id rhgApplicationWindows(id app,SEL selector){if(!RHG_MAIN_CALLER())return ((id(*)(id,SEL))rhgOriginal(app,selector))(app,selector);return rhgWindow?@[rhgWindow]:@[];}
+static id rhgApplicationWindow(id app,SEL selector){if(!RHG_MAIN_CALLER())return ((id(*)(id,SEL))rhgOriginal(app,selector))(app,selector);return rhgWindow.visible&&(selector!=@selector(keyWindow)||rhgFocused)?rhgWindow:nil;}
+static BOOL rhgApplicationActive(id app,SEL selector){if(!RHG_MAIN_CALLER())return ((BOOL(*)(id,SEL))rhgOriginal(app,selector))(app,selector);return rhgWindow.visible&&rhgFocused;}
+static NSApplicationPresentationOptions rhgPresentationOptions(id app,SEL selector){if(!RHG_MAIN_CALLER())return ((NSApplicationPresentationOptions(*)(id,SEL))rhgOriginal(app,selector))(app,selector);return rhgLogicalPresentationOptions;}
 static void rhgSetPresentationOptions(id app,SEL selector,NSApplicationPresentationOptions options){(void)app;(void)selector;rhgLogicalPresentationOptions=options;}
-static id rhgMainMenu(id app,SEL selector){(void)app;(void)selector;return rhgLogicalMainMenu;}
+static id rhgMainMenu(id app,SEL selector){if(!RHG_MAIN_CALLER())return ((id(*)(id,SEL))rhgOriginal(app,selector))(app,selector);return rhgLogicalMainMenu;}
 static void rhgSetMainMenu(id app,SEL selector,NSMenu *menu){(void)app;(void)selector;rhgLogicalMainMenu=menu;}
 static void rhgSuppressActivation(id app,SEL selector,BOOL flag){(void)app;(void)selector;(void)flag;}
 static void rhgSuppressApplicationAction(id app,SEL selector){(void)app;(void)selector;}
@@ -194,7 +225,33 @@ static void rhgUpdateWindows(id app,SEL selector){(void)app;(void)selector;[rhgW
 static BOOL rhgGameWindowVisible(id type,SEL selector){(void)type;(void)selector;return rhgWindow.visible;}
 static void rhgSetGameWindowVisible(id type,SEL selector,BOOL value){(void)type;(void)selector;rhgWindow.visible=value;}
 static CGFloat rhgTitlebarHeight(id type,SEL selector){(void)type;(void)selector;return 0;}
-static id rhgWindowByNumber(id app,SEL selector,NSInteger number){(void)app;(void)selector;return number==(NSInteger)rhgMetadata.window?rhgWindow:nil;}
+static _Thread_local BOOL rhgSettingBackgroundPolicy;
+static BOOL rhgBackgroundActivationPolicy(id app,SEL selector,NSApplicationActivationPolicy requested){
+    (void)requested;
+    if([app activationPolicy]==NSApplicationActivationPolicyAccessory)return YES;
+    if(rhgSettingBackgroundPolicy)return NO;
+    rhgSettingBackgroundPolicy=YES;
+    (void)((BOOL(*)(id,SEL,NSApplicationActivationPolicy))rhgOriginal(app,selector))(app,selector,NSApplicationActivationPolicyAccessory);
+    rhgSettingBackgroundPolicy=NO;
+    return [app activationPolicy]==NSApplicationActivationPolicyAccessory;
+}
+static void rhgDeferBackgroundPolicy(void){static dispatch_once_t once;dispatch_once(&once,^{
+    dispatch_async(dispatch_get_main_queue(),^{if(NSApp)rhgBackgroundActivationPolicy(NSApp,@selector(setActivationPolicy:),NSApplicationActivationPolicyAccessory);});
+});}
+static id rhgSharedBackgroundApplication(id type,SEL selector){
+    id app=((id(*)(id,SEL))rhgOriginal(type,selector))(type,selector);
+    if(!rhgBackgroundActivationPolicy(app,@selector(setActivationPolicy:),NSApplicationActivationPolicyAccessory))rhgDeferBackgroundPolicy();
+    return app;
+}
+static void rhgFinishBackgroundLaunching(id app,SEL selector){
+    ((void(*)(id,SEL))rhgOriginal(app,selector))(app,selector);
+    if(!rhgBackgroundActivationPolicy(app,@selector(setActivationPolicy:),NSApplicationActivationPolicyAccessory))rhgDeferBackgroundPolicy();
+}
+static id rhgNoTouchBar(id object,SEL selector){(void)object;(void)selector;return nil;}
+static void rhgNoTouchBarSetter(id object,SEL selector,id value){(void)object;(void)selector;(void)value;}
+static BOOL rhgTouchBarMenuDisabled(id object,SEL selector){(void)object;(void)selector;return NO;}
+static void rhgDisableTouchBarMenu(id object,SEL selector,BOOL value){(void)object;(void)selector;(void)value;}
+static id rhgWindowByNumber(id app,SEL selector,NSInteger number){if(!RHG_MAIN_CALLER())return ((id(*)(id,SEL,NSInteger))rhgOriginal(app,selector))(app,selector,number);return number==(NSInteger)rhgMetadata.window?rhgWindow:nil;}
 static id rhgViewWindow(NSView *view,SEL selector) {
     for(NSView *v=view;v;v=v.superview){RHGWeakWindow *link=objc_getAssociatedObject(v,&rhgViewWindowKey);if(link.window)return link.window;}
     return ((id(*)(id,SEL))rhgOriginalViewWindow)(view,selector);
@@ -206,17 +263,17 @@ static void rhgReplace(Class type,SEL selector,IMP replacement) {
 static void rhgInstallWindows(void) {
     Class meta=object_getClass(NSWindow.class);
     rhgReplace(meta,@selector(allocWithZone:),(IMP)rhgAllocateWindow);rhgReplace(meta,@selector(alloc),(IMP)rhgAllocateWindowSimple);
-    rhgReplace(NSApplication.class,@selector(windows),(IMP)rhgApplicationWindows);
-    rhgReplace(NSApplication.class,@selector(orderedWindows),(IMP)rhgApplicationWindows);
-    rhgReplace(NSApplication.class,@selector(mainWindow),(IMP)rhgApplicationWindow);
-    rhgReplace(NSApplication.class,@selector(keyWindow),(IMP)rhgApplicationWindow);
-    rhgReplace(NSApplication.class,@selector(windowWithWindowNumber:),(IMP)rhgWindowByNumber);
-    rhgReplace(NSApplication.class,@selector(isActive),(IMP)rhgApplicationActive);
+    rhgHook(NSApplication.class,@selector(windows),(IMP)rhgApplicationWindows);
+    rhgHook(NSApplication.class,@selector(orderedWindows),(IMP)rhgApplicationWindows);
+    rhgHook(NSApplication.class,@selector(mainWindow),(IMP)rhgApplicationWindow);
+    rhgHook(NSApplication.class,@selector(keyWindow),(IMP)rhgApplicationWindow);
+    rhgHook(NSApplication.class,@selector(windowWithWindowNumber:),(IMP)rhgWindowByNumber);
+    rhgHook(NSApplication.class,@selector(isActive),(IMP)rhgApplicationActive);
     // Ready owns the physical menu bar and display presentation policy. Keep
     // public guest hints observable without installing guest menu resources.
-    rhgReplace(NSApplication.class,@selector(presentationOptions),(IMP)rhgPresentationOptions);
+    rhgHook(NSApplication.class,@selector(presentationOptions),(IMP)rhgPresentationOptions);
     rhgReplace(NSApplication.class,@selector(setPresentationOptions:),(IMP)rhgSetPresentationOptions);
-    rhgReplace(NSApplication.class,@selector(mainMenu),(IMP)rhgMainMenu);
+    rhgHook(NSApplication.class,@selector(mainMenu),(IMP)rhgMainMenu);
     rhgReplace(NSApplication.class,@selector(setMainMenu:),(IMP)rhgSetMainMenu);
     rhgReplace(NSApplication.class,@selector(activateIgnoringOtherApps:),(IMP)rhgSuppressActivation);
     rhgReplace(NSApplication.class,@selector(activate),(IMP)rhgSuppressApplicationAction);
@@ -224,12 +281,23 @@ static void rhgInstallWindows(void) {
     rhgReplace(NSApplication.class,@selector(unhideWithoutActivation),(IMP)rhgSuppressApplicationAction);
     rhgReplace(NSApplication.class,@selector(unhide:),(IMP)rhgSuppressApplicationSender);
     rhgReplace(NSApplication.class,@selector(updateWindows),(IMP)rhgUpdateWindows);
+    rhgHook(NSApplication.class,@selector(setActivationPolicy:),(IMP)rhgBackgroundActivationPolicy);
+    rhgHook(object_getClass(NSApplication.class),@selector(sharedApplication),(IMP)rhgSharedBackgroundApplication);
+    rhgHook(NSApplication.class,@selector(finishLaunching),(IMP)rhgFinishBackgroundLaunching);
+    rhgReplace(NSResponder.class,@selector(touchBar),(IMP)rhgNoTouchBar);
+    rhgReplace(NSResponder.class,@selector(makeTouchBar),(IMP)rhgNoTouchBar);
+    rhgReplace(NSResponder.class,@selector(setTouchBar:),(IMP)rhgNoTouchBarSetter);
+    rhgReplace(NSApplication.class,@selector(isAutomaticCustomizeTouchBarMenuItemEnabled),(IMP)rhgTouchBarMenuDisabled);
+    rhgReplace(NSApplication.class,@selector(setAutomaticCustomizeTouchBarMenuItemEnabled:),(IMP)rhgDisableTouchBarMenu);
+    rhgReplace(object_getClass(NSTouchBar.class),@selector(isAutomaticCustomizeTouchBarMenuItemEnabled),(IMP)rhgTouchBarMenuDisabled);
+    rhgReplace(object_getClass(NSTouchBar.class),@selector(setAutomaticCustomizeTouchBarMenuItemEnabled:),(IMP)rhgDisableTouchBarMenu);
     Class game=objc_getClass("GameWindow");
     if(game){Class gameMeta=object_getClass(game);rhgReplace(gameMeta,NSSelectorFromString(@"isWindowVisible"),(IMP)rhgGameWindowVisible);
         rhgReplace(gameMeta,NSSelectorFromString(@"setIsWindowVisible:"),(IMP)rhgSetGameWindowVisible);
         rhgReplace(gameMeta,NSSelectorFromString(@"titlebarHeight"),(IMP)rhgTitlebarHeight);}
     Method window=class_getInstanceMethod(NSView.class,@selector(window));if(!window)rhgFail(@"missing-view-window-api");
     rhgOriginalViewWindow=method_setImplementation(window,(IMP)rhgViewWindow);
+    if(NSApp)rhgBackgroundActivationPolicy(NSApp,@selector(setActivationPolicy:),NSApplicationActivationPolicyAccessory);
 }
 
 // Every transaction has its own send-once reply right. A single receive queue
@@ -293,7 +361,7 @@ static BOOL rhgReadEventInput(id event,RHGInput *input){NSData *data=objc_getAss
 static IMP rhgOriginal(id object,SEL selector);
 static void rhgHook(Class type,SEL selector,IMP hook);
 static BOOL rhgRunningApplicationActive(NSRunningApplication *app,SEL selector){
-    if(app.processIdentifier==getpid())return rhgWindow.visible&&rhgFocused;
+    if(RHG_MAIN_CALLER()&&app.processIdentifier==getpid())return rhgWindow.visible&&rhgFocused;
     return ((BOOL(*)(id,SEL))rhgOriginal(app,selector))(app,selector);
 }
 static BOOL rhgRunningApplicationActivate(NSRunningApplication *app,SEL selector,NSApplicationActivationOptions options){(void)selector;(void)options;return app.processIdentifier==getpid();}
@@ -434,7 +502,8 @@ static void rhgAddCursorRect(NSView *view,SEL selector,NSRect rect,__unsafe_unre
     uintptr_t pointer=rhgOpaqueCursor(cursor);
     if(!isfinite(rect.origin.x)||!isfinite(rect.origin.y)||!isfinite(rect.size.width)||!isfinite(rect.size.height)||rect.size.width<0||rect.size.height<0)rhgFail(@"invalid-logical-cursor-rect");
     rhgLogicalCursorNotice();NSMutableArray *list=rhgCursorRects(view,YES);
-    if(list.count>=1024)rhgFail(@"logical-cursor-rect-limit");
+    for(NSDictionary *entry in list)if(NSEqualRects([entry[@"rect"]rectValue],rect)&&[entry[@"cursor"]pointerValue]==(const void*)pointer)return;
+    if(list.count>=256)rhgFail(@"logical-cursor-rect-limit");
     [list addObject:@{@"rect":[NSValue valueWithRect:rect],@"cursor":[NSValue valueWithPointer:(const void*)pointer]}];
 }
 static void rhgRemoveCursorRect(NSView *view,SEL selector,NSRect rect,__unsafe_unretained NSCursor *cursor) {

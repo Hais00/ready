@@ -188,3 +188,16 @@ senza trasferire l'identità di un oggetto Objective-C fra processi. Non stabili
 compatibilità con giochi arbitrari, integrazione in Ready o direct scanout.
 Sorgenti, riproduzione e ricevute sono in
 [NativeEmbedding/NoCopyProxy.md](../NativeEmbedding/NoCopyProxy.md).
+
+
+## Aggiornamento: presentazione commerciale nella finestra Ready
+
+La prova successiva del 29 ottobre 2026 ha presentato Cyberpunk 2077 nella
+finestra Ready preservata: 7.038 PRESENT in una sessione limitata, nessuna
+finestra WindowServer guest osservata e uscita zero confermata dall'utente come
+propria interazione. Il Metal HUD indicava **Composited**, non direct scanout.
+Restano overhead CPU/Mach e limiti di getter caller-scoped, gesti/cursore
+virtualizzati, gameplay, controller e compatibilità Cocoa generale. Le prove di
+laboratorio sopra restano storiche; risultati e limiti aggiornati sono in
+[READY_HOSTED_PRESENTATION.md](READY_HOSTED_PRESENTATION.md) e nel relativo
+[checkpoint sanitizzato](../Validation/ready-hosted-presentation-checkpoint.json).

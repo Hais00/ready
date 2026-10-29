@@ -1,13 +1,14 @@
 {
   "schema": 1,
   "date": "2026-10-29",
-  "status": "experimental-integration-visual-exclusive-check-pending",
+  "status": "experimental-commercial-same-ready-window-presentation-verified-bounded-user-session",
   "defaultLaunchBehaviorUnchanged": true,
   "sameReadyWindowDisplayFill": {
     "verified": true,
-    "windowResourceBefore": 8079,
-    "windowResourceAfter": 8079,
-    "nativeFullscreenSpace": false
+    "windowResourceBefore": 8480,
+    "windowResourceAfter": 8480,
+    "nativeFullscreenSpace": false,
+    "scope": "Latest bounded commercial presentation session"
   },
   "transport": {
     "applicationGPUCopyFallback": false,
@@ -30,30 +31,53 @@
   "commercialGame": {
     "gameID": 1091500,
     "genuineAuthenticatedFrameTransportObserved": true,
-    "partialPresentedFramesObserved": 72,
-    "stableMenuVerified": false,
+    "sameReadyWindowVisualPresentationVerified": true,
+    "presentedFrames": 7038,
+    "acquires": 7038,
+    "requests": 23891,
+    "hostElapsedMilliseconds": 172213.096,
+    "hostPID": 1694,
+    "guestPID": 3461,
+    "hostWindowResource": 8480,
+    "guestWindowServerWindows": [],
+    "exitCode": 0,
+    "terminationConfirmedByUserAsOwnInteraction": true,
+    "fullGameplayVerified": false,
+    "fullMenuCoverageVerified": false,
     "inputCompatibilityVerified": false,
-    "lastObservedCrash": {
-      "signal": "SIGSEGV",
-      "path": "GameView.resetCursorRects / NSView.addCursorRect"
-    },
-    "cursorRegistrationAdapterAdded": true,
-    "cursorFixLiveRetested": false,
-    "credentialsRemainedConnectedDuringAttempts": true
+    "physicalControllerVerified": false,
+    "performanceBenchmarkCompleted": false,
+    "MetalHUDModeObserved": "Composited",
+    "directScanoutVerified": false,
+    "journalSHA256": "24bf9f61cbd004b42f2d9425661363e2a393f0f9fa9e6827d368e5e4987d1040",
+    "screenshotSHA256": "a385add1074c822bb9eb5df65ae4c85fa8c18a75abba77ede2322261d28b5f6d",
+    "screenshotsPublished": false,
+    "evidenceScope": "One observed user-operated presentation session; counts and elapsed time are diagnostics, not an FPS/gameplay benchmark."
   },
   "newLoadingBehavior": {
     "GPUCompletedFirstPresentCallback": true,
     "UIRemovalSharesFirstPresentTransaction": true,
     "onGlassTimestampSeparateFromCallback": true,
     "boundedGPUFixturePassed": true,
-    "visualRetestAfterLoadingChange": false
+    "visualRetestAfterLoadingChange": true,
+    "visualRetestScope": "The successful commercial session and a later rendered image were observed. This does not certify absence of every transient black frame.",
+    "firstPresentedHandlerDiagnostic": "skipped-no-display-timestamp",
+    "onGlassTimestampVerified": false
   },
   "exclusiveDisplay": {
     "implementationRequiresExplicitFlag": "--exclusive-hosted-view",
     "captureAPI": "CGDisplayCaptureWithOptions",
-    "actualCaptureVerified": false,
+    "actualCaptureVerified": true,
     "directScanoutVerified": false,
-    "manualMacUnlockRequiredForNextVisualTest": true
+    "boundedOwnMetalFrames": 120,
+    "captureResult": 0,
+    "releaseResult": 0,
+    "shieldingWindowObserved": true,
+    "sameWindowResourcePreserved": true,
+    "evidenceSHA256": "31aa65a4e8ee39a980c20fe9238ad142b4d913b092c8c540a330a8fc854089d2",
+    "shieldingWindowResource": 8533,
+    "commercialDisplayJournalSHA256": "5a718b9c56dd94c3c4bf09f6dc5522adae684128de101f4df8d7ef2e3d664f19",
+    "commercialPlacementSHA256": "9c781b1c69098d9e9e127b679536f0a5aa528af4451861f06e4819410e65969f"
   },
   "regressions": {
     "frontendLifecycleChecks": 14,
@@ -65,13 +89,55 @@
     "Sources/M1Launcher/HostedGamePresentation.swift": "58c252beaf4c55d24143bb209afe781a5a8715daa7be4a8c2adb3a22ddeb6c4b",
     "Sources/ReadyHostedView/ReadyHostedView.m": "a858dbc315b8124b5ee696cfeb8a819b9cd0e91478475087700fa9c28c51e492",
     "Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h": "64164b87d9883c6de91bff0937bb80cbc8926884b5767b49d463b1e5abf42c91",
-    "NativeEmbedding/ReadyHostedGameShim.m": "6b38da9213dbb5151dd0825962f91122e516e75f922695ec9a5d35be7e2d6e3b",
+    "NativeEmbedding/ReadyHostedGameShim.m": "3fe27ea1d1e52fbb48e399487df75f6924d88eefc28bedb48aaa1980b380e067",
     "SessionHost/ReadySessionHost.c": "541dd645835274f35f4ff47897464017b136eaf1bc243d0893240a4ddf5c51cb"
   },
   "limits": [
-    "Not a completed commercial-game embedding implementation.",
-    "Cocoa gestures, OS cursor presentation/relative capture, multiple displays and full drawable handler semantics remain limited.",
-    "The guest Ready overlay is omitted only in the explicit experiment; ordinary launches keep it.",
-    "Exclusive capture, Dock suppression and the latest loading/cursor fixes require live validation; capture success would not by itself prove direct scanout."
-  ]
+    "Experimental opt-in path for the measured native title, not general commercial-game or Cocoa compatibility.",
+    "No complete gameplay, controller, accessibility, multi-display or performance certification follows from the bounded presentation session.",
+    "Caller-scoped getters, logical gesture/cursor state and unimplemented private framework behavior remain explicit limits.",
+    "CPU/Mach synchronization and system/HUD/compositor work remain; no zero-overhead or direct-scanout claim.",
+    "Zero host queues/buffers/encoders/copies/readbacks describe application transport code, not private driver/WindowServer/HUD work.",
+    "Exclusive capture and shielding were observed with API success, while Metal HUD reported Composited.",
+    "Raw journals, screenshots, account identifiers, credentials and proprietary binaries are not published in this checkpoint."
+  ],
+  "historicalCommercialAttempts": [
+    {
+      "scope": "Earlier attempts before the successful 7038-present session",
+      "facts": {
+        "gameID": 1091500,
+        "genuineAuthenticatedFrameTransportObserved": true,
+        "partialPresentedFramesObserved": 72,
+        "stableMenuVerified": false,
+        "inputCompatibilityVerified": false,
+        "lastObservedCrash": {
+          "signal": "SIGSEGV",
+          "path": "GameView.resetCursorRects / NSView.addCursorRect"
+        },
+        "cursorRegistrationAdapterAdded": true,
+        "cursorFixLiveRetested": true,
+        "credentialsRemainedConnectedDuringAttempts": true,
+        "lastObservedFailure": {
+          "exitCode": 77,
+          "path": "Unimplemented _NSFunctionRowPanel allocation rejected before guest WindowServer fallback."
+        }
+      }
+    }
+  ],
+  "getterAdaptation": {
+    "callerScoped": true,
+    "scope": "Logical NSApplication window/menu/visibility getters are provided for main-executable callers; framework callers retain original getter behavior.",
+    "fullAppKitCompatibilityVerified": false
+  },
+  "gestureAndCursor": {
+    "gestureAssociation": "Logical per-view association only; no private native gesture provider is created.",
+    "nativeGestureRecognitionVerified": false,
+    "cursorRectangles": "Validated logical registration only.",
+    "physicalCursorWarpAndRelativeCaptureVerified": false
+  },
+  "finalBundleScope": {
+    "bundledHostedShimRetained": true,
+    "finalLibraryVisualRetestVerified": false,
+    "reason": "Final CUA inspection timed out; no later library screenshot is asserted."
+  }
 }

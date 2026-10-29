@@ -13,6 +13,8 @@ Started 2026-10-27. Repository: `https://github.com/Hais00/ready` (private). Loc
 
 ## Latest steering and progress
 
+- The opt-in same-window Cyberpunk presentation now has a successful bounded user session: 7,038 presents over 172,213.096 ms, preserved Ready window 8480, guest WindowServer census empty, exclusive capture/release results zero and user-confirmed exit zero. Metal HUD reported **Composited**. Host transport code creates no GPU copy/command buffer; CPU/Mach and system/HUD work remain. Caller-scoped getters and logical gesture/cursor adaptation do not establish complete AppKit/input/gameplay/controller compatibility. See [presentation scope](READY_HOSTED_PRESENTATION.md) and [the sanitized checkpoint](../Validation/ready-hosted-presentation-checkpoint.json). Final-library CUA retesting timed out and is not claimed.
+
 - Native Steam login persistence now has actual repeat-launch evidence: Cyberpunk starts with a new credential revision, closes normally, restarts with its genuine cached login, and Ready itself restores the saved account after quit/reopen without another QR. Per-game workers still stop with the game. See [the scoped checkpoint](../Validation/steam-persistent-login-checkpoint.json); gameplay/performance and other platforms remain separate gates.
 
 - Settings now has persistent main-content tabs; account/friends, downloads, profiles and ordinary forms use nonmodal pages with the sidebar available. Actual Cua and the scoped automatic checks are recorded in [navigation pages](../Validation/navigation-pages-checkpoint.json). The older floating-dialog UI evidence below is historical. Game-time quit confirmation remains transient. No new server login/download/game certification is implied by this UI checkpoint.

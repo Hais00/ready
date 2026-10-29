@@ -53,6 +53,17 @@ arbitrary dialogs, controllers and accessibility require their own validation.
 The guest Ready overlay is omitted in this experiment so only one transport owns
 the presentation hooks; ordinary launches retain their existing overlay path.
 
+Logical NSApplication window/menu/visibility getters are caller-scoped: the
+selected main executable receives the adapted values, while framework callers
+retain their original getter behavior. This avoids passing an NSObject proxy
+into AppKit internals expecting real NSWindow ivars. It does not make the proxy
+a fully initialized native window or establish compatibility for other helper,
+plugin or framework call paths. Gesture recognizers are associated logically
+with hosted views; no private native gesture provider is created. Cursor
+rectangles are validated logical state rather than native OS registration.
+These adaptations must not be described as complete gesture recognition,
+physical cursor/relative capture, responder-chain or controller support.
+
 The actual host layer can show Metal HUD. Its FPS/frame interval/presentation mode
 belong to that layer. Host GPU timing cannot be presented as total guest frame GPU
 time: the host itself encodes no game command buffers, and an optional guest
@@ -72,3 +83,34 @@ Build/ready.app/Contents/MacOS/ready --host-game-view 1091500 --metal-hud \
 The default path remains unchanged without the explicit experiment. A successful
 synthetic-app run is not a commercial-game compatibility certificate. Exact live
 checkpoints and remaining limits must accompany any claim of game support.
+
+## Successful bounded commercial presentation — 2026-10-29
+
+Cyberpunk 2077 completed 7,038 valid PRESENT operations and 7,038 acquisitions in
+172,213.096 ms of host journal time (23,891 Mach requests). Ready PID 1694 kept its
+existing window resource 8480; guest PID 3461 had no WindowServer window in the
+observed census. The user confirmed that exit code zero resulted from their own
+interaction. A CUA image shows the game and Metal HUD in Ready. This establishes
+this bounded presentation session, not complete gameplay, all menus, physical
+controllers or a performance benchmark. The elapsed time includes host/session
+work and must not be converted into a general game-FPS claim.
+
+Exclusive capture and release both returned zero. The observed shielding window
+was 8533, while Ready's window remained 8480. The Metal HUD explicitly reported
+**Composited**; capture success is not direct scanout. The host's application
+transport recorded zero queues, command buffers, encoders, surface copies and
+pixel readbacks. CPU/Mach synchronization and private framework, HUD, driver and
+WindowServer work are outside that zero-counter statement.
+
+The first GPU-complete UI transition was journaled, but the first drawable's
+presented-handler result was `skipped-no-display-timestamp`. The later screenshot
+confirms a rendered image, not a timestamp for that first present or a guarantee
+that every startup frame was visible. The final bundle was rebuilt afterwards;
+its later library CUA inspection timed out, so no final-library visual retest is
+asserted here.
+
+The [sanitized checkpoint](../Validation/ready-hosted-presentation-checkpoint.json)
+binds the journal, capture metadata and screenshot hashes. Raw logs, the full
+image, account identifiers and proprietary code remain local. Earlier partial
+frames and failures remain historical evidence; they were not rewritten as
+successful runs. No whole-application redistribution approval follows.

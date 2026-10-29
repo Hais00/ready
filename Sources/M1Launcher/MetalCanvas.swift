@@ -128,6 +128,9 @@ final class MetalCanvas: NSView {
     desc.colorAttachments[0].pixelFormat = .bgra8Unorm
     pipeline = try device.makeRenderPipelineState(descriptor: desc)
     let l = CAMetalLayer()
+    // The diagnostic HUD belongs to the hosted game layer, including after
+    // this library layer is recreated on return from a session.
+    l.developerHUDProperties = ["mode": "disabled"]
     l.device = device
     l.pixelFormat = .bgra8Unorm
     l.isOpaque = true
