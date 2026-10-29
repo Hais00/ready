@@ -19,7 +19,7 @@ sys.dont_write_bytecode=True
 from swift_probe_support import prepare_core
 ROOT=Path(__file__).resolve().parents[1]
 DEFAULT_WORK=Path('/Volumes/Dati APFS/Codex-ready-01a17e79')
-SOURCES=['Sources/M1Launcher/MetalCanvas.swift','Sources/M1Launcher/CanvasDrawing.swift','Sources/M1Launcher/ControllerNavigation.swift','Synthetic/ReadyCanvasSectionsProbe.swift']
+SOURCES=['Sources/M1Launcher/MetalCanvas.swift','Sources/M1Launcher/ArtworkCache.swift','Sources/M1Launcher/GameArtwork.swift','Sources/M1Launcher/CanvasDrawing.swift','Sources/M1Launcher/ControllerNavigation.swift','Synthetic/ReadyCanvasSectionsProbe.swift']
 def sha(path):
     with Path(path).open('rb')as f:return hashlib.file_digest(f,'sha256').hexdigest()
 def main():

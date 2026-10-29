@@ -49,7 +49,7 @@ final class SteamNativeGameSession: SteamGameSessionLease, @unchecked Sendable {
   private let selectedVariant:GameVariant
   private let profileStateRoot:URL
   private let selection:Selection
-  private let credentialRevision:SteamNativeCacheRevision.Selection?
+  private var credentialRevision:SteamNativeCacheRevision.Selection?
   private let lock=NSLock()
   private var host:SteamNativeHostProcess?
   private var completion:Completion?
@@ -108,20 +108,32 @@ final class SteamNativeGameSession: SteamGameSessionLease, @unchecked Sendable {
     guard environmentPaths(assets,profileStateRoot:profileStateRoot) else{throw Failure.invalidSDK}
     let selection=try Selection.inspect(variant:variant,assets:assets)
     try validateStateRoot(profileStateRoot,installation:selection.installation)
-    var packet:Data
-    do{packet=try grant.consume()}catch{throw Failure.grantUnavailable}
-    defer{packet.resetBytes(in:0..<packet.count);packet.removeAll(keepingCapacity:false)}
-    let revision=try SteamNativeCacheRevision.select(packet:packet,root:profileStateRoot)
     let session=SteamNativeGameSession(binding:binding,grant:grant,game:game,variant:variant,
-      profileStateRoot:profileStateRoot,selection:selection,credentialRevision:revision,completion:completion)
-    do {
-      let host=try SteamNativeHostProcess.spawn(binding:binding,credentialPacket:&packet,profile:session.profile,
-        sessionID:session.sessionID,gameID:session.gameID,profileStateRoot:profileStateRoot,mode:revision.mode == .fresh ? .credentials:.automatic,
-        onEvent:{[weak session] event in session?.receive(event)},onExit:{[weak session] result in session?.hostExited(result)})
-      session.lock.lock();session.host=host;session.lock.unlock()
-    } catch {
-      session.lock.lock();session.completion=nil;session.stopped=true;session.lock.unlock()
-      throw Failure.hostSetupFailed
+      profileStateRoot:profileStateRoot,selection:selection,completion:completion)
+    grant.consume { [weak session] result in
+      guard case .success(var packet) = result else { session?.invalidate(.grantUnavailable,stopHost:false); return }
+      defer { packet.resetBytes(in:0..<packet.count);packet.removeAll(keepingCapacity:false) }
+      guard let session else { return }
+      session.lock.lock();let active = !session.stopped && !session.invalidated;session.lock.unlock()
+      guard active else { return }
+      do {
+        let currentAssets = try binding.verifiedGameAssets()
+        guard environmentPaths(currentAssets,profileStateRoot:profileStateRoot),
+          try Selection.inspect(variant:variant,assets:currentAssets) == selection else { throw Failure.invalidSDK }
+        try validateStateRoot(profileStateRoot,installation:selection.installation)
+        let revision = try SteamNativeCacheRevision.select(packet:packet,root:profileStateRoot)
+        _=try SteamNativeHostProcess.spawn(binding:binding,credentialPacket:&packet,profile:session.profile,
+          sessionID:session.sessionID,gameID:session.gameID,profileStateRoot:profileStateRoot,mode:revision.mode == .fresh ? .credentials:.automatic,
+          onEvent:{[weak session] event in session?.receive(event)},onExit:{[weak session] result in session?.hostExited(result)},
+          admit:{[weak session] host,launch in
+            guard let session else{throw Failure.stopped}
+            session.lock.lock();defer{session.lock.unlock()}
+            guard !session.stopped,!session.invalidated else{throw Failure.stopped}
+            // Only POSIX creation/publication is atomic with stop. Every asset
+            // hash and the fresh credential read have already finished outside.
+            try launch();session.host=host;session.credentialRevision=revision
+          })
+      } catch { session.invalidate(.hostSetupFailed,stopHost:false) }
     }
     return session
   }

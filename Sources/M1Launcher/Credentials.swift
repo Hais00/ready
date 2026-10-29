@@ -1,10 +1,30 @@
-import CryptoKit
 // SPDX-License-Identifier: GPL-3.0-only
+import CryptoKit
 import Foundation
 import LauncherCore
 import Security
 
 enum CredentialVault {
+  enum Storage: Equatable { case keychain, privateFile }
+  static let steamStoragePreference = "readySteamCredentialStorage"
+  static func storage(for store: Store, preferences: UserDefaults = .standard) -> Storage {
+    store == .steam && preferences.string(forKey: steamStoragePreference) == "privateFile" ? .privateFile : .keychain
+  }
+  // All real Keychain calls share this serial queue. UI callers use perform;
+  // synchronous entry points remain available to existing private workers.
+  private static let worker = DispatchQueue(label: "ready.credentials.serial", qos: .userInitiated)
+  private static let workerKey = DispatchSpecificKey<Bool>()
+  private static let installWorkerKey: Void = { worker.setSpecific(key: workerKey, value: true) }()
+  static func perform<T>(_ body: @escaping () -> T, completion: @escaping (T) -> Void) {
+    _ = installWorkerKey
+    worker.async { let result = body(); DispatchQueue.main.async { completion(result) } }
+  }
+  static func serialized<T>(_ body: () throws -> T) rethrows -> T {
+    _ = installWorkerKey
+    if DispatchQueue.getSpecific(key: workerKey) == true { return try body() }
+    return try worker.sync(execute: body)
+  }
+
   enum SteamStatus { case missing, expired, available }
   /// One Steam account per profile/data root. Backend/platform is never a key.
   static func steamStatus(_ data: Data?, now: TimeInterval = Date().timeIntervalSince1970) -> SteamStatus {
@@ -39,7 +59,11 @@ enum CredentialVault {
       kSecAttrAccount as String: profile.uuidString,
     ]
   }
-  static func save(_ data: Data, profile: UUID, store: Store, stateRoot: URL? = nil) throws {
+  static func save(_ data: Data, profile: UUID, store: Store, stateRoot: URL? = nil, preferences: UserDefaults = .standard) throws {
+    try serialized {
+    if storage(for:store,preferences:preferences) == .privateFile {
+      try PrivateCredentialFile(stateRoot:stateRoot ?? LauncherPaths().root).save(data,profile:profile);return
+    }
     let q = query(profile: profile, store: store, stateRoot: stateRoot)
     let result = SecItemUpdate(q as CFDictionary, [kSecValueData as String: data] as CFDictionary)
     if result == errSecItemNotFound {
@@ -47,21 +71,33 @@ enum CredentialVault {
       insert[kSecValueData as String] = data
       insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
       guard SecItemAdd(insert as CFDictionary, nil) == errSecSuccess else {
-        throw LauncherError.failed("Impossibile salvare l’account nel Portachiavi.")
+        throw LauncherError.failed("Impossibile salvare l’accesso nell’archivio account.")
       }
     } else if result != errSecSuccess {
-      throw LauncherError.failed("Portachiavi non disponibile (\(result)).")
+      throw LauncherError.failed("Archivio account non disponibile (\(result)).")
+    }
     }
   }
-  static func load(profile: UUID, store: Store, stateRoot: URL? = nil) -> Data? {
+  static func load(profile: UUID, store: Store, stateRoot: URL? = nil, preferences: UserDefaults = .standard) -> Data? {
+    serialized {
+    if storage(for:store,preferences:preferences) == .privateFile {
+      // No Keychain fallback or migration: even a missing/unsafe file stays local.
+      return try? PrivateCredentialFile(stateRoot:stateRoot ?? LauncherPaths().root).load(profile:profile)
+    }
     var q = query(profile: profile, store: store, stateRoot: stateRoot)
     q[kSecReturnData as String] = true
     q[kSecMatchLimit as String] = kSecMatchLimitOne
     var result: CFTypeRef?
     guard SecItemCopyMatching(q as CFDictionary, &result) == errSecSuccess else { return nil }
     return result as? Data
+    }
   }
-  static func remove(profile: UUID, store: Store, stateRoot: URL? = nil) {
-    SecItemDelete(query(profile: profile, store: store, stateRoot: stateRoot) as CFDictionary)
+  static func remove(profile: UUID, store: Store, stateRoot: URL? = nil, preferences: UserDefaults = .standard) {
+    serialized {
+      if storage(for:store,preferences:preferences) == .privateFile {
+        try? PrivateCredentialFile(stateRoot:stateRoot ?? LauncherPaths().root).remove(profile:profile);return
+      }
+      _ = SecItemDelete(query(profile:profile,store:store,stateRoot:stateRoot) as CFDictionary)
+    }
   }
 }

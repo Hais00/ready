@@ -62,6 +62,7 @@ private final class Suite {
       let before=records().count
       coordinator.authorize(profile:profile,gameID:"480",target:.nativeMac){first.append($0)}
       coordinator.authorize(profile:profile,gameID:"480",target:.wineWindows){second.append($0)}
+      try pump{(first+second).contains{$0["type"]as?String=="authentication_required"}}
       try check((first+second).filter{$0["type"]as?String=="authentication_required"}.count==1,"one explicit profile login prompt")
       try check(records().count==before,"no per-backend auth begun")
       coordinator.authenticate(profile:profile){if $0["type"]as?String=="result"{login += 1}}
@@ -94,7 +95,10 @@ private final class Suite {
       try pump{!events.isEmpty && !client.hasActiveRequests}
       let required=events.contains{$0["type"]as?String=="authentication_required"}
       try check(required == (failureMode=="expired"),"only exact rejection requires login")
-      try check((client.steamCredentialStatus(profile:profile) == .expired) == (failureMode=="expired"),"exact server rejection changes credential status only")
+      var observedStatus:CredentialVault.SteamStatus?
+      client.inspectSteamCredential(profile:profile){status,_ in observedStatus=status}
+      try pump{observedStatus != nil}
+      try check((observedStatus == .expired) == (failureMode=="expired"),"exact server rejection changes credential status only")
       try check(events.allSatisfy{$0["authorized"]as?Bool != true},"invalid authority not promoted")
       coordinator.cancel(profile:profile)
       results["failure-"+failureMode]=true
@@ -105,12 +109,14 @@ private final class Suite {
       let (client,coordinator)=setup(vault);var cancelledEvents=0,retryPrompts=0,retrySucceeded=false
       let before=records().count
       let cancelled=coordinator.authorize(profile:profile,gameID:"480",target:.nativeMac){_ in cancelledEvents += 1}
+      try pump{cancelledEvents==1}
       try check(cancelledEvents==1,"initial missing/expired login prompt delivered")
       coordinator.cancel(cancelled)
       coordinator.authorize(profile:profile,gameID:"480",target:.wineWindows){value in
         if value["type"]as?String=="authentication_required" { retryPrompts += 1 }
         if value["type"]as?String=="result" { retrySucceeded=true }
       }
+      try pump{retryPrompts==1}
       try check(retryPrompts==1 && records().count==before,"cancelled prompt permits retry without implicit auth")
       coordinator.authenticate(profile:profile){_ in}
       try pump{retrySucceeded && !client.hasActiveRequests}
@@ -125,6 +131,7 @@ private final class Suite {
         if value["type"]as?String=="authentication_required" { secondPrompts += 1 }
         if value["type"]as?String=="result" { secondSucceeded=true }
       }
+      try pump{firstEvents==1}
       try check(firstEvents==1 && secondPrompts==0,"one prompt for two waiting games")
       coordinator.cancel(owner)
       try check(secondPrompts==1 && records().count==before,"prompt ownership transfers to remaining game without implicit auth")
@@ -139,6 +146,7 @@ private final class Suite {
       let vault=Vault();vault.seed(profile,expired:true);let (_,coordinator)=setup(vault);var prompts=0;let before=records().count
       coordinator.authorize(profile:profile,gameID:"480",target:.nativeMac){if $0["type"]as?String=="authentication_required"{prompts += 1}}
       coordinator.authorize(profile:profile,gameID:"481",target:.wineWindows){if $0["type"]as?String=="authentication_required"{prompts += 1}}
+      try pump{prompts==1}
       try check(prompts==1 && records().count==before,"expiry is one explicit login not automatic requests")
       coordinator.cancel(profile:profile);results["refreshExpiryIsOneProfilePrompt"]=true
     }
@@ -149,7 +157,9 @@ private final class Suite {
       vault.seed(profile);try mode("slow");var preflight=0
       coordinator.authorize(profile:profile,gameID:"480",target:.nativeMac){_ in preflight += 1}
       coordinator.signOut(profile:profile);try pump{!client.hasActiveRequests}
-      try check(preflight==0 && client.steamCredentialStatus(profile:profile) == .missing,"signout invalidates queued authority and account")
+      var signoutStatus:CredentialVault.SteamStatus?
+      client.inspectSteamCredential(profile:profile){status,_ in signoutStatus=status};try pump{signoutStatus != nil}
+      try check(preflight==0 && signoutStatus == .missing,"signout invalidates queued authority and account")
       try mode("normal");results["cancelAndAccountSwitchBarriers"]=true
     }
     let a=CredentialVault.query(profile:profile,store:.steam,stateRoot:project.appendingPathComponent("root-a"))

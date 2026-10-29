@@ -65,6 +65,7 @@ sealed class PersistentSteamService:IAsyncDisposable
     readonly List<Task> work=new();
     readonly Func<TimeSpan,CancellationToken,Task> delay;
     readonly TimeSpan requestBudget,heartbeatInterval;
+    readonly Func<uint,string,CancellationToken,Task<Dictionary<string,object?>>> catalogMetadata;
     Task? heartbeat,reconnect;
     CancellationTokenSource? reconnectCancel;
     SteamServiceCredentials? credentials;
@@ -77,9 +78,11 @@ sealed class PersistentSteamService:IAsyncDisposable
     string? guardChallenge;
     TaskCompletionSource<string>? guardAnswer;
     internal PersistentSteamService(ISteamServiceTransport transport,TextWriter output,
-        Func<TimeSpan,CancellationToken,Task>? delay=null,TimeSpan? requestBudget=null,TimeSpan? heartbeatInterval=null)
+        Func<TimeSpan,CancellationToken,Task>? delay=null,TimeSpan? requestBudget=null,TimeSpan? heartbeatInterval=null,
+        Func<uint,string,CancellationToken,Task<Dictionary<string,object?>>>? catalogMetadata=null)
     {
         this.transport=transport;this.output=output;
+        this.catalogMetadata=catalogMetadata??new SteamPublicCatalog().DetailsAsync;
         this.delay=delay??Task.Delay;this.requestBudget=requestBudget??TimeSpan.FromMinutes(4);
         this.heartbeatInterval=heartbeatInterval??TimeSpan.FromSeconds(15);
         transport.Notice+=OnNotice;
@@ -237,9 +240,18 @@ sealed class PersistentSteamService:IAsyncDisposable
                     }
                     break;
                 case "library":
-                    RequireOnline();long libraryEpoch=CurrentEpoch();var games=new List<object>();
-                    await transport.LibraryAsync(page=>{EnsureEpoch(libraryEpoch);cancel.Token.ThrowIfCancellationRequested();games.AddRange(page);if(games.Count>20000)throw new ServiceFailure("library_too_large");},cancel.Token);
-                    lock(sync){EnsureEpoch(libraryEpoch);cancel.Token.ThrowIfCancellationRequested();Result(id,new(){["games"]=games,["gameCount"]=games.Count});}break;
+                    RequireOnline();long libraryEpoch=CurrentEpoch();var libraryOptions=Options(root);bool paged=false;
+                    if(libraryOptions.TryGetProperty("paged",out var pageOption)){if(pageOption.ValueKind is not (JsonValueKind.True or JsonValueKind.False))throw new ArgumentException();paged=pageOption.ValueKind==JsonValueKind.True;}
+                    var pages=new SteamLibraryPages(paged,(games,index)=>Emit("library_page",id,new(){["games"]=games,["pageIndex"]=index}));
+                    await transport.LibraryAsync(page=>{lock(sync){EnsureEpoch(libraryEpoch);cancel.Token.ThrowIfCancellationRequested();pages.Add(page);}},cancel.Token);
+                    lock(sync){EnsureEpoch(libraryEpoch);cancel.Token.ThrowIfCancellationRequested();Result(id,pages.Complete());}break;
+                case "catalog_metadata":
+                    uint catalogApp=AppID(root);string language=SteamPublicCatalog.Language(Text(Options(root),"language","english"));
+                    Dictionary<string,object?> details;
+                    try{details=await catalogMetadata(catalogApp,language,cancel.Token);}
+                    catch(OperationCanceledException)when(!cancel.IsCancellationRequested){throw new ServiceFailure("metadata_timeout");}
+                    catch(Exception error)when(error is HttpRequestException or InvalidDataException or JsonException or System.Text.RegularExpressions.RegexMatchTimeoutException){throw new ServiceFailure("metadata_unavailable");}
+                    lock(sync){cancel.Token.ThrowIfCancellationRequested();Result(id,new(){["appID"]=catalogApp,["metadata"]=details});}break;
                 case "offline":case "logout":
                     bool forget=operation=="logout"&&Options(root).TryGetProperty("forgetCredentials",out var forgetValue)&&forgetValue.ValueKind==JsonValueKind.True;
                     await Stop(operation=="offline"?"offline":"logged_out",operation=="offline"?"manual_offline":"explicit_logout",forget,id);
@@ -253,6 +265,7 @@ sealed class PersistentSteamService:IAsyncDisposable
             }
         }
         catch(ServiceFailure failure){Error(id,failure.Code,failure.Result);}
+        catch(SteamLibraryPayloadException failure){Error(id,failure.Code);}
         catch(AuthenticationException failure){Error(id,"authentication_failed",failure.Result);}
         catch(OperationCanceledException){Error(id,cancel.IsCancellationRequested&&!lifetime.IsCancellationRequested?"cancelled":"disconnected");}
         catch(ArgumentException){Error(id,"invalid_request");}
@@ -573,7 +586,7 @@ sealed class PersistentSteamService:IAsyncDisposable
             var fields=state=="online"?FriendPage(options):new Dictionary<string,object?>{["friends"]=Array.Empty<object>()};
             fields["state"]=state;fields["reason"]=reason;fields["account"]=state=="online"?transport.Account(credentials?.Username??""):null;
             fields["steamResult"]=SteamSafeFailure.ResultName(lastConnectionResult);fields["connectionResultContext"]=connectionResultContext;
-            fields["capabilities"]=new[]{"connect","authenticate","guard_code","snapshot","friends","set_presence","set_persona_name","add_friend","remove_friend","block_friend","unblock_friend","set_activity","authorize_game","library","offline","reconnect","logout","cancel","shutdown"};
+            fields["capabilities"]=new[]{"connect","authenticate","guard_code","snapshot","friends","set_presence","set_persona_name","add_friend","remove_friend","block_friend","unblock_friend","set_activity","authorize_game","library","catalog_metadata","offline","reconnect","logout","cancel","shutdown"};
             fields["protocolVersion"]=1;fields["backendSessionReady"]=false;
             Result(id,fields);
         }
@@ -890,20 +903,13 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
             var access=await apps.PICSGetAccessTokens(chunk,Array.Empty<uint>()).ToTask().WaitAsync(cancel);
             var info=await apps.PICSGetProductInfo(chunk.Select(id=>new SteamApps.PICSRequest(id,access.AppTokens.GetValueOrDefault(id))),Array.Empty<SteamApps.PICSRequest>()).ToTask().WaitAsync(cancel);
             if(!info.Complete||info.Failed||info.Results is null)throw new IOException();
-            var games=new List<object>();
+            var games=new List<object>();var records=new Dictionary<uint,KeyValue>();
             foreach(var part in info.Results)foreach(var app in part.Apps.Values)
+                if(app.KeyValues is {} values)records[app.ID]=values;
+            foreach(uint id in chunk)
             {
-                if(app.KeyValues is not {} values)continue;
-                var common=values["common"];string type=common["type"].Value??"";
-                if(!new[]{"game","application","demo"}.Contains(type.ToLowerInvariant()))continue;
-                var platforms=(common["oslist"].Value??"").Split(',');var variants=new List<object>();
-                foreach(string platform in new[]{"windows","macos"})if(platforms.Contains(platform))
-                {
-                    string normalized=platform=="macos"?"macOS":"windows";
-                    variants.Add(new{id=normalized,platform=normalized,architecture="unknown",installed=false,arguments=Array.Empty<string>(),verification="Steam platform metadata; inspect local binary to confirm Apple Silicon"});
-                }
-                var launch=values["config"]["launch"].Children.Select(k=>new{executable=k["executable"].Value,arguments=k["arguments"].Value,workingdir=k["workingdir"].Value,@type=k["type"].Value,description=k["description"].Value,oslist=k["config"]["oslist"].Value,osarch=k["config"]["osarch"].Value}).ToArray();
-                games.Add(new{id="steam:"+app.ID,store="steam",storeID=app.ID.ToString(),title=common["name"].Value??app.ID.ToString(),artworkURL=$"https://cdn.cloudflare.steamstatic.com/steam/apps/{app.ID}/library_600x900.jpg",variants,engine="automatic",saveRules=Array.Empty<object>(),metadata=new{launch}});
+                records.TryGetValue(id,out var values);
+                if(SteamCatalogMetadata.IsLibraryApp(values))games.Add(SteamCatalogMetadata.LibraryGame(id,values));
             }
             page(games.ToArray());
         }

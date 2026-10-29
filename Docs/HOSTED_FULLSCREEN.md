@@ -87,3 +87,15 @@ un’ipotesi. L’utente segnala anche stutter evidente e valori circa 37,72 nat
 contro 34 hosted: non è un benchmark controllato e non stabilisce una causa.
 Non si certificano parità input/prestazioni, compatibilità mouse generale o
 gameplay completo. Space e angoli non hanno una nuova conferma manuale.
+
+## V4: build verificata, confronto live ancora pendente
+
+Il [checkpoint performance separato](../Validation/ready-hosted-performance-checkpoint.json)
+lega il confronto dei CSV del motore a impostazioni uguali: 37,71597 FPS nativo
+contro 34,20225 hosted v3, −9,3163% e +2,723 ms medi. Non sono intervalli di
+presentazione sul display. Il profilo reale pre-v4 riguarda intro/titolo e
+mostra VSync guest falso/host vero, non un risultato successivo alla correzione.
+La build v4 e relocation14 passano insieme alle fixture mirate; il nuovo
+avvio non ha ancora frame v4 verificati, dopo timeout CUA e richiesta unlock.
+Stutter, feeling e parità input/prestazioni restano aperti. Le evidenze v3
+precedenti non sono usate come prova di recupero v4.

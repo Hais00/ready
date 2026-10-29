@@ -59,7 +59,7 @@ def main():
  run=pathlib.Path(tempfile.mkdtemp(prefix='steam-client-session-',dir=WORK/'tests'))
  fake=run/'fake.py';fake.write_text(FAKE);fake.chmod(0o600)
  binary=run/'probe'
- files=['Sources/M1Launcher/Credentials.swift','Sources/M1Launcher/StoreClient.swift','Sources/M1Launcher/SteamClientSession.swift','Synthetic/ReadySteamSessionProbe.swift']
+ files=['Sources/M1Launcher/Credentials.swift','Sources/M1Launcher/PrivateCredentialFile.swift','Sources/M1Launcher/StoreClient.swift','Sources/M1Launcher/SteamClientSession.swift','Synthetic/ReadySteamSessionProbe.swift']
  command=['swiftc','-swift-version','5','-parse-as-library','-I',str(modules),*[str(ROOT/x)for x in files],str(archive),'-framework','Security','-o',str(binary)]
  compiled=subprocess.run(command,cwd=ROOT,capture_output=True,text=True)
  if compiled.returncode:raise RuntimeError(compiled.stderr[-6000:])

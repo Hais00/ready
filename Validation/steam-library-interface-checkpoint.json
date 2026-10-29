@@ -1,0 +1,581 @@
+{
+  "schema": 1,
+  "date": "2026-10-29",
+  "kind": "steam-library-interface-checkpoint",
+  "goalState": "active",
+  "goalComplete": false,
+  "scope": "Steam owned library, detail pages, runtime artwork and launch-loading UI; current live acceptance remains pending.",
+  "userDirection": {
+    "detailThenPlayUXApproved": true,
+    "approvalIsNotLiveGameLaunchEvidence": true,
+    "continueWorkWhileUserChecksLater": true,
+    "hostedGameInputBenchmarkAndPerformanceProofsSuspended": true,
+    "credentialStorageChoicePending": false,
+    "explicitPrivateFileConsentReceived": true
+  },
+  "backend": {
+    "component": "steambridge-888ea8c3a140626c7d4c95ec",
+    "manifestSHA256": "db48c4562e02ffe2b760561a396b51c922fe2dc4d5bfc194bd6767de4c6457f9",
+    "helperSHA256": "f7214e986c8535549c1982da0bd86781cf5ff07a216818bde93b0ab8adab47c9",
+    "sourceBuildReceiptSHA256": "6334547b9981fec0b5f6f3e17f103d8f69bb7f00f0cd8e68e875312a0fa8724b",
+    "normalStateSelectionReportedByRoot": true,
+    "previousSelectorRetainedInHistory": true,
+    "sourceBuiltOffline": true,
+    "payloadAndExternalAliasInventoriesVerified": true,
+    "catalogAndPagingChecks": 32,
+    "persistentServiceChecks": 176,
+    "totalChecks": 208,
+    "testReportSHA256": "7bf7398fbf5eb3933f111c60e966d5ba0b4c206aa7b75a1e14edc3c33628cafe",
+    "pagedLibrary": {
+      "requested": true,
+      "maximumEntries": 20000,
+      "maximumGamesPerPage": 50,
+      "maximumPageBytes": 1048576,
+      "terminalCountsValidatedBeforeCommit": true,
+      "legacyTerminalGamesSupported": true,
+      "architectureFromRemotePlatformMetadata": "unknown"
+    },
+    "previousComponent": "steambridge-b83d0e95382795c3ac7932d0",
+    "previousManifestSHA256": "7254e45ae98289d66d951fe55f44a1fa37ae293d6a2a50c49678d2299e82f75c",
+    "historicalB83OfflineRuntime": {
+      "passed": true,
+      "reportSHA256": "4a430dea6e8a64f1bbddf698503c130d3f928821c80c0a55564f5e53a2e86f76",
+      "networkDenied": true,
+      "sourceAndSDKReadDenied": true
+    },
+    "selectedByRootInNormalState": true,
+    "previousB83RetainedWithSelectorHistory": true
+  },
+  "actualPublicMetadata": {
+    "passed": true,
+    "receiptSHA256": "7840bdd201f8d4be8c3b251972959e6d3e3f3dc4b9e8b1ff3090a7f568463339",
+    "rawResponseSHA256": "ae2d18e9eda085923550c68e0bf6f87865a69f812a27016e7032ef87484e277d",
+    "componentManifestSHA256": "7254e45ae98289d66d951fe55f44a1fa37ae293d6a2a50c49678d2299e82f75c",
+    "catalogRequestCount": 1,
+    "publicAppID": 1091500,
+    "language": "italian",
+    "elapsedSeconds": 0.7273801670235116,
+    "descriptionNonempty": true,
+    "bannerNonempty": true,
+    "artworkURLCount": 3,
+    "artworkHostsWhitelisted": true,
+    "downloadableVariantCount": 2,
+    "orderlyShutdown": true,
+    "exitZero": true,
+    "credentialsSupplied": false,
+    "steamConnectOrAuthenticateRequested": false,
+    "userLibraryMutated": false,
+    "provesOwnedAccountPopulation": false
+  },
+  "fixtures": {
+    "libraryDetailUI": {
+      "pointer": "Evidence/library-detail-ui-tests.json",
+      "pointerSHA256": "31b57106a374c041971533aea74bb3fa2af468851b6eaf6c86e136cc96af4564",
+      "rawReportSHA256": "ae4eaa566a73f1da4b2f7eab7967d5b810b73a990ffe2dedcadeef0821e79c26",
+      "checks": 45,
+      "fixtureOnly": true,
+      "recordedSourceHashesMatchCurrent": true,
+      "sourceHashMismatches": []
+    },
+    "launchSplash": {
+      "pointer": "Evidence/launch-splash-ui-tests.json",
+      "pointerSHA256": "977f2b5c6fdfe2cc49bb1bd1d7cabbeeb3999e34133a77a36609c338a663eb8d",
+      "rawReportSHA256": "7ab7359869443f469ef5ede2f099aa48e6062d559906fbd6de3cf2ca3059809f",
+      "checks": 34,
+      "fixtureOnly": true,
+      "recordedSourceHashesMatchCurrent": true,
+      "sourceHashMismatches": []
+    },
+    "libraryCoordinator": {
+      "pointer": "Evidence/steam-library-tests.json",
+      "pointerSHA256": "601837c2876a48a5fde29949b0e0f528aff7dd6a77e174027fd6c14e98d8cdc2",
+      "rawReportSHA256": "07b2a1eda9abdff32f2233a312c7c5c376f64ce1482b457a221030fb8634d202",
+      "checks": 28,
+      "fixtureOnly": true,
+      "recordedSourceHashesMatchCurrent": true,
+      "sourceHashMismatches": [],
+      "additionalScope": [
+        "Public downloadableVariants adds missing macOS/Windows variants with architecture unknown, installed false and no paths.",
+        "Cached public availability projects at most 20000 entries before authentication/network and persists only on change.",
+        "A completed rich public metadata response/artwork survives subsequent incomplete or empty PICS catalog placeholders while launch/ownership/other fields continue updating.",
+        "Unknown PICS macOS availability does not duplicate an already installed native variant with a custom ID; Windows availability remains and local IDs/preferences/save data survive."
+      ],
+      "scopeNote": "The latest 28-check run includes the policy-aware credentials, current public scheduler Session and current coordinator sources; recorded hashes match.",
+      "coordinatorImplementationSourceMatchesCurrent": true
+    },
+    "asynchronousSteam": {
+      "pointer": "Evidence/steam-library-async-handoff.json",
+      "pointerSHA256": "f476c12e37acd30a9a7a78d8f4e7555119460620e4cb516928b1d2460f17e403",
+      "rawReportSHA256": "a9a4ffdaf1c050558250350b1f92c3d0fcae3bdba0eac259f62bd8e966a57ba9",
+      "checks": null,
+      "fixtureOnly": true,
+      "recordedSourceHashesMatchCurrent": false,
+      "sourceHashMismatches": [
+        "Sources/M1Launcher/Credentials.swift",
+        "Sources/M1Launcher/StoreClient.swift",
+        "Sources/M1Launcher/SteamClientSession.swift",
+        "Sources/M1Launcher/SteamLibraryCoordinator.swift",
+        "Sources/M1Launcher/SteamClientUI.swift"
+      ],
+      "cases": {
+        "storeClient": {
+          "passed": true,
+          "count": 16,
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-credentials-async-lqp5b9oj/storeClient/report.json",
+          "sha256": "6ac841087ec0eafc897f94e0d906d6f8afe5829d0b304b89669567088ec38612",
+          "historicalHandoffReportedSourceMatch": true
+        },
+        "accountCoordinator": {
+          "passed": true,
+          "count": 13,
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-credentials-async-lqp5b9oj/accountCoordinator/report.json",
+          "sha256": "f55fcd254dc3521398c45ce2cee92348deb61136bf1430c9305ac8ad8765a3b9",
+          "historicalHandoffReportedSourceMatch": true
+        },
+        "session": {
+          "passed": true,
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-credentials-async-09calate/session/report.json",
+          "sha256": "ff8066ce9dd0a8b811049b61d83ceda3044abfaf949b2283573f8b6266951f42",
+          "count": 20,
+          "historicalHandoffReportedSourceMatch": true
+        },
+        "gameAuthorization": {
+          "passed": true,
+          "count": 103,
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-game-authorization-_3uw9mqt/report.json",
+          "sha256": "7ea8492d19682cb6cb1ab057fdeb9808946c9947c0f12c2f800851694ed4e825",
+          "scopeNote": "103 checks passed before the final pending-request cancel guard in SteamClientSession; authorization implementation unchanged. The final guard is covered by Session20 and Library23; this historical dependency result is not relabelled as a new run.",
+          "historicalHandoffReportedSourceMatch": false
+        },
+        "library": {
+          "passed": true,
+          "count": 28,
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-library-j580cfxp/report.json",
+          "sha256": "03cd5812e71e9f36567420068d25fcf76062479c289bffe1f9f834209fa826d2",
+          "historicalHandoffReportedSourceMatch": true
+        },
+        "nativeSessionBarrier": {
+          "passed": true,
+          "count": 23,
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/native-session-barrier-ex35zc3y/report.json",
+          "sha256": "ca99d6a87615120d147f37bf1e2259d8eb7fe4fa20b2ba43a3f5f96bbd9273fb",
+          "sourceSHA256": "0415d5f8bdc27b20bbecd8d6d269381721aabcba12ac7e4dbf3245119cc182d6",
+          "scope": "Includes stop during outer selection rehash and inner host binding rehash; stop returns while hash is pending, no host launch."
+        },
+        "nativeHostSupervisor": {
+          "passed": true,
+          "count": 26,
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-host-supervisor-inx9xmcw/report.json",
+          "sha256": "c01a548111afe7643bba700d476b19b24c3110c21bb1eae9878eb532171dfccd",
+          "fixtureOnly": true
+        }
+      },
+      "scopeNote": "This older aggregate and the Library28 process fixture predate the credential-policy dependencies. The coordinator implementation still matches Library28. Current credential-policy and async fixtures are recorded separately; this aggregate is not retroactively relabelled."
+    },
+    "privateCredentialFileFilesystem": {
+      "pointer": "Evidence/private-steam-credential-file-tests.json",
+      "pointerSHA256": "6a4e6c5ced180e220c843d9e8637053b4be4b0effa7c68e3eac0b11bc09b7a8d",
+      "rawReportSHA256": "d9d3285da266beddc3889045af1558ed27a4de4e0c4c87a89177518c17898d5a",
+      "checks": 51,
+      "fixtureOnly": true,
+      "recordedSourceHashesMatchCurrent": true,
+      "sourceHashMismatches": [],
+      "filesystemFixtureActivatedProductionBackend": false,
+      "realCredentialsWritten": false,
+      "realKeychainOrAccountUsed": false,
+      "ownFilesystemFixturePayloadsOnly": true
+    },
+    "credentialStoragePolicy": {
+      "pointer": "Evidence/credential-storage-policy-tests.json",
+      "pointerSHA256": "5b288253697b83e2721de421e72b9ca57249f6cbbca1f5f8a16f3dabba787a33",
+      "rawReportSHA256": "2ea5610b52b55d72812c249d2ed4eb3fe9150995a59bb9b361285b8d9d640cb5",
+      "checks": 18,
+      "fixtureOnly": true,
+      "recordedSourceHashesMatchCurrent": true,
+      "sourceHashMismatches": [],
+      "SecItemBindingsMockedBeforeFirstCall": true,
+      "fileModeSecItemCalls": 0,
+      "missingOrUnsafeFileFallsBackToKeychain": false,
+      "realApplicationPreferencesChangedByFixture": false,
+      "realCredentialKeychainOrAccountUsed": false
+    },
+    "privateStorageHandoff": {
+      "pointer": "Evidence/steam-private-storage-handoff.json",
+      "pointerSHA256": "ddeada4579364b1b575a7066c3505d833c71836090d3ac71b6f70a3272248e61",
+      "rawReportSHA256": "847286157f37276ff9d7bc94216ad024d26b6608dc7ba34e7e2651e47a31b291",
+      "recordedSourceHashesMatchCurrent": false,
+      "cases": {
+        "policy": {
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/credential-storage-policy-l6lor7yo/report.json",
+          "sha256": "2ea5610b52b55d72812c249d2ed4eb3fe9150995a59bb9b361285b8d9d640cb5",
+          "count": 18,
+          "cases": null
+        },
+        "fileBackend": {
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/private-steam-credential-file-ded233vk/report.json",
+          "sha256": "d9d3285da266beddc3889045af1558ed27a4de4e0c4c87a89177518c17898d5a",
+          "count": 51,
+          "cases": null
+        },
+        "consumerRegressions": {
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-credentials-async-pe9qf3vk/report.json",
+          "sha256": "7ad9761561bb73c567f4cb3c744aac4d6e79e89c0f0ac9995b87013bee23a26f",
+          "count": null,
+          "cases": {
+            "storeClient": {
+              "passed": true,
+              "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-credentials-async-pe9qf3vk/storeClient/report.json",
+              "sha256": "6f4174c3727e5464d8ea07b35204b204c0f056d6e0e061e900a2cf5279528700",
+              "count": 16
+            },
+            "accountCoordinator": {
+              "passed": true,
+              "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-credentials-async-pe9qf3vk/accountCoordinator/report.json",
+              "sha256": "e11b2a38c15dc27b1c5de31e250e71628c2be0822a951700038b7c4fd24906ab",
+              "count": 13
+            },
+            "session": {
+              "passed": true,
+              "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-credentials-async-pe9qf3vk/session/report.json",
+              "sha256": "c8928d02de63a58c08abd8e7428095c742aea4efcc02a33d104bde3f9d11ac65",
+              "count": 20
+            },
+            "gameAuthorization": {
+              "passed": true,
+              "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-credentials-async-pe9qf3vk/gameAuthorization/report.json",
+              "sha256": "145a846e07400e8a11b8dea76d4595c66ec17ded58279edb34dd56915b8a1674",
+              "count": 103
+            }
+          }
+        }
+      },
+      "scopeNote": "Fixture tools did not change actual application preferences. Root separately selected privateFile following explicit user consent; no actual credential-file writes or migration reported.",
+      "checks": null,
+      "fixtureOnly": true,
+      "sourceHashMismatches": [
+        "Sources/M1Launcher/SteamClientSession.swift",
+        "Sources/M1Launcher/SteamClientUI.swift"
+      ]
+    },
+    "credentialAsyncBeforePublicScheduler": {
+      "pointer": "Evidence/steam-credential-async-tests.json",
+      "pointerSHA256": "e2fe84a9f4697a06ed8ce1f442f6576f8d8f2f9da899b6487c925674e4504912",
+      "rawReportSHA256": "7ad9761561bb73c567f4cb3c744aac4d6e79e89c0f0ac9995b87013bee23a26f",
+      "checks": null,
+      "fixtureOnly": true,
+      "recordedSourceHashesMatchCurrent": false,
+      "sourceHashMismatches": [
+        "Sources/M1Launcher/SteamClientSession.swift"
+      ],
+      "cases": {
+        "storeClient": {
+          "passed": true,
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-credentials-async-pe9qf3vk/storeClient/report.json",
+          "sha256": "6f4174c3727e5464d8ea07b35204b204c0f056d6e0e061e900a2cf5279528700",
+          "count": 16
+        },
+        "accountCoordinator": {
+          "passed": true,
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-credentials-async-pe9qf3vk/accountCoordinator/report.json",
+          "sha256": "e11b2a38c15dc27b1c5de31e250e71628c2be0822a951700038b7c4fd24906ab",
+          "count": 13
+        },
+        "session": {
+          "passed": true,
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-credentials-async-pe9qf3vk/session/report.json",
+          "sha256": "c8928d02de63a58c08abd8e7428095c742aea4efcc02a33d104bde3f9d11ac65",
+          "count": 20
+        },
+        "gameAuthorization": {
+          "passed": true,
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-credentials-async-pe9qf3vk/gameAuthorization/report.json",
+          "sha256": "145a846e07400e8a11b8dea76d4595c66ec17ded58279edb34dd56915b8a1674",
+          "count": 103
+        }
+      },
+      "scopeNote": "Policy-aware worker16/13/20/103 results predate the later SteamClientSession public metadata scheduler dependency. That mismatch is explicit; Repair12/Library28 cover current public metadata paths."
+    },
+    "publicMetadataRepair": {
+      "pointer": "Evidence/steam-public-metadata-repair-handoff.json",
+      "pointerSHA256": "0c4da470b092dfe94636777a3ca781c721aa0ef3a8af99b849966c594fe52835",
+      "rawReportSHA256": "e917711693b26787c851ebc827bbd2279a2b0d4784673d5ba49d22163c6ef55e",
+      "checks": null,
+      "fixtureOnly": true,
+      "recordedSourceHashesMatchCurrent": true,
+      "sourceHashMismatches": [],
+      "cases": {
+        "repair": {
+          "count": 12,
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-metadata-repair-zqivi6ao/report.json",
+          "sha256": "b182427785813beb72d216be1f9d2ed62b76efa949629556b7ccca4acce9d2ce"
+        },
+        "library": {
+          "count": 28,
+          "report": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/steam-library-29timnrl/report.json",
+          "sha256": "07b2a1eda9abdff32f2233a312c7c5c376f64ce1482b457a221030fb8634d202"
+        }
+      },
+      "repairLimit": 64,
+      "maximumConcurrentMetadata": 2,
+      "failedLookupConsumesAttemptPerScope": true,
+      "automaticRetry": false,
+      "actualAccountOrCredentialUsedByFixture": false,
+      "manuallyWritesActualUserLibrary": false
+    },
+    "realDataCopyRender": {
+      "pointer": "Evidence/library-copy-render.json",
+      "pointerSHA256": "37df1108bb1f463112bdc9198d0b2b44b09797a7a5978143ba4a2f990840611a",
+      "rawReportSHA256": "f1f962781f9aeb16e98256c5b34b6f2902ceeee5b554fdad28df133a340d69da",
+      "checks": 18,
+      "actualModelCopy": true,
+      "inputCopySHA256": "3c6d0e39a30b2cca2b58cbc6986718cd52c0ef09d93366c4241e29231875c87b",
+      "activeProfileVisibleCount": 495,
+      "steamFilterVisibleCount": 495,
+      "publicNetworkRestrictedToTwoDetailAssets": true,
+      "originalArtworkCacheWritten": false,
+      "posterDecodedPixels": {
+        "width": 300,
+        "height": 450
+      },
+      "heroDecodedPixels": {
+        "width": 1024,
+        "height": 331
+      },
+      "nominal600x900FilenameIsNotPixelDimensionProof": true,
+      "sourceGameArtworkSHA256": "138773b901bcf3bb6ae695f39d7c991a4701057d60d558ac7b775fbcb50c325e",
+      "windowActivated": false,
+      "accountLoginPerformed": false,
+      "KeychainReadOrWrite": false,
+      "gameOrSteamSDKExecuted": false,
+      "userDataBytesModified": false,
+      "playOrInstallCallbacksInvoked": false,
+      "privateCapturesPublishedInRepository": false,
+      "scope": "Actual real-data-copy canvas/detail rendering plus exactly two fresh public assets in its own cache copy. Pixel dimensions/proportions are verified; interactive user-app review is deferred."
+    },
+    "historicalRealDataCopyRender": {
+      "checks": 16,
+      "rawReportSHA256": "a55213f1dd42a0f47fa53d6235f2c8ce96cfdd256963c4573b32b1f05bbb3404",
+      "publicNetworkTasks": 0,
+      "actualModelCopy": true,
+      "windowActivated": false,
+      "userDataBytesModified": false
+    },
+    "historicalOfflineCopyRender": {
+      "pointer": "Evidence/library-copy-render.json",
+      "pointerSHA256": "0eab68b4619222c7bc2156cd10e4200b81df173904d027cc17fce1e66f63c415",
+      "rawReportSHA256": "fe7bbf3eff37ff17528894e1642fba10fe350e8013d81e1d09a4175f5ccd2536",
+      "checks": 16,
+      "fixtureOnly": false,
+      "recordedSourceHashesMatchCurrent": true,
+      "sourceHashMismatches": [],
+      "actualModelCopy": true,
+      "activeProfileVisibleCount": 495,
+      "steamFilterVisibleCount": 495,
+      "inputCopySHA256": "3c6d0e39a30b2cca2b58cbc6986718cd52c0ef09d93366c4241e29231875c87b",
+      "publicArtworkNetworkEnabled": false,
+      "highResolutionPosterDecoded": false,
+      "highResolutionHeroDecoded": false,
+      "windowActivated": false,
+      "accountLoginPerformed": false,
+      "KeychainReadOrWrite": false,
+      "gameOrSteamSDKExecuted": false,
+      "userDataBytesModified": false,
+      "scope": "Actual MetalCanvas/detail rendering using a copy of the real cached data; this is not CUA interaction with the running user app. Captures/private report remain outside the repository."
+    }
+  },
+  "liveFrontend": {
+    "reportedBy": "Root live observations; no screenshots or private account records copied into this checkpoint",
+    "pid": 25884,
+    "running": true,
+    "currentSourceFinalAssemblyPending": false,
+    "macLockedAtObservation": true,
+    "steamState": "offline",
+    "localInstalledEntryCount": 1,
+    "zeroRemoteEntriesProvesEmptyOwnedLibrary": false,
+    "actualCurrentUIPixelReviewVerified": false,
+    "continuousOnScreenSplashVerified": false,
+    "binaryPredatesLatestPublicMetadataPrefetchAndCatalogRefinements": false,
+    "unbuiltSourceChangesAtCheckpoint": [],
+    "privateFileActualCredentialWriteVerified": false,
+    "historical19397": {
+      "mainThreadSample": "NSApplication run loop idle",
+      "credentialWorkerQueue": "ready.credentials.serial",
+      "credentialWorkerSample": "blocked in SecItemCopyMatching while Mac locked",
+      "mainThreadKeychainBlockClaimed": false
+    },
+    "ownedCountScope": "Cached same-account membership, not a fresh private-file authentication or 495 verified playable base games.",
+    "actualOwnedLibraryPopulationScope": "Cached membership/model data only; current interactive on-screen review is deferred.",
+    "privateSteamTokenFilePresent": false,
+    "newPrivateFileLoginVerified": false,
+    "finalAssemblyInProgressReportedByRoot": false,
+    "binaryPredatesLatestPublicRepairAndArtworkQuality": false,
+    "binaryPredatesPrivateFilePolicy": false,
+    "currentUIPixelReviewDeferredByUser": true,
+    "cachedVisibleLibraryCount": 495,
+    "cachedOwnedMembershipCount": 495,
+    "cachedOwnedMembershipPopulationVerified": true,
+    "freshPrivateFileAuthenticationVerified": false,
+    "steamReason": "not_connected",
+    "currentSourceBuildPassed": true,
+    "actualApplicationRepairPersisted": true
+  },
+  "artworkCache": {
+    "rootSelection": "user preference",
+    "selectedDirectory": "/Volumes/Dati APFS/Ready Cache/Artwork",
+    "defaultDirectoryOverridesAndNormalizedRootChecksPassed": true,
+    "sourceSHA256": "d4f0a56057720782e5c49597d597a546bb72a9ca9e15966c8a56a228ca2aee31",
+    "artworkAssetsBundledInRepository": false
+  },
+  "credentials": {
+    "selectedSteamPolicy": "privateFile",
+    "applicationDomain": "app.ready.launcher",
+    "preferenceKey": "readySteamCredentialStorage",
+    "preferenceValue": "privateFile",
+    "selectedByRootInActualApplicationPreferences": true,
+    "explicitUserConsentReceived": true,
+    "userConsentText": "S\u00ec usa il file privato",
+    "securityTradeoffAcceptedByUser": true,
+    "currentSourcePolicyWired": true,
+    "defaultForOtherStores": "macOS Keychain",
+    "defaultForNewUsersWithoutExplicitPreference": "macOS Keychain",
+    "legacyKeychainEntriesUntouched": true,
+    "automaticKeychainReadOrMigrationOnSelection": false,
+    "keychainFallbackForMissingOrUnsafeFile": false,
+    "privateFileSource": "Sources/M1Launcher/PrivateCredentialFile.swift",
+    "profileFilePattern": "Credentials/<lowercase-profile-UUID>-steam.json under the selected private state root",
+    "privateDirectoryMode": "0700",
+    "privateFileMode": "0600",
+    "steamPasswordsAcceptedInFile": false,
+    "fileStoresRefreshCredentialNotPassword": true,
+    "privateFileSecurityTradeoff": "Permission-protected JSON is not Keychain-encrypted and remains readable to processes with the same user permissions.",
+    "policyFixtureChecks": 18,
+    "filesystemFixtureChecks": 51,
+    "realCredentialMigrationPerformed": false,
+    "realCredentialFileWritesReported": false,
+    "firstSteamLoginMayBeNeeded": true,
+    "automaticQRBeforeUserReadyRequested": false,
+    "currentRunningAppPolicy": "privateFile; Ready25884 offline/not_connected with no token file",
+    "noLegacySteamCredentialKeychainReadInSelectedPolicy": true
+  },
+  "verificationPending": [
+    "Root manual goal-completion audit against final build, cached data repair and appropriate scoped evidence; this checkpoint does not mark the goal complete.",
+    "First real private-file Steam login and saved-token persistence when the user is ready; no automatic Keychain migration/read or automatic QR.",
+    "Interactive on-screen review is explicitly deferred by the user and not invented from copy rendering.",
+    "Password/Steam Guard live mode and any new installation/CDN download/gameplay tests remain separate unperformed scopes."
+  ],
+  "limits": [
+    "495 is a count of unique cached membership records, not certification of 495 playable base games.",
+    "The 30-entry public probe resolved two demos and one DLC; 27 metadata_unavailable results do not prove license denial or missing ownership.",
+    "Standard Steam artwork fallback URLs are unverified candidates and may return 404; no complete real-icon claim is made.",
+    "Rendering an actual-model copy with private captures is separate from CUA interaction with the running user app and performs no user-data writes.",
+    "The cached membership originated in an earlier genuine same-account sync; current file-mode app is offline with no token file and no new login.",
+    "Root reports the final current-source build passed and Ready25884 running; the headless relocation and copy-rendering tests do not establish interactive on-screen acceptance.",
+    "Source-specific fixture dependency mismatches remain explicit; no historical worker suite is relabelled as a current dependency run.",
+    "Hosted game, input and performance testing remain suspended, with no new gameplay or parity claim.",
+    "No screenshots, private owned-title lists, account identifiers, credentials, tickets or raw private diagnostics are added to the repository."
+  ],
+  "sourceHashes": {
+    "Sources/M1Launcher/ArtworkCache.swift": "d4f0a56057720782e5c49597d597a546bb72a9ca9e15966c8a56a228ca2aee31",
+    "Sources/M1Launcher/CanvasDrawing.swift": "67181a6fdaf482f9c3e69c1779819237dbbe730199bf187b9135d336272b87f7",
+    "Sources/M1Launcher/ControllerNavigation.swift": "caac8212a2a05845b3ca48b421178004da2ace4a1e1479dad237fc1f23cb2c80",
+    "Sources/M1Launcher/Credentials.swift": "c831d85ee2dc96f07b74f71c511665f63dad76cd7f0b3f2b59eecd43f31ef7e1",
+    "Sources/M1Launcher/GameArtwork.swift": "138773b901bcf3bb6ae695f39d7c991a4701057d60d558ac7b775fbcb50c325e",
+    "Sources/M1Launcher/GameDetailUI.swift": "c61c338221ad79c5a557228aec031cf6ef2bddc7e89b1006134a4d51dd873822",
+    "Sources/M1Launcher/GameDetailView.swift": "7a9fd30572b90fe00f09eb428e0df09b13a770da824327e66896cd28197fb58a",
+    "Sources/M1Launcher/GameLaunchSplash.swift": "7f3275911692d8434e846209e26689ff8a4f84e481f2a0eda2db79ad862dae19",
+    "Sources/M1Launcher/GameLaunchUI.swift": "586d95e356a09803fe9dfaa1952856dc5bb407839bb0652128e20ee9d3122f1d",
+    "Sources/M1Launcher/MetalCanvas.swift": "2482e28ea388e5d35b843531a862f623ee2f1f2fb94c734024ed763e2f2fa515",
+    "Sources/M1Launcher/PrivateCredentialFile.swift": "ccb853d1c404b61949d50af756ed7b557df6eb0af133c6288a5b4fc342b852db",
+    "Sources/M1Launcher/ReadyPagePresenter.swift": "f0ca10b4334066e605e4f0e54532fc10de5d6b7908d0df7fcf689c7c48e5b644",
+    "Sources/M1Launcher/SteamAccountCoordinator.swift": "033eaf968cb466c02cefb8d4eb20f18e561c79c4527f565f97629b66e12ca2f6",
+    "Sources/M1Launcher/SteamClientSession.swift": "86084c6ad75f51efeb8c85bc0d4d7a0af47c045844b6b39d32fb9fa0ff3cc186",
+    "Sources/M1Launcher/SteamClientUI.swift": "7f95cf888a5722f0255a6de33506ffd3f4148313825e064a6122d72bb049304f",
+    "Sources/M1Launcher/SteamGameAuthorization.swift": "aca79ab1ad68f2a9448f3fbd4a70dfc8d33f26aff99ad30b04f412fc87a7c779",
+    "Sources/M1Launcher/SteamGameLaunch.swift": "43689f7900c87fea57e14a3732957ef0d31d5450de876cb16127cd3d538bf516",
+    "Sources/M1Launcher/SteamLibraryCoordinator.swift": "3b204a901512a6e3f8bc92be6f62e5caebb90e05fefe5a60a936ad38f8582cef",
+    "Sources/M1Launcher/SteamNativeGameSession.swift": "0415d5f8bdc27b20bbecd8d6d269381721aabcba12ac7e4dbf3245119cc182d6",
+    "Sources/M1Launcher/SteamNativeHostProcess.swift": "5c015da90467619be3a905356e4feb4f61d4947d324a524b068cf0af68677058",
+    "Sources/M1Launcher/StoreClient.swift": "84b555cd1e3893142d89fd47540cbf1d5278922453c58352f685e0640b57a57b",
+    "Sources/M1Launcher/main.swift": "a73c9b4c50ecf27de019ea615c1bcb5f790843f05a9d3bcf4bfeb799ec0cfa38",
+    "StoreBridge/SteamBridge/PersistentSteamService.cs": "b06b8b1a5193ca6973ec67cfd814bc07cdca22bf28218d46b62c77c2b155cc03",
+    "StoreBridge/SteamBridge/Program.cs": "0c7cfae2cb27cbbd22384d64f13e29bc13f32a6cb42ed4af117d217fffcd9f72",
+    "StoreBridge/SteamBridge/SteamCatalogMetadata.cs": "9188d1de46a71274580c226404c75c94eeff776db3b4ee85f379128912282010"
+  },
+  "publicMetadataStartupPrefetch": {
+    "implementedInCurrentSource": true,
+    "maximumVisibleSteamEntries": 6,
+    "scope": "First currently visible Steam entries only, after network.start; no bulk catalog enrichment and no ownership/authentication claim.",
+    "actualRunningFrontendVerified": false,
+    "additionalMissingMetadataRepairLimit": 64,
+    "globalMetadataConcurrency": 2,
+    "automaticRetryOnFailure": false
+  },
+  "boundedMissingMetadataProbe": {
+    "actualRequested": 30,
+    "maximumConcurrent": 2,
+    "publicMetadataResolved": 3,
+    "publicMetadataUnresolved": 27,
+    "resolvedWithArtworkURL": 3,
+    "resolvedWithTitle": 3,
+    "resolvedWithVariants": 3,
+    "resolvedContentTypeCounts": {
+      "demo": 2,
+      "dlc": 1
+    },
+    "errorCodeCounts": {
+      "metadata_unavailable": 27
+    },
+    "elapsedSeconds": 5.297552291012835,
+    "privateResponseSHA256": "780dfe86c007524dd5ed8b899c88f615d75d129c73506f84b216129a50671bdd",
+    "componentVersion": "steambridge-888ea8c3a140626c7d4c95ec",
+    "manifestSHA256": "db48c4562e02ffe2b760561a396b51c922fe2dc4d5bfc194bd6767de4c6457f9",
+    "helperSHA256": "f7214e986c8535549c1982da0bd86781cf5ff07a216818bde93b0ab8adab47c9",
+    "orderlyShutdown": true,
+    "credentialsSupplied": false,
+    "steamConnectOrAuthRequested": false,
+    "userLibraryWritten": false,
+    "selectorChanged": false,
+    "newFileLoginProven": false,
+    "accountOwnershipNewlyVerified": false,
+    "receiptSHA256": "e323e1256d63f5730f2849b836f862f0fa718518f5c286355e8ee27f1597bea2",
+    "sourceScope": "Only the 30 cached entries missing every artwork URL; not all 495 entries.",
+    "missingMetadataIsNotLicenseDenial": true,
+    "fallbackCDNAddressesProveAssetExists": false
+  },
+  "cachedLibrary": {
+    "uniqueOwnedMembershipRecords": 495,
+    "windowsRecordCount": 465,
+    "macOSRecordCount": 190,
+    "installedRecordCount": 1,
+    "platformCountsAreNotDisjoint": true,
+    "source": "Genuine same-account CM synchronization cached before/at old Ready19397 shutdown; Root observations and readonly aggregate confirmed.",
+    "newPrivateFileLoginUsed": false,
+    "baseGameCountCertified": false,
+    "initialMissingAllArtworkURLs": 30,
+    "initialNumericFallbackTitles": 27,
+    "initialNoVariantRecords": 45,
+    "publicMetadataUnresolvedInBoundedProbe": 27,
+    "renderedOnActualModelCopy": true,
+    "currentUserAppOnScreenReviewVerified": false,
+    "actualUserLibraryManuallyWrittenByAgents": false,
+    "historicalPreRepairSnapshotSHA256": "3c6d0e39a30b2cca2b58cbc6986718cd52c0ef09d93366c4241e29231875c87b",
+    "numericFallbackTitlesAfterApplicationRepair": 26,
+    "allEntriesHaveCoverOrIconURLCandidate": true,
+    "unverifiedArtworkFallbackRecordCount": 30,
+    "officialContentTypeRecordCount": 16,
+    "repairPerformedAndPersistedByActualApp": true,
+    "manualUserLibraryWritesByAgents": false,
+    "historicalProbeUnavailableCount": 27
+  },
+  "finalFrontendBuild": {
+    "passed": true,
+    "elapsedSecondsReportedByRoot": 32.19,
+    "runningPID": 25884,
+    "currentProductionSourcesIncluded": true,
+    "relocationChecks": 14,
+    "relocationReportSHA256": "e04a77deaab12cab2f03bc433defaaa3ad09c8fde0a68a34c587ffb5f06247bf",
+    "relocationScope": "headless relocated frontend only; no real GPU, game, account, or full-runtime validation",
+    "gamesOrBenchmarksExecuted": false,
+    "interactiveOnScreenReviewDeferredByUser": true
+  }
+}

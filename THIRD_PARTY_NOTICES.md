@@ -17,3 +17,15 @@ Wine 11.20, copyright its Wine/CodeWeavers contributors, is LGPL-2.1-or-later. T
 The source-built dependency generation now has an approved distribution subset of 25 shared libraries/modules from 17 pinned source components, with corresponding source, recipes and notices. The original unverified bootstrap binaries remain excluded from redistribution. This subset does not approve every component or a complete application release; see `Docs/DISTRIBUTION.md` for the remaining gates. Runtime binaries remain outside this repository.
 
 Source-only acquisition is additionally pinned by `Scripts/runtime_fetch_renderer_sources.lock.json` and `Scripts/runtime_core_sources.lock.json`. Retained source packets include upstream license texts and per-file notices, including LLVM's Apache-2.0/LLVM-exception material, Wine's LGPL and third-party notices, and separate dataset/CRT/font terms for review. These upstream files are not relicensed under ready's GPL. The corresponding provenance documents distinguish exact retained source bytes, publisher release/tag association and still-unverified historical static/binary-build inputs; source acquisition alone grants no new distribution approval.
+
+
+Steam catalog artwork, icons, logos, screenshots/backgrounds and descriptive
+store content are Valve or the respective publishers’ content. Ready obtains
+public metadata and offered CDN URLs at runtime; it does not bundle these assets
+or game binaries in this source repository. Any local runtime artwork cache is
+excluded from the source distribution. This content is not relicensed under
+Ready’s GPL and is not represented as open source. See [Steam’s library asset
+documentation](https://partner.steamgames.com/doc/store/assets/libraryassets)
+and [Steam’s Subscriber Agreement](https://store.steampowered.com/subscriber_agreement/).
+The catalog UI’s use of Steam metadata does not establish a right to redistribute
+third-party assets or imply Valve/publisher endorsement.

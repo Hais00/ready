@@ -126,6 +126,10 @@ static class PersistentSteamServiceChecks
             Check(s.Transport.Activity.Length==0,"stopped-game-clears-Steam-activity");
             string library=s.Send("library");await s.Done(library);
             Check(s.Terminal(library).GetProperty("games")[0].GetProperty("storeID").GetString()=="480"&&s.Terminal(library).GetProperty("gameCount").GetInt32()==1,"library-compatible-games-terminal-result");
+            string paged=s.Send("library",new{paged=true});await s.Done(paged);
+            var page=s.Output.Events.Single(e=>S(e,"id")==paged&&S(e,"type")=="library_page");
+            Check(page.GetProperty("pageIndex").GetInt32()==0&&page.GetProperty("games")[0].GetProperty("storeID").GetString()=="480"&&s.Terminal(paged).GetProperty("gameCount").GetInt32()==1&&s.Terminal(paged).GetProperty("pageCount").GetInt32()==1&&!s.Terminal(paged).TryGetProperty("games",out _),"paged-library-nonterminal-page-terminal-counts");
+            string invalidPaged=s.Send("library",new{paged="true"});await s.Done(invalidPaged);Check(S(s.Terminal(invalidPaged),"code")=="invalid_request","paged-library-requires-strict-bool");
             await Until(()=>s.Output.Events.Any(e=>S(e,"type")=="heartbeat"));
             var events=s.Output.Events;Check(events.Select(e=>e.GetProperty("sequence").GetInt64()).SequenceEqual(Enumerable.Range(1,events.Length).Select(n=>(long)n))&&events.All(e=>S(e,"profileID")==Profile&&S(e,"profileGeneration")==Generation),"all-events-monotonic-sequence-profile-generation");
             Check(events.All(e=>!e.TryGetProperty("credentials",out _))&&!s.Output.ToString().Contains(Secret),"saved-refresh-not-echoed-or-diagnostic");

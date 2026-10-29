@@ -23,6 +23,7 @@ final class SteamAccountCoordinator {
     var revision: UUID?
     var request: UUID?
     var expected: UInt64?
+    var checking = false
     var subscribers = [UUID: Event]()
     init(_ generation: UUID, expected: UInt64?) { self.generation = generation; self.expected = expected }
   }
@@ -73,42 +74,40 @@ final class SteamAccountCoordinator {
       if let qr = flight.qr { event(qr) }
       return id
     }
-    if !force && !rejected.contains(profile) && client.steamCredentialStatus(profile: profile) == .available {
-      active.insert(id)
-      let current = generation(profile)
-      DispatchQueue.main.async { [weak self] in
-        self?.terminal([id: event], profile: profile, generation: current,
-                       value: ["type": "result", "accountConnected": true, "reusedStoredAccount": true])
-      }
-      return id
-    }
     if force { cancel(profile: profile) }
     active.insert(id)
     let flight = AuthFlight(generation(profile)); flight.subscribers[id] = event; auth[profile] = flight
-    flight.request = client.request(operation: "auth_begin", store: .steam, profile: profile) { [weak self, weak flight] value in
-      DispatchQueue.main.async { [weak self, weak flight] in
-        guard let self, let flight, self.auth[profile] === flight,
-          self.generations[profile] == flight.generation else { return }
-        switch value["type"] as? String {
-        case "qr":
-          guard let url = value["url"] as? String, let parsed = URL(string: url), parsed.scheme == "https", parsed.host != nil else {
-            if let request = flight.request { self.client.cancel(request) }
-            self.endAuthentication(profile, flight: flight, value: self.failure("invalid_qr")); return
+    client.inspectSteamCredential(profile:profile) { [weak self, weak flight] status, _ in
+      MainActor.assumeIsolated {
+        guard let self,let flight,self.auth[profile] === flight,self.generations[profile] == flight.generation else{return}
+        if !force && !self.rejected.contains(profile) && status == .available {
+          self.endAuthentication(profile,flight:flight,value:["type":"result","accountConnected":true,"reusedStoredAccount":true]);return
+        }
+        flight.request = self.client.request(operation: "auth_begin", store: .steam, profile: profile) { [weak self, weak flight] value in
+          DispatchQueue.main.async {
+            guard let self, let flight, self.auth[profile] === flight, self.generations[profile] == flight.generation else { return }
+            switch value["type"] as? String {
+            case "qr":
+              guard let url = value["url"] as? String, let parsed = URL(string:url), parsed.scheme == "https", parsed.host != nil else {
+                if let request=flight.request {self.client.cancel(request)}
+                self.endAuthentication(profile,flight:flight,value:self.failure("invalid_qr"));return
+              }
+              let qr:[String:Any]=["type":"qr","url":url];flight.qr=qr
+              self.progress(flight.subscribers,profile:profile,generation:flight.generation,value:qr)
+            case "result":
+              self.client.inspectSteamCredential(profile:profile) { [weak self, weak flight] status, _ in
+                MainActor.assumeIsolated {
+                  guard let self,let flight,self.auth[profile] === flight,self.generations[profile] == flight.generation else{return}
+                  guard status == .available else {self.endAuthentication(profile,flight:flight,value:self.failure("authentication_required"));return}
+                  self.rejected.remove(profile);self.prompted.removeValue(forKey:profile);self.identities.removeValue(forKey:profile)
+                  self.endAuthentication(profile,flight:flight,value:["type":"result","accountConnected":true,"reusedStoredAccount":false])
+                  for(key,game)in self.games where key.profile==profile && game.request==nil {self.start(key,flight:game)}
+                }
+              }
+            case "error":self.endAuthentication(profile,flight:flight,value:self.failure(self.safeCode(value)))
+            default:break
+            }
           }
-          let qr: [String: Any] = ["type": "qr", "url": url]
-          flight.qr = qr
-          self.progress(flight.subscribers, profile: profile, generation: flight.generation, value: qr)
-        case "result":
-          guard self.client.steamCredentialStatus(profile: profile) == .available else {
-            self.endAuthentication(profile, flight: flight, value: self.failure("authentication_required")); return
-          }
-          self.rejected.remove(profile); self.prompted.removeValue(forKey: profile); self.identities.removeValue(forKey: profile)
-          self.endAuthentication(profile, flight: flight, value: ["type": "result", "accountConnected": true, "reusedStoredAccount": false])
-          for (key, game) in self.games where key.profile == profile && game.request == nil {
-            self.start(key, flight: game)
-          }
-        case "error": self.endAuthentication(profile, flight: flight, value: self.failure(self.safeCode(value)))
-        default: break
         }
       }
     }
@@ -144,41 +143,40 @@ final class SteamAccountCoordinator {
     return id
   }
   private func start(_ key: Key, flight: GameFlight) {
-    guard games[key] === flight, flight.request == nil, auth[key.profile] == nil else { return }
-    guard !rejected.contains(key.profile), client.steamCredentialStatus(profile: key.profile) == .available,
-      let revision = client.steamCredentialRevision(profile: key.profile) else {
-      requireAuthentication(key.profile, flight: flight); return
-    }
-    flight.revision = revision
-    if let binding = identities[key.profile], binding.0 == revision {
-      if let expected = flight.expected, expected != binding.1 {
-        endGame(key, flight: flight, value: failure("identity_mismatch")); return
-      }
-      flight.expected = binding.1
-    }
-    flight.request = client.request(operation: "authorize_game", store: .steam, profile: key.profile,
-                                     options: ["gameID": String(key.app)]) { [weak self, weak flight] value in
-      DispatchQueue.main.async { [weak self, weak flight] in
-        guard let self, let flight, self.games[key] === flight,
-          self.generations[key.profile] == flight.generation else { return }
-        if value["type"] as? String == "result" {
-          guard self.client.steamCredentialRevision(profile: key.profile) == flight.revision,
-            Self.trueValue(value["authorized"]), Self.trueValue(value["ownershipTicketReceived"]),
-            let app = Self.number(value["appID"]), app == UInt64(key.app),
-            let identity = Self.individual(value["steamID"]), flight.expected == nil || flight.expected == identity else {
-            self.endGame(key, flight: flight, value: self.failure("invalid_authorization")); return
+    guard games[key] === flight, flight.request == nil, !flight.checking, auth[key.profile] == nil else { return }
+    guard !rejected.contains(key.profile) else {requireAuthentication(key.profile,flight:flight);return}
+    flight.checking = true
+    client.inspectSteamCredential(profile:key.profile) { [weak self,weak flight] status, revision in
+      MainActor.assumeIsolated {
+        guard let self,let flight,self.games[key] === flight,self.generations[key.profile] == flight.generation else{return}
+        flight.checking=false
+        guard status == .available,let revision else {self.requireAuthentication(key.profile,flight:flight);return}
+        flight.revision=revision
+        if let binding=self.identities[key.profile],binding.0==revision {
+          if let expected=flight.expected,expected != binding.1 {self.endGame(key,flight:flight,value:self.failure("identity_mismatch"));return}
+          flight.expected=binding.1
+        }
+        flight.request=self.client.request(operation:"authorize_game",store:.steam,profile:key.profile,options:["gameID":String(key.app)]) { [weak self,weak flight] value in
+          DispatchQueue.main.async {
+            guard let self,let flight,self.games[key] === flight,self.generations[key.profile] == flight.generation else{return}
+            if value["type"] as? String == "result" {
+              self.client.inspectSteamCredential(profile:key.profile) { [weak self,weak flight] status,currentRevision in
+                MainActor.assumeIsolated {
+                  guard let self,let flight,self.games[key] === flight,self.generations[key.profile] == flight.generation else{return}
+                  guard status == .available,currentRevision==flight.revision,
+                    Self.trueValue(value["authorized"]),Self.trueValue(value["ownershipTicketReceived"]),
+                    let app=Self.number(value["appID"]),app==UInt64(key.app),let identity=Self.individual(value["steamID"]),
+                    flight.expected==nil || flight.expected==identity else {self.endGame(key,flight:flight,value:self.failure("invalid_authorization"));return}
+                  self.identities[key.profile]=(revision,identity)
+                  self.endGame(key,flight:flight,value:["type":"result","authorized":true,"ownershipTicketReceived":true,"appID":key.app,"steamID":String(identity),"credentialRevision":revision.uuidString,"backendSessionReady":false])
+                }
+              }
+            } else if value["type"] as? String == "error" {
+              if StoreClient.isSteamAuthenticationRejection(value) {
+                self.rejected.insert(key.profile);flight.request=nil;self.requireAuthentication(key.profile,flight:flight)
+              } else {self.endGame(key,flight:flight,value:self.failure(self.safeCode(value)))}
+            }
           }
-          self.identities[key.profile] = (revision, identity)
-          self.endGame(key, flight: flight, value: ["type":"result", "authorized":true,
-            "ownershipTicketReceived":true, "appID":key.app, "steamID":String(identity),
-            "credentialRevision":revision.uuidString, "backendSessionReady":false])
-        } else if value["type"] as? String == "error" {
-          let code = self.safeCode(value)
-          let exactRejection = StoreClient.isSteamAuthenticationRejection(value)
-          if exactRejection {
-            self.rejected.insert(key.profile); flight.request = nil
-            self.requireAuthentication(key.profile, flight: flight)
-          } else { self.endGame(key, flight: flight, value: self.failure(code)) }
         }
       }
     }

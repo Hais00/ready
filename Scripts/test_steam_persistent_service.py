@@ -22,7 +22,7 @@ def run():
     fixture=ROOT/'Synthetic/PersistentSteamServiceChecks.cs'
     tools.copy_file(fixture,project/fixture.name)
     original=build/'source/StoreBridge/SteamBridge'
-    (project/'Checks.csproj').write_text(f'''<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><InvariantGlobalization>true</InvariantGlobalization><StartupObject>PersistentSteamServiceChecks</StartupObject></PropertyGroup><ItemGroup><Compile Include="{original}/Program.cs"/><Compile Include="{original}/PersistentSteamService.cs"/><ProjectReference Include="{build}/source/Vendor/steamkit/SteamKit2/SteamKit2/SteamKit2.csproj"/></ItemGroup></Project>\n''')
+    (project/'Checks.csproj').write_text(f'''<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><InvariantGlobalization>true</InvariantGlobalization><StartupObject>PersistentSteamServiceChecks</StartupObject></PropertyGroup><ItemGroup><Compile Include="{original}/Program.cs"/><Compile Include="{original}/PersistentSteamService.cs"/><Compile Include="{original}/SteamCatalogMetadata.cs"/><ProjectReference Include="{build}/source/Vendor/steamkit/SteamKit2/SteamKit2/SteamKit2.csproj"/></ItemGroup></Project>\n''')
     env={k:v for k,v in os.environ.items()if not k.startswith(('READY_','DYLD_','Steam','STEAM','SB_'))}
     env.update(DOTNET_ROOT=str(sdk),DOTNET_CLI_HOME=str(build/'home'),NUGET_PACKAGES=str(build/'nuget'),DOTNET_CLI_TELEMETRY_OPTOUT='1',DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1',DOTNET_EnableDiagnostics='0',TMPDIR=str(WORK/'tmp')+'/',MSBUILDDISABLENODEREUSE='1',DOTNET_MULTILEVEL_LOOKUP='0')
     output=build/'fixture-output'
@@ -68,7 +68,7 @@ def run():
     one_shot=subprocess.run([*guarded,str(runtime),str(dll)],input='{"operation":"self_test"}\n',env=env,capture_output=True,text=True,timeout=20)
     assert one_shot.returncode==0 and json.loads(one_shot.stdout)['type']=='result'
     report['checks']['one-shot-self-test-backward-compatible']=True;report['checkCount']=len(report['checks'])
-    report.update(candidate=result,sourceHashes={str(p.relative_to(ROOT)):sha(p)for p in [ROOT/'StoreBridge/SteamBridge/Program.cs',ROOT/'StoreBridge/SteamBridge/PersistentSteamService.cs',ROOT/'Scripts/store_steam_tools.py',fixture,pathlib.Path(__file__)]},actualServiceNetworkDenied=True,oneShotBackwardCompatible=True,realAuthenticationAttempted=False)
+    report.update(candidate=result,sourceHashes={str(p.relative_to(ROOT)):sha(p)for p in [ROOT/'StoreBridge/SteamBridge/Program.cs',ROOT/'StoreBridge/SteamBridge/PersistentSteamService.cs',ROOT/'StoreBridge/SteamBridge/SteamCatalogMetadata.cs',ROOT/'Scripts/store_steam_tools.py',fixture,pathlib.Path(__file__)]},actualServiceNetworkDenied=True,oneShotBackwardCompatible=True,realAuthenticationAttempted=False)
     target=ROOT/'Evidence/steam-persistent-service-tests.json';target.write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report,indent=2))
 

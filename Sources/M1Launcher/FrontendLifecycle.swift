@@ -5,6 +5,7 @@ import LauncherCore
 extension AppDelegate {
   func restoreLauncher(_ message: String) {
     MainActor.assumeIsolated {
+      finishLaunchSplash()
       // A cancelled fullscreen transition may still be pending before active
       // becomes true. stop() is idempotent and clears that preparation too.
       hostedPresentation?.stop()

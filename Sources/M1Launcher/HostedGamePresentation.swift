@@ -140,11 +140,12 @@ import QuartzCore
   private var fullscreenTransitioning=false
   private var diagnostics:URL?
   private var onFailure:((Error)->Void)?
+  private var onFirstFrame:(()->Void)?
   private var captureFacts=[String:Any]()
   private var previousCanvasInteraction:Bool?
   var active:Bool { handle != nil }
-  init(window:NSWindow,canvas:MetalCanvas,placement:HostedWindowPlacement,onFailure:((Error)->Void)?=nil){
-    self.window=window;self.canvas=canvas;self.placement=placement;self.onFailure=onFailure
+  init(window:NSWindow,canvas:MetalCanvas,placement:HostedWindowPlacement,onFailure:((Error)->Void)?=nil,onFirstFrame:(()->Void)?=nil){
+    self.window=window;self.canvas=canvas;self.placement=placement;self.onFailure=onFailure;self.onFirstFrame=onFirstFrame
   }
 
   func prepare(executable:URL,shim:URL,diagnostics:URL,metalHUD:Bool,exclusive:Bool=false,
@@ -230,6 +231,7 @@ import QuartzCore
   private func firstFrame(){
     guard isLoading,handle != nil else{return}
     isLoading=false
+    onFirstFrame?();onFirstFrame=nil
     if let canvas,canvas.superview === hostView{canvas.removeFromSuperview()}
     if let hostView{window?.makeFirstResponder(hostView)}
     let generation=transitionGeneration
@@ -360,7 +362,8 @@ extension AppDelegate {
       let placement=hostedWindowPlacement ?? HostedWindowPlacement(window:window)
       hostedWindowPlacement=placement
       let controller=HostedGamePresentationController(window:window,canvas:canvas,placement:placement,
-        onFailure:{[weak self] error in self?.showError(error);self?.session?.quit()})
+        onFailure:{[weak self] error in self?.showError(error);self?.session?.quit()},
+        onFirstFrame:{[weak self]in self?.finishLaunchSplash()})
       hostedPresentation=controller
       let shim:URL
       if let index=args.firstIndex(of:"--host-game-shim"),args.indices.contains(index+1),args[index+1].hasPrefix("/") {

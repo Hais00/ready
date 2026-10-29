@@ -4,7 +4,7 @@ import LauncherCore
 
 extension AppDelegate {
   @MainActor private func steamPreparationMessage(_ message:String) {
-    canvas?.message=message
+    canvas?.message=launchSplash != nil ? "Caricamento":message
     // A background terminal callback must not recreate GPU work during play.
     if session?.running != true{canvas?.refresh()}
   }
@@ -113,13 +113,14 @@ extension AppDelegate {
       steamLaunchCancellation = { [weak self] in
         if self?.pendingLaunch == launchID {
           self?.pendingLaunch = nil; self?.steamPreparationID = nil
-          self?.steamPreparationMessage("Preparazione Steam annullata.")
+          self?.finishLaunchSplash()
+          self?.steamPreparationMessage("Avvio annullato.")
         }
       }
       showSteamAccount()
       return
     }
-    let authorization = SteamGameAuthorization(network: network, credentialAccess: .keychain(stateRoot: paths.root))
+    let authorization = SteamGameAuthorization(network: network, credentialAccess: .persistent(stateRoot: paths.root))
     steamGameAuthorization?.cancel(); steamGameAuthorization = authorization
     steamPreparationMessage("Verifica della licenza Steam…")
     authorization.prepare(profile: profile, gameID: game.storeID) { [weak self, weak authorization] result in

@@ -76,6 +76,9 @@ final class SteamNativeHostProcess: @unchecked Sendable {
     }
     fileprivate func path(_ name: String) -> String { assets[name]!.path }
   }
+  // Trusted in-process lifecycle boundary, never decoded from a binding or store
+  // response. Asset hashing/preparation finish before this closure is entered.
+  typealias SpawnAdmission = (SteamNativeHostProcess, () throws -> Void) throws -> Void
   typealias EventHandler = @MainActor ([String: Any]) -> Void
   typealias ExitHandler = @MainActor (Exit) -> Void
   private let guardian=DispatchQueue(label:"ready.steam.native.guardian")
@@ -136,7 +139,8 @@ final class SteamNativeHostProcess: @unchecked Sendable {
   /// credential revision have been checked by the account coordinator.
   static func spawn(binding:Binding, credentialPacket:inout Data, profile:UUID, sessionID:UUID,
                     gameID:UInt32, profileStateRoot:URL, mode:Mode = .credentials,
-                    onEvent:@escaping EventHandler, onExit:@escaping ExitHandler) throws -> SteamNativeHostProcess {
+                    onEvent:@escaping EventHandler, onExit:@escaping ExitHandler,
+                    admit:SpawnAdmission? = nil) throws -> SteamNativeHostProcess {
     defer { credentialPacket.resetBytes(in:0..<credentialPacket.count); credentialPacket.removeAll(keepingCapacity:false) }
     try validatePacket(credentialPacket,gameID:gameID,mode:mode)
     try binding.revalidate()
@@ -165,11 +169,21 @@ final class SteamNativeHostProcess: @unchecked Sendable {
       "gameHealthTransport":"anonymous-fifo-EOF","gameHealthChildWriterFD":4]
     try writePrivate(try JSONSerialization.data(withJSONObject:receipt,options:[.sortedKeys]),to:instance.receiptURL)
     var packet=credentialPacket.withUnsafeBytes { Data(bytes:$0.baseAddress!,count:$0.count) }
+    var launched=false
     do {
-      try instance.start(policyURL:policyURL,client:client,cache:cache,temporary:temporary,mode:mode)
+      let launch = {
+        guard !launched else{throw Failure.invalidStateRoot}
+        try instance.start(policyURL:policyURL,client:client,cache:cache,temporary:temporary,mode:mode)
+        launched=true
+      }
+      if let admit {try admit(instance,launch)}else{try launch()}
+      guard launched else{throw Failure.invalidStateRoot}
       instance.send(&packet)
       return instance
-    } catch { packet.resetBytes(in:0..<packet.count); packet.removeAll(); throw error }
+    } catch {
+      if launched{instance.stop()}
+      packet.resetBytes(in:0..<packet.count);packet.removeAll();throw error
+    }
   }
   private static func validatePacket(_ packet:Data,gameID:UInt32,mode:Mode) throws {
     guard packet.count>=30,packet.count<=8284,packet.prefix(8)==Data("RDYAUTH1".utf8),gameID>0 else { throw Failure.invalidPacket }

@@ -11,7 +11,7 @@ def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 def main():
     products,modules,archive=prepare_core()
     run=pathlib.Path(tempfile.mkdtemp(prefix='store-tools-location-',dir=WORK/'tests'));run.chmod(0o700)
-    sources=[ROOT/p for p in ['Sources/LauncherCore/StoreToolsLocation.swift','Sources/M1Launcher/StoreClient.swift','Sources/M1Launcher/Credentials.swift','Sources/M1Launcher/SteamClientSession.swift','Sources/M1Launcher/SteamNativeHostSelection.swift','Sources/M1Launcher/SteamNativeHostProcess.swift','Synthetic/ReadyStoreToolsLocationProbe.swift','Scripts/test_store_tools_location.py']]
+    sources=[ROOT/p for p in ['Sources/LauncherCore/StoreToolsLocation.swift','Sources/M1Launcher/StoreClient.swift','Sources/M1Launcher/Credentials.swift','Sources/M1Launcher/PrivateCredentialFile.swift','Sources/M1Launcher/SteamClientSession.swift','Sources/M1Launcher/SteamNativeHostSelection.swift','Sources/M1Launcher/SteamNativeHostProcess.swift','Synthetic/ReadyStoreToolsLocationProbe.swift','Scripts/test_store_tools_location.py']]
     before={str(p.relative_to(ROOT)):sha(p)for p in sources}
     compiled=[p for p in sources if p.suffix=='.swift'and p.parent.name!='LauncherCore']
     binary=run/'probe'

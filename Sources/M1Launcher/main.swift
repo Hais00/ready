@@ -26,6 +26,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   var steamGuardChallenge: String?
   var steamDownloads: SteamDownloads?
   var steamDownloadsView: SteamDownloadsView?
+  var steamLibrary: SteamLibraryCoordinator?
+  var gameDetailView: GameDetailView?
+  var gameDetailID: String?
+  var launchSplash: GameLaunchSplash?
+  var launchSplashID: UUID?
+  var launchReturnGame: (id:String,profile:UUID)?
   var steamGameAuthorization: SteamGameAuthorization?
   var steamNativeGame: SteamNativeGameSession?
   var hostedPresentation:HostedGamePresentationController?
@@ -176,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   func windowWillClose(_ notification: Notification) {
     if (notification.object as? NSWindow) === window {
       MainActor.assumeIsolated {
+        finishLaunchSplash()
         hostedPresentation?.stop(preserveFullscreen:false)
         hostedWindowPlacement?.restore();hostedWindowPlacement=nil
       }
@@ -189,6 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   }
   func applicationWillTerminate(_ notification: Notification) {
     MainActor.assumeIsolated {
+      finishLaunchSplash()
       hostedPresentation?.stop(preserveFullscreen:false)
       hostedWindowPlacement?.restore();hostedWindowPlacement=nil
     }
@@ -245,7 +253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     pageNavigationTransition = false
     MainActor.assumeIsolated { cancelSteamGamePreparation() }
     MainActor.assumeIsolated { steamDownloads?.stop() }
-    MainActor.assumeIsolated { steamNetwork?.stop() }
+    MainActor.assumeIsolated { steamLibrary?.stop(); steamLibrary=nil; steamNetwork?.stop() }
     return .terminateNow
   }
   func windowDidResize(_ notification: Notification) {
@@ -266,7 +274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   }
   // Called only at initial startup or while every session/store operation is idle.
   func configureRuntimeClients() {
-    MainActor.assumeIsolated { steamNetwork?.stop(); steamNetwork = nil }
+    MainActor.assumeIsolated { steamLibrary?.stop(); steamLibrary=nil; steamNetwork?.stop(); steamNetwork = nil }
     session = SessionManager(paths: paths, project: project, runtimeRoot: runtimeRoot)
     session.preparePresentation = {[weak self] game,variant,sessionID,completion in
       guard let self else{completion(.failure(LauncherError.failed("Finestra del launcher non disponibile.")));return}
@@ -297,6 +305,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       self?.steamNativeGame?.stop(); self?.steamNativeGame = nil
       self?.restoreLauncher(message)
       self?.dialogs.attach()
+      if let self,let destination=self.launchReturnGame {
+        self.launchReturnGame=nil
+        if self.state.activeProfile==destination.profile {
+          MainActor.assumeIsolated { self.showGameDetails(id:destination.id) }
+        }
+      }
     }
     MainActor.assumeIsolated {
       if let steamAccounts { for profile in state.profiles { steamAccounts.cancel(profile: profile.id) } }
@@ -360,7 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   func action(_ action: CanvasAction) {
     guard !maintenanceInProgress, !dialogs.isPresenting else { return }
     switch action {
-    case .game(let id): activateGame(id)
+    case .game(let id): MainActor.assumeIsolated { showGameDetails(id: id) }
     case .gameOptions(let id): gameOptions(id)
     case .store(let store):
       navigateToLibrary(store: store)
@@ -683,14 +697,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     PEImports.annotate(&game, variant: variant)
     let profile = state.activeProfile
     let launchID = UUID()
+    launchReturnGame=nil
     pendingLaunch = launchID
+    MainActor.assumeIsolated { showLaunchSplash(game: game, variant: variant, launchID: launchID) }
     var steamLease: SteamGameSessionLease?
     let launch: ([String], [String: String]) -> Void = {
       [weak self] extraArguments, extraEnvironment in
       guard let self else { return }
       guard self.pendingLaunch == launchID else { return }
       self.pendingLaunch = nil
-      self.canvas.message = "Avvio di \(game.title)…"
+      self.canvas.message = "Caricamento"
       self.canvas.refresh()
       self.session.start(
         game: game, variant: variant, profile: profile, launchArguments: extraArguments,
@@ -699,6 +715,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard let self else { return }
         switch result {
         case .success:
+          MainActor.assumeIsolated {
+            if self.hostedPresentation?.active != true { self.finishLaunchSplash() }
+          }
           self.canvas.message = "In esecuzione · " + game.title
           // SessionManager already detached the canvas. Do not redraw it here.
           if let i = self.state.games.firstIndex(where: { $0.id == game.id }) {
@@ -710,6 +729,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
           self.window.contentView = self.canvas
           self.canvas.resumeGraphics()
           self.window.makeKeyAndOrderFront(nil)
+          if let destination=self.launchReturnGame,destination.id==game.id,destination.profile==profile {
+            self.launchReturnGame=nil
+            MainActor.assumeIsolated {
+              self.finishLaunchSplash()
+              if self.state.activeProfile==profile{self.showGameDetails(id:game.id)}
+            }
+            return
+          }
+          MainActor.assumeIsolated { self.resumeLaunchSplash() }
           self.showError(error)
         }
       }
@@ -722,7 +750,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
       }
     } else if game.store == .epic {
-      canvas.message = "Preparazione accesso Epic…"
+      canvas.message = "Caricamento"
       canvas.refresh()
       let options: [String: Any] = [
         "gameID": game.storeID, "platform": variant.platform.rawValue,
@@ -942,6 +970,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     ) { _ in }
   }
   func syncStore(_ store: Store, profile: UUID) {
+    if store == .steam {
+      guard profile == state.activeProfile else { return }
+      MainActor.assumeIsolated { syncSteamLibrary() }
+      return
+    }
     canvas.message = "Sincronizzazione \(store.title)…"
     canvas.refresh()
     let receive: ([String:Any])->Void = { [weak self] event in
@@ -982,8 +1015,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       MainActor.assumeIsolated { requestSteamLibrary(profile:profile,event:receive) }
     } else { storeClient.request(operation:"library",store:store,profile:profile,event:receive) }
   }
-  func installGame(index: Int, variant: GameVariant) {
-    guard !maintenanceInProgress else { return }
+  func installGame(index: Int, variant: GameVariant, showDownloads: Bool = true) {
+    guard !maintenanceInProgress, state.games.indices.contains(index) else { return }
     let profile = state.activeProfile
     let game = state.games[index]
     if game.store == .steam {
@@ -994,7 +1027,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard FileManager.default.fileExists(atPath:volume.path)else{showError(LauncherError.unavailable("Collega il disco Dati APFS per installare i giochi."));return}
         let target=URL(fileURLWithPath:external).appendingPathComponent("Steam/\(SafePath.component(game.storeID))/\(variant.platform.rawValue)")
         steamDownloads?.enqueue(game:game,variant:variant,installation:target)
-        showSteamDownloads()
+        if showDownloads { showSteamDownloads() }
       }
       return
     }
@@ -1019,12 +1052,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       guard let self else { return }
       switch event["type"] as? String {
       case "error":
+        MainActor.assumeIsolated { if self.state.activeProfile == profile && self.gameDetailID == game.id { self.gameDetailView?.setTransferStatus(nil) } }
         self.showError(LauncherError.failed(event["message"] as? String ?? "Download non riuscito"))
       case "progress":
         self.canvas.message =
           "Download \(game.title) · \(event["message"] as? String ?? "in corso")"
         self.canvas.refresh()
+        if self.state.activeProfile == profile && self.gameDetailID == game.id {
+          MainActor.assumeIsolated { self.gameDetailView?.setTransferStatus(event["message"] as? String ?? "Download in corso", fraction:event["fraction"] as? Double) }
+        }
       case "result":
+        MainActor.assumeIsolated { if self.state.activeProfile == profile && self.gameDetailID == game.id { self.gameDetailView?.setTransferStatus(nil) } }
         if let raw = event["installedVariant"] as? [String: Any],
           let data = try? JSONSerialization.data(withJSONObject: raw),
           var installed = try? JSONDecoder().decode(GameVariant.self, from: data),
@@ -1115,13 +1153,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         switch action {
         case .move(let direction):
-          let delta = direction == .left || direction == .up ? -1 : 1
-          self.canvas.selected = ControllerNavigation.movedSelection(
-            self.canvas.selected, count: self.canvas.visibleGames.count, delta: delta)
+          self.canvas.moveLibrarySelection(direction)
           self.canvas.refresh()
         case .activate:
           if self.canvas.visibleGames.indices.contains(self.canvas.selected) {
-            self.activateGame(self.canvas.visibleGames[self.canvas.selected].id)
+            MainActor.assumeIsolated { self.showGameDetails(id:self.canvas.visibleGames[self.canvas.selected].id) }
           }
         case .cancel:
           self.canvas.filter = nil
@@ -1192,6 +1228,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         backgroundNotices.append(message)
         if backgroundNotices.count > 8 { backgroundNotices.removeFirst() }
       }
+      return
+    }
+    if let splash = launchSplash {
+      MainActor.assumeIsolated { resumeLaunchSplash() }
+      splash.showError(error.localizedDescription)
       return
     }
     if pages.isPresenting { pages.showNotice(error.localizedDescription); return }

@@ -17,22 +17,29 @@ final class SteamGameAuthorizationGrant: CustomStringConvertible, CustomDebugStr
   let steamID: String
   private var packet: NSMutableData?
   private let valid: () -> Bool
+  private let validateCredential: (@escaping (Bool) -> Void) -> Void
+  private var consuming = false
   private let deadline: TimeInterval
   private let uptime: () -> TimeInterval
 
   fileprivate init(profile: UUID, gameID: UInt32, steamID: String, packet: NSMutableData, valid: @escaping () -> Bool,
-                   uptime: @escaping () -> TimeInterval, lifetime: TimeInterval) {
+                   validateCredential: @escaping (@escaping (Bool) -> Void) -> Void, uptime: @escaping () -> TimeInterval, lifetime: TimeInterval) {
     self.profile = profile; self.gameID = gameID; self.steamID = steamID
-    self.packet = packet; self.valid = valid; self.uptime = uptime
+    self.packet = packet; self.valid = valid; self.validateCredential = validateCredential; self.uptime = uptime
     deadline = uptime() + lifetime
   }
   /// The caller must use only a private anonymous pipe and clear its returned
   /// Data after handing it off. Every attempt consumes and erases this grant.
-  func consume() throws -> Data {
-    guard let packet else { throw SteamGameAuthorization.Failure.consumed }
-    defer { invalidate() }
-    guard uptime() < deadline, valid() else { throw SteamGameAuthorization.Failure.stale }
-    return Data(bytes: packet.bytes, count: packet.length)
+  func consume(completion: @escaping (Result<Data, SteamGameAuthorization.Failure>) -> Void) {
+    guard packet != nil, !consuming else { completion(.failure(.consumed)); return }
+    consuming = true
+    guard uptime() < deadline, valid() else { invalidate(); completion(.failure(.stale)); return }
+    validateCredential { [self] matches in
+      guard let packet else { completion(.failure(.stale)); return }
+      defer { invalidate() }
+      guard matches, uptime() < deadline, valid() else { completion(.failure(.stale)); return }
+      completion(.success(Data(bytes: packet.bytes, count: packet.length)))
+    }
   }
   fileprivate func invalidate() {
     if let packet { packet.resetBytes(in: NSRange(location: 0, length: packet.length)); packet.length = 0 }
@@ -125,97 +132,86 @@ final class SteamGameAuthorization {
 
   @discardableResult
   func prepare(profile: UUID, gameID: String, completion: @escaping Completion) -> String {
-    let attempt = cancelPending()
-    let fallback = UUID().uuidString
-    // Cancellation completions can themselves start a newer preparation.
-    guard revision == attempt else { completion(.failure(.cancelled)); return fallback }
-    lastFailureDetail=nil
-    let initialSource=credentialAccess.load(profile,.steam)
-    let initialAccount=initialSource.flatMap{try? JSONSerialization.jsonObject(with:$0)as?[String:Any]}?["username"]as?String
-    let initialVaultMatches=CredentialVault.steamStatus(initialSource) == .available &&
-      initialAccount?.caseInsensitiveCompare(network.state.accountName) == .orderedSame
-    let initialDetail=FailureDetail(code:"invalid_request",steamResult:network.state.steamResult,epochMatches:network.profile==profile,stateOnline:network.state.online,
-      vaultMatches:initialVaultMatches,appMatched:nil,identityMatched:nil,ticketReported:nil)
+    let attempt = cancelPending(), token = UUID().uuidString
+    guard revision == attempt else { completion(.failure(.cancelled)); return token }
+    lastFailureDetail = nil; pendingCompletion = completion
+    guard network.profile == profile else { pendingCompletion=nil;completion(.failure(.unavailable));return token }
     guard let app = Self.number(gameID), app > 0, app < UInt64(UInt32.max) else {
-      lastFailureDetail=initialDetail
-      completion(.failure(.invalidRequest)); return fallback
+      pendingCompletion = nil; completion(.failure(.invalidRequest)); return token
     }
-    guard network.profile == profile, network.state.online,
-      let identity = Self.individual(network.state.steamID),
-      let source = initialSource, CredentialVault.steamStatus(source) == .available,
-      let credentials = try? JSONSerialization.jsonObject(with: source) as? [String: Any],
-      let account = credentials["username"] as? String,
-      account.caseInsensitiveCompare(network.state.accountName) == .orderedSame else {
-      let code = !network.state.online ? "local_offline":network.profile != profile ? "local_session_changed":
-        CredentialVault.steamStatus(initialSource) != .available ? "authentication_required":"local_identity_changed"
-      lastFailureDetail=initialDetail.withCode(code)
-      completion(.failure(network.state.online ? .unavailable:.offline)); return fallback
+    guard network.state.online else {
+      lastFailureDetail=FailureDetail(code:"local_offline",steamResult:network.state.steamResult,epochMatches:true,stateOnline:false,vaultMatches:false,appMatched:nil,identityMatched:nil,ticketReported:nil)
+      pendingCompletion=nil;completion(.failure(.offline));return token
     }
-    let epoch = network.generation, digest = Data(SHA256.hash(data: source))
-    let access = credentialAccess
-    let inspect:([String:Any]?)->FailureDetail = { [weak network] event in
-      let current=access.load(profile,.steam)
-      let epochMatches=network?.profile==profile && network?.generation==epoch
-      let online=network?.state.online==true
-      let vaultMatches=current.map{CredentialVault.steamStatus($0) == .available && Data(SHA256.hash(data:$0))==digest} ?? false
-      let currentIdentity=network.map{Self.individual($0.state.steamID)==identity && account.caseInsensitiveCompare($0.state.accountName) == .orderedSame} ?? false
-      var appMatched:Bool?,identityMatched:Bool?=currentIdentity,ticketReported:Bool?
-      if let event {
-        if event["type"]as?String=="result" {
-          appMatched=Self.number(event["appID"])==app
-          identityMatched=currentIdentity && Self.individual(event["steamID"])==identity
-          ticketReported=Self.trueValue(event["ownershipTicketReceived"])
-        } else {
-          appMatched=Self.boolean(event["ownershipAppMatched"])
-          identityMatched=currentIdentity && Self.boolean(event["ownershipSteamIDPresent"]) != false ? nil:false // Presence alone cannot prove a matching identity.
-          if Self.boolean(event["ownershipResponseReceived"])==true{ticketReported=Self.boolean(event["ownershipTicketNonEmpty"])}
+    let epoch = network.generation, access = credentialAccess
+    CredentialVault.perform({ access.load(profile, .steam) }) { [weak self] source in
+      MainActor.assumeIsolated {
+        guard let self, self.revision == attempt, self.network.generation == epoch else { return }
+        self.begin(profile: profile, app: app, source: source, epoch: epoch, attempt: attempt, completion: completion)
+      }
+    }
+    return token
+  }
+  private func begin(profile: UUID, app: UInt64, source: Data?, epoch: UUID, attempt: UUID, completion: @escaping Completion) {
+    let account = source.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String:Any] }?["username"] as? String
+    let identity = Self.individual(network.state.steamID)
+    func detail(_ event: [String:Any]?, vaultMatches: Bool) -> FailureDetail {
+      let localIdentity = identity != nil && Self.individual(network.state.steamID) == identity &&
+        account?.caseInsensitiveCompare(network.state.accountName) == .orderedSame
+      let result = (event?["steamResult"] as? String) ?? (!network.state.online ? network.state.steamResult : nil)
+      return FailureDetail(code: event?["code"] as? String ?? "unknown_error", steamResult: result,
+        epochMatches: network.profile == profile && network.generation == epoch,
+        stateOnline: network.state.online, vaultMatches: vaultMatches,
+        appMatched: event?["type"] as? String == "result" ? Self.number(event?["appID"]) == app : Self.boolean(event?["ownershipAppMatched"]),
+        identityMatched: localIdentity && (event?["type"] as? String != "result" || Self.individual(event?["steamID"]) == identity),
+        ticketReported: event?["type"] as? String == "result" ? Self.boolean(event?["ownershipTicketReceived"]) : Self.boolean(event?["ownershipTicketNonEmpty"]))
+    }
+    guard network.profile == profile, network.generation == epoch, network.state.online,
+      let identity, let source, CredentialVault.steamStatus(source) == .available,
+      let account, account.caseInsensitiveCompare(network.state.accountName) == .orderedSame else {
+      pendingCompletion = nil
+      let code = !network.state.online ? "local_offline" : network.profile != profile || network.generation != epoch ? "local_session_changed" : CredentialVault.steamStatus(source) != .available ? "authentication_required" : "local_identity_changed"
+      lastFailureDetail = detail(nil, vaultMatches: false).withCode(code)
+      completion(.failure(network.state.online ? .unavailable : .offline)); return
+    }
+    let digest = Data(SHA256.hash(data: source)), access = credentialAccess
+    let localValid: () -> Bool = { [weak network] in
+      guard let network else { return false }
+      return network.profile == profile && network.generation == epoch && network.state.online &&
+        Self.individual(network.state.steamID) == identity && account.caseInsensitiveCompare(network.state.accountName) == .orderedSame
+    }
+    pendingDetail = { detail(nil, vaultMatches: false).withCode("cancelled") }
+    var finished = false
+    let id = network.request("authorize_game", options: ["gameID":String(app)]) { [weak self] event in
+      guard let self, self.revision == attempt, ["result", "error"].contains(event["type"] as? String ?? "") else { return }
+      finished = true; self.requestID = nil
+      CredentialVault.perform({ access.load(profile, .steam) }) { [weak self] current in
+        MainActor.assumeIsolated {
+          guard let self, self.revision == attempt else { return }
+          self.pendingCompletion = nil; self.pendingDetail = nil
+          let matches = current.map { CredentialVault.steamStatus($0) == .available && Data(SHA256.hash(data:$0)) == digest } ?? false
+          let diagnostic = detail(event, vaultMatches: matches)
+          guard localValid(), matches else {
+            let code = !diagnostic.epochMatches ? "local_session_changed" : !diagnostic.stateOnline ? "local_offline" : !matches ? "local_credentials_changed" : "local_identity_changed"
+            self.lastFailureDetail = diagnostic.withCode(code); completion(.failure(diagnostic.stateOnline ? .stale : .offline)); return
+          }
+          if event["type"] as? String == "error" { self.lastFailureDetail = diagnostic; completion(.failure(Self.classify(diagnostic))); return }
+          guard Self.trueValue(event["authorized"]), Self.trueValue(event["ownershipTicketReceived"]),
+            Self.number(event["appID"]) == app, Self.individual(event["steamID"]) == identity,
+            let current, let packet = Self.packet(current, identity:identity, app:UInt32(app)) else {
+            self.lastFailureDetail = diagnostic.withCode("ownership_invalid_response"); completion(.failure(.rejected)); return
+          }
+          let grant = SteamGameAuthorizationGrant(profile:profile, gameID:UInt32(app), steamID:String(identity),
+            packet:packet, valid:localValid, validateCredential:{ callback in
+              CredentialVault.perform({ access.load(profile, .steam) }) { value in
+                MainActor.assumeIsolated { callback(value.map { CredentialVault.steamStatus($0) == .available && Data(SHA256.hash(data:$0)) == digest } ?? false) }
+              }
+            }, uptime:self.uptime, lifetime:self.grantLifetime)
+          self.grant = grant; self.lastFailureDetail = nil; completion(.success(grant))
         }
       }
-      let result=(event?["steamResult"]as?String) ?? (!online ? network?.state.steamResult:nil)
-      return FailureDetail(code:event?["code"]as?String ?? "unknown_error",steamResult:result,
-        epochMatches:epochMatches,stateOnline:online,vaultMatches:vaultMatches,appMatched:appMatched,identityMatched:identityMatched,ticketReported:ticketReported)
-    }
-    let stillValid: () -> Bool = { [weak network] in
-      guard let network, network.profile == profile, network.generation == epoch, network.state.online,
-        Self.individual(network.state.steamID) == identity,
-        account.caseInsensitiveCompare(network.state.accountName) == .orderedSame,
-        let current = access.load(profile, .steam), CredentialVault.steamStatus(current) == .available else { return false }
-      return Data(SHA256.hash(data: current)) == digest
-    }
-    // A synchronous transport failure may run completion before request returns.
-    var finished = false
-    pendingCompletion = completion
-    pendingDetail={inspect(nil).withCode("cancelled")}
-    let id = network.request("authorize_game", options: ["gameID": String(app)]) { [weak self] event in
-      guard let self, self.revision == attempt else { return }
-      let type = event["type"] as? String
-      guard type == "result" || type == "error" else { return }
-      finished = true; self.requestID = nil; self.pendingCompletion = nil;self.pendingDetail=nil
-      let local=inspect(nil),detail=inspect(event)
-      guard local.epochMatches,local.stateOnline,local.vaultMatches,local.identityMatched==true,stillValid() else {
-        let code = !local.epochMatches ? "local_session_changed":!local.stateOnline ? "local_offline":!local.vaultMatches ? "local_credentials_changed":"local_identity_changed"
-        self.lastFailureDetail=detail.withCode(code)
-        completion(.failure(local.stateOnline ? .stale:.offline));return
-      }
-      if type=="error" {
-        self.lastFailureDetail=detail
-        completion(.failure(Self.classify(detail)));return
-      }
-      guard type == "result", Self.trueValue(event["authorized"]), Self.trueValue(event["ownershipTicketReceived"]),
-        Self.number(event["appID"]) == app, Self.individual(event["steamID"]) == identity,
-        let current = access.load(profile, .steam), Data(SHA256.hash(data: current)) == digest,
-        let packet = Self.packet(current, identity: identity, app: UInt32(app)) else {
-        self.lastFailureDetail=detail.withCode("ownership_invalid_response")
-        completion(.failure(.rejected)); return
-      }
-      let grant = SteamGameAuthorizationGrant(profile: profile, gameID: UInt32(app), steamID: String(identity),
-        packet: packet, valid: stillValid, uptime: self.uptime, lifetime: self.grantLifetime)
-      self.grant = grant
-      self.lastFailureDetail=nil
-      completion(.success(grant))
     }
     if !finished, revision == attempt { requestID = id }
-    return id
   }
   func cancel() { _ = cancelPending() }
   private func cancelPending() -> UUID {

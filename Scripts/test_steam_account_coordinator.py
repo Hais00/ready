@@ -5,7 +5,7 @@ import hashlib,json,pathlib,subprocess,os
 from swift_probe_support import prepare_core
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 products,modules,archive=prepare_core()
-sources=[ROOT/'Sources/M1Launcher'/name for name in ['Credentials.swift','StoreClient.swift','SteamAccountCoordinator.swift']]
+sources=[ROOT/'Sources/M1Launcher'/name for name in ['Credentials.swift','PrivateCredentialFile.swift','StoreClient.swift','SteamAccountCoordinator.swift']]
 sources.append(ROOT/'Synthetic/ReadySteamAccountProbe.swift')
 output=ROOT/'Build/ReadySteamAccountProbe'
 subprocess.run(['xcrun','swiftc','-swift-version','5','-I',str(modules),'-framework','Security',*map(str,sources),str(archive),'-o',str(output)],cwd=ROOT,check=True)

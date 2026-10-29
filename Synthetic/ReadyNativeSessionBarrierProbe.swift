@@ -6,21 +6,34 @@ import Darwin
 private enum NativeBarrierFixtureError:Error { case forbidden,check(String),deadline }
 final class SteamGameAuthorizationGrant {
   let profile:UUID,gameID:UInt32=480,steamID="76561198000000001"
-  init(_ profile:UUID){self.profile=profile}
-  func consume()throws->Data{throw NativeBarrierFixtureError.forbidden}
+  let packet:Data?
+  init(_ profile:UUID,packet:Data?=nil){self.profile=profile;self.packet=packet}
+  fileprivate func consume(completion:@escaping(Result<Data,NativeBarrierFixtureError>)->Void){
+    if let packet{DispatchQueue.main.async{completion(.success(packet))}}else{completion(.failure(.forbidden))}
+  }
 }
 final class SteamNativeHostProcess {
   enum Mode {case credentials,cached,automatic}
   struct Exit {let code:Int32?,signal:Int32?;let cancelled:Bool,invalidEvents:Bool}
   struct Binding {
     struct GameAssets {let clientDirectory,originalStateRoot,sdk,fsAdapter,ipcAdapter,lookupAdapter:URL}
-    func verifiedGameAssets()throws->GameAssets{throw NativeBarrierFixtureError.forbidden}
+    var assets:GameAssets?
+    var onVerify:(()->Void)?
+    func verifiedGameAssets()throws->GameAssets{onVerify?();guard let assets else{throw NativeBarrierFixtureError.forbidden};return assets}
   }
   var onExit:((Exit)->Void)?,waiters=[()->Void](),stopCalls=0,reaped=false,readerEnded=false,exited=false
   var result=Exit(code:42,signal:nil,cancelled:true,invalidEvents:false)
+  static var launchCount=0
   static func spawn(binding:Binding,credentialPacket:inout Data,profile:UUID,sessionID:UUID,gameID:UInt32,
       profileStateRoot:URL,mode:Mode,onEvent:@escaping @MainActor([String:Any])->Void,
-      onExit:@escaping @MainActor(Exit)->Void)throws->SteamNativeHostProcess{throw NativeBarrierFixtureError.forbidden}
+      onExit:@escaping @MainActor(Exit)->Void,
+      admit:((SteamNativeHostProcess,()throws->Void)throws->Void)?=nil)throws->SteamNativeHostProcess{
+    _=try binding.verifiedGameAssets()
+    let host=SteamNativeHostProcess();host.onExit={value in MainActor.assumeIsolated{onExit(value)}}
+    let launch={launchCount+=1}
+    if let admit{try admit(host,launch)}else{launch()}
+    return host
+  }
   func takeGameHealthReadFD()throws->Int32{throw NativeBarrierFixtureError.forbidden}
   func stop(){stop(completion:{})}
   func stop(completion:@escaping()->Void){
@@ -34,6 +47,12 @@ final class SteamNativeHostProcess {
     let callbacks=waiters;waiters.removeAll();let exit=result
     DispatchQueue.main.async{[self]in onExit?(exit);callbacks.forEach{$0()}}
   }
+}
+
+private final class StopDuringHashObservation:@unchecked Sendable{
+  private let lock=NSLock();private var value=false
+  var stoppedBeforeHashFinished:Bool{lock.lock();defer{lock.unlock()};return value}
+  func record(){lock.lock();value=true;lock.unlock()}
 }
 
 // This extension is concatenated to the production NativeSession source in one
@@ -146,6 +165,40 @@ extension SteamNativeGameSession {
     successfulRevisionSession.fixtureReady()
     try check(readySawCommittedRevision&&successfulRevisionSession.isReady,"strict-native-ready-publishes-revision-before-success-callback")
     try check(try SteamNativeCacheRevision.select(packet:Data("another synthetic credential".utf8),root:revisionRoot).mode == .fresh,"fresh-credential-remains-fresh-after-previous-native-success")
+    // Copy our own fixture Mach-O as inert validation input. Neither copy is
+    // executed or loaded; the SDK filename has no vendor implementation.
+    let fixtureRoot=URL(fileURLWithPath:CommandLine.arguments[1]).deletingLastPathComponent()
+    let install=fixtureRoot.appendingPathComponent("owned-install")
+    try FileManager.default.createDirectory(at:install,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+    let ownCode=URL(fileURLWithPath:CommandLine.arguments[0]).resolvingSymlinksInPath()
+    let ownExecutable=install.appendingPathComponent("owned-code"),ownSDK=install.appendingPathComponent("libsteam_api.dylib")
+    try FileManager.default.copyItem(at:ownCode,to:ownExecutable);try FileManager.default.copyItem(at:ownCode,to:ownSDK)
+    let assets=SteamNativeHostProcess.Binding.GameAssets(clientDirectory:install,originalStateRoot:install,
+      sdk:ownSDK,fsAdapter:ownSDK,ipcAdapter:ownSDK,lookupAdapter:ownSDK)
+    for cancelAt in [2,3] {
+      let stateRoot=fixtureRoot.appendingPathComponent("owned-state-\(cancelAt)")
+      try FileManager.default.createDirectory(at:stateRoot,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+      let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0),observation=StopDuringHashObservation()
+      var verifications=0
+      let binding=SteamNativeHostProcess.Binding(assets:assets,onVerify:{
+        verifications+=1
+        if verifications==cancelAt {entered.signal();_=release.wait(timeout:.now()+2)}
+      })
+      let profile=UUID(),variant=GameVariant(id:"owned",platform:.macOS,architecture:.arm64,executable:ownExecutable.path,
+        installationRoot:install.path,installed:true)
+      var game=Game(id:"fixture480",store:.steam,storeID:"480",title:"Own code only",variants:[variant]);game.profileIDs=[profile]
+      var callbacks=0,failure:SteamNativeGameSession.Failure?
+      let before=SteamNativeHostProcess.launchCount
+      let pending=try SteamNativeGameSession.start(binding:binding,grant:SteamGameAuthorizationGrant(profile,packet:Data("owned fake frame".utf8)),
+        game:game,variant:variant,profileStateRoot:stateRoot){result in callbacks+=1;if case .failure(let reason)=result{failure=reason}}
+      DispatchQueue.global().async {
+        if entered.wait(timeout:.now()+2) == .success {pending.stop();observation.record()}
+        release.signal()
+      }
+      try pump{callbacks==1};settle()
+      try check(observation.stoppedBeforeHashFinished && SteamNativeHostProcess.launchCount==before && failure == .stopped && !pending.isReady && callbacks==1,
+        cancelAt==2 ? "stop-during-selection-rehash-prevents-spawn-without-blocking-stop":"stop-during-inner-binding-rehash-prevents-spawn-at-atomic-admission")
+    }
     let report:[String:Any]=["passed":checks.values.allSatisfy{$0},"count":checks.count,"checks":checks,"fixtureOnly":true,
       "accountKeychainSDKOrGameUsed":false,"networkUsed":false,"hostProcessSpawned":false]
     try JSONSerialization.data(withJSONObject:report,options:[.prettyPrinted,.sortedKeys]).write(to:URL(fileURLWithPath:CommandLine.arguments[1]))

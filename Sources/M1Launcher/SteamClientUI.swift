@@ -6,21 +6,52 @@ extension AppDelegate {
   @MainActor func configureSteamNetwork() {
     cancelSteamGamePreparation()
     steamDownloads?.stop()
+    steamLibrary?.stop(); steamLibrary = nil
     steamNetwork?.stop()
     steamNetwork = nil; steamAccountView = nil; steamGuardChallenge = nil
+    // Cached public platform data can fill download choices before account
+    // restoration. No installed/path/ownership field is inferred from it.
+    if SteamLibraryMerge.projectCachedAvailability(in:&state){try? persist()}
     let profile = state.activeProfile
     let downloads=SteamDownloads(profile:profile,client:storeClient)
     steamDownloads=downloads
     downloads.onChange = {[weak self,weak downloads] jobs in
       guard let self,let downloads,self.steamDownloads===downloads,self.state.activeProfile==profile else{return}
       self.steamDownloadsView?.update(jobs)
+      if !self.session.running { self.refreshGameDetails() }
     }
     downloads.onError = {[weak self] message in self?.showError(LauncherError.failed(message))}
     downloads.onInstalled = {[weak self] job in self?.acceptSteamInstallation(job,profile:profile)}
     downloads.restore()
     guard let command = SteamClientSession.installedCommand(project: project, runtimeRoot: runtimeRoot, stateRoot: paths.root) else { return }
-    let network = SteamClientSession(profile: profile, command: command, credentialAccess: .keychain(stateRoot: paths.root))
+    let network = SteamClientSession(profile: profile, command: command, credentialAccess: .persistent(stateRoot: paths.root))
     steamNetwork = network
+    let library = SteamLibraryCoordinator(profile: profile, network: network)
+    steamLibrary = library
+    library.onAccountChanged = { [weak self, weak library] account in
+      guard let self, let library, self.steamLibrary === library, self.state.activeProfile == profile else { return }
+      SteamLibraryMerge.clearOtherAccountMembership(in: &self.state, profile: profile, account: account)
+      try? self.persist()
+      if !self.session.running { self.refreshGameDetails() }
+    }
+    library.onGames = { [weak self, weak library] games, account in
+      guard let self, let library, self.steamLibrary === library, self.state.activeProfile == profile,
+        network.state.online, network.state.steamID == account else { return }
+      SteamLibraryMerge.apply(games, to: &self.state, profile: profile, account: account)
+      self.canvas.message = "\(games.count) giochi sincronizzati da Steam"
+      do { try self.persist() } catch { self.showError(error) }
+      self.repairSteamLibraryCache()
+      if !self.session.running { self.refreshGameDetails() }
+    }
+    library.onScopeChanged = {[weak self,weak library] in
+      guard let self,let library,self.steamLibrary===library,self.state.activeProfile==profile else{return}
+      self.repairSteamLibraryCache()
+    }
+    library.onError = { [weak self, weak library] message in
+      guard let self, let library, self.steamLibrary === library, self.state.activeProfile == profile else { return }
+      self.canvas.message = message
+      if !self.session.running { self.canvas.refresh() }
+    }
     network.onChange = { [weak self, weak network] status in
       guard let self, let network, self.steamNetwork === network, self.state.activeProfile == profile else { return }
       let signature = status.connection + ":" + status.reason + ":" + (status.steamResult ?? "") + ":" + (status.connectionResultContext ?? "")
@@ -46,11 +77,13 @@ extension AppDelegate {
       self.canvas?.steamStatus = status.online ? (status.displayName.isEmpty ? "Steam online" : status.displayName) : "Steam · " + status.connection
       self.canvas?.steamOnline = status.online
       if !self.session.running { self.canvas?.refresh() }
+      self.steamLibrary?.observe(status)
       if becameOnline{self.steamDownloads?.resumeAfterAuthorization()}
       if let continuation = self.steamLaunchContinuation, self.steamAccountReady(network) {
         self.steamLaunchContinuation = nil; self.steamLaunchCancellation = nil
         if let dialog = self.steamAccountDialog { self.dismissDialog(dialog) }
         self.steamAccountDialog = nil; self.steamAccountView = nil
+        self.resumeLaunchSplash()
         continuation()
       }
       if ["logged_out", "authorization_required"].contains(status.connection)
@@ -64,7 +97,22 @@ extension AppDelegate {
       if event["type"]as?String=="guard" { self.steamGuardChallenge = event["challengeID"]as?String }
       self.steamAccountView?.authenticationEvent(event)
     }
-    if CredentialVault.steamStatus(CredentialVault.load(profile:profile,store:.steam,stateRoot:paths.root)) == .available { network.start() }
+    // Startup is nonblocking even when Keychain authorization is locked.
+    network.start()
+    repairSteamLibraryCache()
+    // A small first-screen prefetch also enriches already installed games:
+    // catalogue availability/artwork is public and does not need account login.
+    // The complete owned catalogue still comes only from the authenticated CM.
+    var prefetched=Set<String>()
+    for game in canvas.visibleGames where game.store == .steam {
+      guard prefetched.count<6 else{break}
+      guard prefetched.insert(game.storeID).inserted,
+        (game.metadata?["metadataComplete"]?.foundation as?Bool) != true else{continue}
+      requestSteamGameDetails(gameID:game.storeID){[weak self] _ in
+        guard let self,self.state.activeProfile==profile else{return}
+        self.refreshGameDetails()
+      }
+    }
   }
   @MainActor func showSteamDownloads() {
     if canvas.section == .downloads, steamDownloadsView != nil, pages.isPresenting { return }
@@ -88,6 +136,7 @@ extension AppDelegate {
     do{try persist()}catch{showError(error)}
   }
   @MainActor func showSteamAccount() {
+    if pendingLaunch != nil { suspendLaunchSplashForAccount() }
     guard !session.running, !maintenanceInProgress else { return }
     if canvas.section == .steamAccount, steamAccountView != nil, pages.isPresenting { return }
     if steamNetwork == nil { configureSteamNetwork() }
@@ -115,10 +164,17 @@ extension AppDelegate {
     }
     view.onLogout = { [weak self, weak network] in
       guard let self, self.state.activeProfile == profile else { return }
+      self.pendingLaunch=nil
+      self.cancelSteamGamePreparation(); self.finishLaunchSplash()
       self.steamGameAuthorization?.cancel(); self.steamNativeGame?.stop()
-      self.steamDownloads?.stop();network?.logout(); self.steamAccounts.signOut(profile:profile)
+      self.steamDownloads?.stop(); self.steamLibrary?.stop()
+      SteamLibraryMerge.clearRemoteMembership(in: &self.state, profile: profile); try? self.persist()
+      network?.logout(); self.steamAccounts.signOut(profile:profile)
     }
-    steamAccountDialog = presentDialog(title:"Account, amici e attività",message:"Un solo accesso per questo profilo, condiviso da giochi macOS e Windows. La password non viene salvata.",content:view,actions:[]) { [weak self,weak network] _ in
+    let storageHint = CredentialVault.storage(for:.steam) == .privateFile
+      ? "Accesso Steam salvato in un file privato di questo Mac. La password Steam non viene salvata."
+      : "Accesso Steam salvato nel Portachiavi. La password Steam non viene salvata."
+    steamAccountDialog = presentDialog(title:"Account, amici e attività",message:"Un solo accesso per questo profilo, condiviso da giochi macOS e Windows. " + storageHint,content:view,actions:[]) { [weak self,weak network] _ in
       network?.cancelAuthentication()
       self?.steamAccountView = nil; self?.steamAccountDialog = nil
       self?.steamLaunchContinuation = nil
@@ -134,4 +190,44 @@ extension AppDelegate {
     guard let network = steamNetwork else { event(["type":"error","message":"Servizio Steam non installato."]); return }
     network.request("library",event:event)
   }
+  @MainActor func syncSteamLibrary() {
+    if steamNetwork == nil { configureSteamNetwork() }
+    steamLibrary?.sync()
+  }
+  @MainActor func requestSteamGameDetails(gameID: String, completion: @escaping ([String:Any]) -> Void) {
+    if steamNetwork == nil { configureSteamNetwork() }
+    let profile = state.activeProfile
+    guard let library = steamLibrary, let network = steamNetwork else {
+      completion(["type":"error", "code":"service_unavailable"]); return
+    }
+    library.metadata(gameID: gameID) { [weak self, weak library, weak network] event in
+      guard let self, let library, let network, self.steamLibrary === library, self.steamNetwork === network,
+        self.state.activeProfile == profile else { return }
+      if event["type"] as? String == "result", let value = event["metadata"] as? [String:Any],
+        let data = try? JSONSerialization.data(withJSONObject: value),
+        let metadata = try? JSONDecoder().decode([String:JSONValue].self, from: data) {
+        SteamLibraryMerge.enrich(metadata, gameID: gameID, in: &self.state); try? self.persist()
+      }
+      completion(event)
+    }
+  }
+
+  @MainActor private func repairSteamLibraryCache() {
+    guard let library=steamLibrary,let network=steamNetwork else{return}
+    let profile=state.activeProfile
+    library.repairCached(games:state.games,prepare:{[weak self]ids in
+      guard let self,self.steamLibrary===library,self.state.activeProfile==profile else{return}
+      var changed=false
+      for id in ids {if SteamLibraryMerge.addArtworkFallback(gameID:id,in:&self.state){changed=true}}
+      if changed{try?self.persist()}
+    },event:{[weak self,weak library,weak network]id,event in
+      guard let self,let library,let network,self.steamLibrary===library,self.steamNetwork===network,self.state.activeProfile==profile,
+        event["type"]as?String=="result",let value=event["metadata"]as?[String:Any],
+        let bytes=try?JSONSerialization.data(withJSONObject:value),let metadata=try?JSONDecoder().decode([String:JSONValue].self,from:bytes)else{return}
+      SteamLibraryMerge.enrich(metadata,gameID:id,in:&self.state)
+      try?self.persist()
+      if !self.session.running{self.refreshGameDetails()}
+    })
+  }
+
 }

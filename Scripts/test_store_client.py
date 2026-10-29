@@ -8,7 +8,7 @@ products,modules,archive=prepare_core()
 output=ROOT/'Build/ReadyStoreClientProbe'
 output.parent.mkdir(parents=True,exist_ok=True)
 objects=[archive]
-subprocess.run(['xcrun','swiftc','-swift-version','5','-I',str(modules),'-framework','Security',str(ROOT/'Sources/M1Launcher/StoreClient.swift'),str(ROOT/'Sources/M1Launcher/Credentials.swift'),str(ROOT/'Synthetic/ReadyStoreClientProbe.swift'),*map(str,objects),'-o',str(output)],cwd=ROOT,check=True)
+subprocess.run(['xcrun','swiftc','-swift-version','5','-I',str(modules),'-framework','Security',str(ROOT/'Sources/M1Launcher/StoreClient.swift'),str(ROOT/'Sources/M1Launcher/Credentials.swift'),str(ROOT/'Sources/M1Launcher/PrivateCredentialFile.swift'),str(ROOT/'Synthetic/ReadyStoreClientProbe.swift'),*map(str,objects),'-o',str(output)],cwd=ROOT,check=True)
 result=subprocess.run([str(output),str(ROOT)],cwd=ROOT,capture_output=True,text=True,timeout=90)
 if result.returncode:
     # Do not echo private IPC or memory-vault contents on failure.

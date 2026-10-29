@@ -44,7 +44,7 @@ def main():
  project=run/'project/StoreBridge';project.mkdir(parents=True)
  shutil.copy2(ROOT/'StoreBridge/supervisor.py',project/'supervisor.py');(project/'bridge.py').write_text(FAKE)
  binary=run/'probe'
- sources=['Sources/M1Launcher/Credentials.swift','Sources/M1Launcher/StoreClient.swift','Sources/M1Launcher/SteamDownloads.swift','Synthetic/ReadySteamDownloadsProbe.swift']
+ sources=['Sources/M1Launcher/Credentials.swift','Sources/M1Launcher/PrivateCredentialFile.swift','Sources/M1Launcher/StoreClient.swift','Sources/M1Launcher/SteamDownloads.swift','Synthetic/ReadySteamDownloadsProbe.swift']
  compiled=subprocess.run(['swiftc','-swift-version','5','-parse-as-library','-I',str(modules),*[str(ROOT/x)for x in sources],str(archive),'-framework','Security','-o',str(binary)],capture_output=True,text=True,cwd=ROOT)
  if compiled.returncode:raise RuntimeError(compiled.stderr[-3000:])
  result=subprocess.run([str(binary),str(run)],capture_output=True,text=True,timeout=35)

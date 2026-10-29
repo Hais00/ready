@@ -2,24 +2,38 @@
 import Foundation
 import LauncherCore
 
+private final class AuthorizationMemoryVault {
+  private let lock=NSLock();private var value:Data?;private var writesValue=0,mainCallsValue=0;var delay:TimeInterval=0
+  init(_ value:Data){self.value=value}
+  var data:Data?{get{lock.lock();defer{lock.unlock()};return value}set{lock.lock();value=newValue;lock.unlock()}}
+  var writes:Int{lock.lock();defer{lock.unlock()};return writesValue}
+  var mainCalls:Int{lock.lock();defer{lock.unlock()};return mainCallsValue}
+  func load()->Data?{lock.lock();if Thread.isMainThread{mainCallsValue+=1};let v=value,d=delay;lock.unlock();if d>0{Thread.sleep(forTimeInterval:d)};return v}
+  func save(){lock.lock();if Thread.isMainThread{mainCallsValue+=1};writesValue+=1;lock.unlock()}
+  func remove(){lock.lock();if Thread.isMainThread{mainCallsValue+=1};value=nil;lock.unlock()}
+}
 @main struct ReadySteamGameAuthorizationProbe {
   @MainActor static func main() throws {
     let profile = UUID(), other = UUID(), identity = "76561198000000001"
     let original = try JSONSerialization.data(withJSONObject: ["username":"fixture_account", "refresh_token":"fixture_only_secret"])
-    var vault: Data? = original, writes = 0, checks = [String: Bool](), clock: TimeInterval = 100
-    let access = StoreClient.CredentialAccess(load: { id, _ in id == profile ? vault : nil },
-      save: { _, _, _ in writes += 1 }, remove: { _, _ in vault = nil })
+    let memory=AuthorizationMemoryVault(original)
+    var vault:Data?{get{memory.data}set{memory.data=newValue}}
+    var writes:Int{memory.writes}
+    var checks = [String: Bool](), clock: TimeInterval = 100
+    let access = StoreClient.CredentialAccess(load: { id, _ in id == profile ? memory.load() : nil },
+      save: { _, _, _ in memory.save() }, remove: { _, _ in memory.remove() })
     let network = SteamClientSession(profile: profile, command: [CommandLine.arguments[1], CommandLine.arguments[2]], credentialAccess: access)
     let factory = SteamGameAuthorization(network: network, credentialAccess: access, uptime: { clock })
     var lastFailure:SteamGameAuthorization.Failure?
+    var stage="startup"
     func check(_ value: Bool, _ name: String) throws {
-      checks[name] = value
+      checks[name] = value;stage=name
       if !value { throw NSError(domain: "SteamGameAuthorizationFixture_" + name, code: 1) }
     }
     func spin(_ condition: () -> Bool) throws {
       let end = Date().addingTimeInterval(4)
       while !condition(), Date() < end { _ = RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.005)) }
-      if !condition() { throw NSError(domain: "SteamGameAuthorizationFixtureTimeout", code: 1) }
+      if !condition() { throw NSError(domain: "SteamGameAuthorizationFixtureTimeout_"+stage, code: 1) }
     }
     func settle() { let end = Date().addingTimeInterval(0.2); while Date() < end { _ = RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.005)) } }
     func command(_ operation: String, _ options: [String: Any] = [:]) throws {
@@ -28,6 +42,8 @@ import LauncherCore
       try spin { done }
     }
     func mode(_ value: String) throws { try command("fixture_mode", ["mode": value]) }
+    func startedCount()->Int{Int((try?String(contentsOf:URL(fileURLWithPath:CommandLine.arguments[3]).appendingPathComponent("authorization-count"),encoding:.utf8)) ?? "0") ?? 0}
+
     func online() throws {
       vault = original
       if !network.state.online { network.reconnect() }
@@ -49,14 +65,18 @@ import LauncherCore
         return nil
       }
     }
-    func consumeFails(_ grant: SteamGameAuthorizationGrant) -> Bool { do { _ = try grant.consume(); return false } catch { return true } }
+    func consume(_ grant: SteamGameAuthorizationGrant) throws -> Data {
+      var outcome:Result<Data,SteamGameAuthorization.Failure>?
+      grant.consume { outcome=$0 };try spin{outcome != nil};return try outcome!.get()
+    }
+    func consumeFails(_ grant: SteamGameAuthorizationGrant) -> Bool { do { _ = try consume(grant); return false } catch { return true } }
     defer { factory.cancel(); network.stop() }
     network.start(); try spin { network.state.online && network.state.steamID == identity }
 
     try mode("valid")
     let grant = try prepare()!
     try check(grant.profile == profile && grant.gameID == 480 && grant.steamID == identity, "serverIdentityMetadata")
-    var frame = try grant.consume()
+    var frame = try consume(grant)
     var expected = Data("RDYAUTH1".utf8)
     for (value, count) in [(UInt64(15), 4), (UInt64(19), 4), (UInt64(identity)!, 8), (UInt64(480), 4)] {
       for shift in stride(from: (count - 1) * 8, through: 0, by: -8) { expected.append(UInt8((value >> shift) & 255)) }
@@ -121,13 +141,16 @@ import LauncherCore
     ] {
       vault = source; immediateFailure = false
       factory.prepare(profile: profile, gameID: "480") { if case .failure = $0 { immediateFailure = true } }
+      try spin{immediateFailure}
       try check(immediateFailure, name + "VaultRejectedBeforeRequest")
     }
     vault = original
 
     try mode("delay")
     var completionCount = 0, failed = false
+    let beforeChanged=startedCount()
     factory.prepare(profile: profile, gameID: "480") { completionCount += 1; if case .failure = $0 { failed = true } }
+    try spin{startedCount()>beforeChanged}
     vault = try JSONSerialization.data(withJSONObject: ["username":"fixture_account", "refresh_token":"different_fixture_secret"])
     try spin { completionCount == 1 }; try check(failed, "vaultChangeRejectsLateResult"); vault = original
     try check(factory.lastFailureDetail?.code=="local_credentials_changed"&&factory.lastFailureDetail?.vaultMatches==false,"localVaultChangeIdentifiedWithoutSteamBlame")
@@ -135,17 +158,21 @@ import LauncherCore
     for terminal in ["revoked", "logged_out", "changed_identity"] {
       try mode(terminal); _ = try prepare(true); try check(true, terminal + "RejectsResult")
       if terminal=="revoked"{try check(factory.lastFailureDetail?.steamResult=="Revoked"&&factory.lastFailureDetail?.stateOnline==false,"staleResultRetainsSafeConnectionResult")}
-      network.stop(); vault = original; network.start(); try spin { network.state.online && network.state.steamID == identity }
+      stage="reconnectAfter_"+terminal
+      network.stop(); vault = original; network.reconnect(); try spin { network.state.online && network.state.steamID == identity }
     }
     try mode("delay"); completionCount = 0; var cancellation: SteamGameAuthorization.Failure?
+    stage="waitCancellationRequestStarted"
+    let beforeCancelled=startedCount()
     factory.prepare(profile: profile, gameID: "480") { result in completionCount += 1; if case .failure(let failure) = result { cancellation = failure } }
+    try spin{startedCount()>beforeCancelled}
     factory.cancel(); factory.cancel(); settle()
     try check(completionCount == 1 && cancellation == .cancelled, "cancelCompletesOnceAndSuppressesLateCallback")
     try command("fixture_assert_cancelled")
     try check(true, "cancelReachesPersistentService")
     completionCount = 0
     factory.prepare(profile: profile, gameID: "480") { _ in completionCount += 1 }
-    network.stop(); vault = original; network.start(); try spin { network.state.online && network.state.steamID == identity }
+    network.stop(); vault = original; network.reconnect(); try spin { network.state.online && network.state.steamID == identity }
     settle(); try check(completionCount == 0, "generationRestartDropsOldCallback"); factory.cancel()
     try mode("wrong_envelope"); completionCount = 0
     factory.prepare(profile: profile, gameID: "480") { _ in completionCount += 1 }
@@ -168,8 +195,17 @@ import LauncherCore
     factory.prepare(profile:profile,gameID:"480"){_ in}
     try check(factory.lastFailureDetail?.steamResult=="Expired"&&factory.lastFailureDetail?.stateOnline==false,"offlinePreflightRetainsSafeConnectionResult")
     try online(); try mode("valid")
-    held = try prepare()!; network.stop(); network.start(); try spin { network.state.online && network.state.steamID == identity }
+    held = try prepare()!; network.stop(); network.reconnect(); try spin { network.state.online && network.state.steamID == identity }
     try check(consumeFails(held), "consumeRechecksGeneration")
+    held = try prepare()!;memory.delay=0.2
+    var delayed:Result<Data,SteamGameAuthorization.Failure>?,heartbeat=false
+    held.consume{delayed=$0}
+    DispatchQueue.main.asyncAfter(deadline:.now()+0.02){heartbeat=true}
+    try spin{heartbeat};try check(delayed==nil,"slowConsumeVaultNeverBlocksMainRunLoop")
+    factory.cancel();try spin{delayed != nil}
+    if case .failure=delayed!{try check(true,"cancelWhileConsumeReadPendingCannotDeliverCredentialFrame")}else{try check(false,"cancelWhileConsumeReadPendingCannotDeliverCredentialFrame")}
+    memory.delay=0
+    try check(memory.mainCalls==0,"allAuthorizationAndConsumeCredentialIOOffMain")
     held = try prepare()!; network.logout(); try check(consumeFails(held), "logoutInvalidatesGrant")
     try check(writes == 0, "noCredentialWrites")
     checks["allPassed"] = checks.values.allSatisfy { $0 }

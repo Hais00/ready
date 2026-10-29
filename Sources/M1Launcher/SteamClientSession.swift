@@ -27,6 +27,20 @@ struct SteamClientState {
   var online: Bool { connection == "online" }
 }
 
+private final class SteamCredentialBaseline {
+  private let lock = NSLock()
+  private var initialized = false
+  private var value: Data?
+  func initialize(_ data: Data?) { lock.lock(); defer { lock.unlock() }; if !initialized { initialized=true;value=data } }
+  func load() -> Data? { lock.lock(); defer { lock.unlock() }; return value }
+  func replace(_ data: Data?) { lock.lock();value=data;initialized=true;lock.unlock() }
+}
+private final class SteamCredentialWritePermit {
+  private let lock=NSLock();private var value=true
+  var active:Bool {lock.lock();defer{lock.unlock()};return value}
+  func cancel(){lock.lock();value=false;lock.unlock()}
+}
+
 /// One profile's persistent network service. Game workers remain independently
 /// supervised. This channel never exposes credentials to frontend subscribers.
 @MainActor
@@ -52,16 +66,23 @@ final class SteamClientSession {
   private var automaticRestartSuppressed = false
   private var restartCount = 0
   private var credentialAtStart: Data?
+  private var credentialBaseline = SteamCredentialBaseline()
+  private var credentialWrites = [String:SteamCredentialWritePermit]()
+  private var credentialSnapshot: Data?
+  private var credentialSnapshotValid = false
+  private var credentialReadID = UUID()
   private var authenticationID: String?
 
   init(profile: UUID, command: [String], credentialAccess: StoreClient.CredentialAccess) {
     self.profile = profile; self.command = command; self.credentialAccess = credentialAccess
   }
+  var serviceRunning:Bool { process != nil && writer != nil && !manualStop }
+
   /// A new logon can report online before publishing its new persona. Wait for
   /// the persona to match the currently saved account before resuming a game.
   func accountReadyForGame() -> Bool {
     guard state.online, !state.steamID.isEmpty, !state.accountName.isEmpty,
-      let data = credentialAccess.load(profile, .steam), CredentialVault.steamStatus(data) == .available,
+      credentialSnapshotValid, let data = credentialSnapshot, CredentialVault.steamStatus(data) == .available,
       let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let account = value["username"] as? String else { return false }
     return account.caseInsensitiveCompare(state.accountName) == .orderedSame
@@ -83,6 +104,7 @@ final class SteamClientSession {
   private func launch() {
     guard !manualStop, process == nil, command.count >= 2 else { return }
     let epoch = UUID(); generation = epoch; sequence = 0; lastEvent = Date()
+    credentialBaseline = SteamCredentialBaseline()
     let task = Process(), input = Pipe(), output = Pipe()
     task.executableURL = URL(fileURLWithPath: command[0]); task.arguments = Array(command.dropFirst())
     var environment = ProcessInfo.processInfo.environment
@@ -129,12 +151,31 @@ final class SteamClientSession {
         if Date().timeIntervalSince(self.lastEvent)>45{self.failProcess(reason:"service_unresponsive")}
       }
     }
-    credentialAtStart = credentialAccess.load(profile, .steam)
-    if CredentialVault.steamStatus(credentialAtStart) == .available,
-      let data = credentialAtStart, let account = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-      request("connect", options: ["credentials": account]) { _ in }
-    } else { request("snapshot") { _ in } }
+    refreshCredentialSnapshot { [weak self] data in
+      guard let self, self.generation == epoch, !self.manualStop, self.process === task else { return }
+      self.credentialAtStart = data
+      // A user-requested authentication owns the service once it has begun.
+      guard self.authenticationID == nil,!self.automaticRestartSuppressed else { return }
+      if CredentialVault.steamStatus(data) == .available, let data,
+        let account = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        self.request("connect", options: ["credentials": account]) { _ in }
+      } else { self.request("snapshot") { _ in } }
+    }
   }
+  /// No Keychain call runs on Main, including persona/startup readiness checks.
+  /// A new read invalidates the old snapshot until its profile/epoch is checked.
+  func refreshCredentialSnapshot(completion: ((Data?) -> Void)? = nil) {
+    let read = UUID(), epoch = generation, access = credentialAccess, profile = profile, baseline = credentialBaseline
+    credentialReadID = read; credentialSnapshotValid = false
+    CredentialVault.perform({ let data=access.load(profile,.steam);baseline.initialize(data);return data }) { [weak self] data in
+      MainActor.assumeIsolated {
+        guard let self, self.generation == epoch, self.credentialReadID == read, !self.manualStop else { return }
+        self.credentialSnapshot = data; self.credentialSnapshotValid = true
+        completion?(data); self.notify()
+      }
+    }
+  }
+
   @discardableResult
   func request(_ operation: String, options: [String: Any] = [:], event: @escaping Event) -> String {
     start()
@@ -176,21 +217,25 @@ final class SteamClientSession {
   func logout() {
     manualStop = true
     automaticRestartSuppressed = true
-    credentialAccess.remove(profile, .steam); credentialAtStart = nil
+    credentialWrites.values.forEach{$0.cancel()};credentialWrites.removeAll()
+    let access = credentialAccess, profile = profile
+    CredentialVault.perform({ access.remove(profile, .steam) }) { _ in }
+    credentialAtStart = nil; credentialSnapshot = nil; credentialSnapshotValid = false; credentialReadID = UUID()
     if process != nil { request("logout") { [weak self] _ in
       self?.stop(); self?.state.connection = "logged_out"; self?.notify()
     } }
     state = SteamClientState(); state.connection = "logged_out"; notify()
   }
   func cancel(_ id: String) {
-    pending.removeValue(forKey: id)
+    credentialWrites.removeValue(forKey:id)?.cancel()
+    guard pending.removeValue(forKey:id) != nil,writer != nil,!manualStop else{return}
     request("cancel", options: ["requestID":id]) { _ in }
   }
   func stop() {
     manualStop = true; generation = UUID(); watchdog?.invalidate(); watchdog = nil
     let task = process; process = nil
     try? writer?.close(); writer = nil; pending.removeAll(); credentialAtStart = nil
-    authenticationID=nil
+    authenticationID=nil; credentialWrites.values.forEach{$0.cancel()};credentialWrites.removeAll(); credentialSnapshot=nil; credentialSnapshotValid=false; credentialReadID=UUID()
     if let task, task.isRunning {
       task.terminate()
       DispatchQueue.global().asyncAfter(deadline: .now() + 3) { if task.isRunning { kill(task.processIdentifier, SIGKILL) } }
@@ -210,10 +255,35 @@ final class SteamClientSession {
         let account = value["credentials"] as? [String: Any],
         let name = account["username"] as? String, !name.isEmpty, name.utf8.count <= 128,
         let token = account["refresh_token"] as? String, !token.isEmpty, token.utf8.count <= 16384,
-        credentialAccess.load(profile, .steam) == credentialAtStart,
         let bytes = try? JSONSerialization.data(withJSONObject: ["username":name,"refresh_token":token]) else { return }
-      do { try credentialAccess.save(bytes, profile, .steam); credentialAtStart = bytes;state.warning="" }
-      catch { state.warning="Accesso attivo solo in memoria: impossibile salvare nel Portachiavi.";notify() }
+      let access = credentialAccess, profile = profile, baseline=credentialBaseline, permit=SteamCredentialWritePermit()
+      credentialWrites[id]=permit
+      CredentialVault.perform({ () -> Result<Bool, Error> in
+        Result {
+          let expected=baseline.load()
+          guard permit.active,access.load(profile,.steam)==expected else{return false}
+          try access.save(bytes,profile,.steam)
+          guard permit.active else {
+            if access.load(profile,.steam)==bytes {
+              if let expected{try access.save(expected,profile,.steam)}else{access.remove(profile,.steam)}
+            }
+            return false
+          }
+          baseline.replace(bytes);return true
+        }
+      }) { [weak self] result in
+        MainActor.assumeIsolated {
+          guard let self, self.generation == epoch, !self.manualStop else { return }
+          if self.credentialWrites[id] === permit {self.credentialWrites.removeValue(forKey:id)}
+          guard permit.active else{return}
+          switch result {
+          case .success(true): self.credentialAtStart = bytes; self.credentialSnapshot = bytes; self.credentialSnapshotValid = true; self.state.warning = ""
+          case .success(false): self.credentialSnapshotValid = false; self.state.warning = "L’account salvato è cambiato durante l’accesso."
+          case .failure: self.state.warning = "Accesso attivo solo in memoria: impossibile salvare nell’archivio account."
+          }
+          self.notify()
+        }
+      }
       return
     }
     if type == "state" || (type == "result" && value["state"] != nil) {
@@ -232,17 +302,21 @@ final class SteamClientSession {
         if connection == "online" { restartCount = 0 }
         if becameOnline { request("snapshot") { _ in } }
         let invalidation = (value["invalidateCredentials"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() && $0.boolValue } ?? false
-        if invalidation, credentialAccess.load(profile, .steam) == credentialAtStart {
-          credentialAccess.remove(profile, .steam); credentialAtStart = nil
-        }
+        if invalidation {
+          let access = credentialAccess, profile = profile, baseline=credentialBaseline
+          credentialAtStart = nil; credentialSnapshot = nil; credentialSnapshotValid = false; credentialReadID = UUID()
+          CredentialVault.perform({
+            if access.load(profile,.steam)==baseline.load(){access.remove(profile,.steam);baseline.replace(nil)}
+          }) { _ in }
+        } else if connection == "online" { refreshCredentialSnapshot() }
       }
-    } else if type == "persona" { updateAccount(value["account"] as? [String: Any] ?? value) }
+    } else if type == "persona" { updateAccount(value["account"] as? [String: Any] ?? value); refreshCredentialSnapshot() }
     else if type == "friends", let friends = value["friends"] as? [[String: Any]] { updateFriends(friends) }
     else if type == "result" {
       if let connection=value["state"]as?String,["connecting","authenticating","online","reconnecting","offline","authorization_required","logged_out"].contains(connection) {
         transition(connection,reason:value["reason"]as?String ?? "")
       }
-      if let account = value["account"] as? [String: Any] { updateAccount(account) }
+      if let account = value["account"] as? [String: Any] { updateAccount(account); refreshCredentialSnapshot() }
       if let friends = value["friends"] as? [[String: Any]] { updateFriends(friends) }
     }
     var safe = value; safe.removeValue(forKey: "credentials"); safe.removeValue(forKey: "password")

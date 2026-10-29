@@ -133,20 +133,13 @@ static class Program
                     var requests=chunk.Select(id=>new SteamApps.PICSRequest(id,access.AppTokens.GetValueOrDefault(id)));
                     var infos=await apps.PICSGetProductInfo(requests,Array.Empty<SteamApps.PICSRequest>()).ToTask().WaitAsync(deadline.Token);
                     if(!infos.Complete || infos.Failed || infos.Results is null)throw new Exception("license_error");
+                    var records=new Dictionary<uint,KeyValue>();
                     foreach(var part in infos.Results)foreach(var app in part.Apps.Values)
+                        if(app.KeyValues is {} values)records[app.ID]=values;
+                    foreach(uint id in chunk)
                     {
-                        if(app.KeyValues is null)continue;
-                        var common=app.KeyValues["common"];var type=common["type"].Value ?? "";
-                        if(!new[]{"game","application","demo"}.Contains(type.ToLowerInvariant()))continue;
-                        var platforms=(common["oslist"].Value ?? "").Split(',');var variants=new List<object>();
-                        foreach(var platform in new[]{"windows","macos"})
-                        {
-                            if(!platforms.Contains(platform))continue;
-                            var normalized=platform=="macos" ? "macOS":"windows";
-                            variants.Add(new {id=normalized,platform=normalized,architecture="unknown",installed=false,arguments=Array.Empty<string>(),verification="Steam platform metadata; inspect local binary to confirm Apple Silicon"});
-                        }
-                        var launch=app.KeyValues["config"]["launch"].Children.Select(k=>new {executable=k["executable"].Value,arguments=k["arguments"].Value,workingdir=k["workingdir"].Value,@type=k["type"].Value,description=k["description"].Value,oslist=k["config"]["oslist"].Value,osarch=k["config"]["osarch"].Value}).ToArray();
-                        games.Add(new {id="steam:"+app.ID,store="steam",storeID=app.ID.ToString(),title=common["name"].Value ?? app.ID.ToString(),artworkURL=$"https://cdn.cloudflare.steamstatic.com/steam/apps/{app.ID}/library_600x900.jpg",variants,engine="automatic",saveRules=Array.Empty<object>(),metadata=new {launch}});
+                        records.TryGetValue(id,out var values);
+                        if(SteamCatalogMetadata.IsLibraryApp(values))games.Add(SteamCatalogMetadata.LibraryGame(id,values));
                     }
                     Emit(new {type="progress",phase="library",completed=games.Count});
                 }

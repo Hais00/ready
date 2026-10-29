@@ -21,42 +21,6 @@ struct CanvasHit {
   let action: CanvasAction
 }
 
-final class ArtworkCache {
-  var images = [String: CGImage](), tasks = [String: URLSessionDataTask]()
-  func image(_ address: String?, refresh: @escaping () -> Void) -> CGImage? {
-    guard let address, let url = URL(string: address), url.scheme == "https" else { return nil }
-    if let image = images[address] { return image }
-    guard tasks[address] == nil else { return nil }
-    let task = URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-      guard let data, data.count < 10_000_000,
-        let src = CGImageSourceCreateWithData(data as CFData, nil),
-        let cg = CGImageSourceCreateThumbnailAtIndex(
-          src, 0,
-          [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: 512,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-          ] as CFDictionary)
-      else { return }
-      DispatchQueue.main.async {
-        guard let self else { return }
-        self.tasks.removeValue(forKey: address)
-        if self.images.count >= 18 { self.images.removeAll() }
-        self.images[address] = cg
-        refresh()
-      }
-    }
-    tasks[address] = task
-    task.resume()
-    return nil
-  }
-  func purge() {
-    tasks.values.forEach { $0.cancel() }
-    tasks.removeAll()
-    images.removeAll()
-  }
-}
-
 final class MetalCanvas: NSView {
   let device: MTLDevice
   private var queue: MTLCommandQueue?
@@ -64,7 +28,13 @@ final class MetalCanvas: NSView {
   private var texture: MTLTexture?
   private var lastCommand: MTLCommandBuffer?
   private var canvasLayer: CAMetalLayer?
-  private let art = ArtworkCache()
+  private let art:ArtworkCache
+  var artworkCache:ArtworkCache{art}
+  private var libraryScroll:CGFloat=0
+  private var libraryGridColumns=1
+  private var libraryViewport=CGRect.zero
+  private var libraryCardStride:CGFloat=1
+  private var libraryMaximumScroll:CGFloat=0
   var state = LibraryState.initial()
   var section: CanvasSection = .library {
     didSet {
@@ -77,12 +47,13 @@ final class MetalCanvas: NSView {
       redraw()
     }
   }
-  var filter: Store?
-  var query = ""
+  var filter: Store?{didSet{if oldValue != filter{libraryScroll=0}}}
+  var query = ""{didSet{if oldValue != query{libraryScroll=0}}}
   var selected = 0 {
     didSet {
       if oldValue != selected && section == .library {
         focusID = visibleGames.indices.contains(selected) ? "game." + visibleGames[selected].id : nil
+        revealSelection()
       }
     }
   }
@@ -109,10 +80,13 @@ final class MetalCanvas: NSView {
   private var suspended = false
   var interactionSnapshot: (hover: String?, pressed: String?, focus: String?, hits: [CanvasHit]) { (hoverID, pressedID, focusID, hits) }
   var allocatedTextureBytes: Int { texture.map { $0.width * $0.height * 4 } ?? 0 }
+  var libraryLayoutSnapshot:(columns:Int,offset:CGFloat,maximum:CGFloat,viewport:CGRect,visibleIDs:[String]){
+    (libraryGridColumns,libraryScroll,libraryMaximumScroll,libraryViewport,hits.compactMap{if case .game(let id)=$0.action{return id};return nil})
+  }
   override var acceptsFirstResponder: Bool { interactionEnabled && !suspended }
   override var isFlipped: Bool { true }
-  init(frame: NSRect, device: MTLDevice) {
-    self.device = device
+  init(frame: NSRect, device: MTLDevice,artworkCache:ArtworkCache=ArtworkCache()) {
+    self.device = device;self.art=artworkCache
     super.init(frame: frame)
     wantsLayer = true
     do { try configure() } catch { message = error.localizedDescription }
@@ -146,7 +120,12 @@ final class MetalCanvas: NSView {
       ($0.profileIDs == nil || $0.profileIDs!.contains(state.activeProfile))
         && (filter == nil || $0.store == filter)
         && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query))
-    }.sorted { ($0.lastPlayed ?? .distantPast) > ($1.lastPlayed ?? .distantPast) }
+    }.sorted {
+      let a=$0.lastPlayed ?? .distantPast,b=$1.lastPlayed ?? .distantPast
+      if a != b{return a>b}
+      let order=$0.title.localizedStandardCompare($1.title)
+      return order == .orderedSame ? $0.id<$1.id:order == .orderedAscending
+    }
   }
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
@@ -239,7 +218,7 @@ final class MetalCanvas: NSView {
     redraw()
   }
   func redraw() {
-    guard !suspended, bounds.width > 100, bounds.height > 100, let layer = canvasLayer, let queue,
+    guard !suspended, window != nil, bounds.width > 100, bounds.height > 100, let layer = canvasLayer, let queue,
       let pipeline
     else { return }
     autoreleasepool {
@@ -364,93 +343,65 @@ final class MetalCanvas: NSView {
       finishScene(left: left, content: content, height: height, libraryHelp: false)
       return
     }
-    text(
-      query.isEmpty ? (filter?.title ?? "Riprendi a giocare") : "Risultati per “\(query)”",
-      CGRect(x: left, y: 91, width: content, height: 36), size: 25, bold: true)
-    let games = visibleGames
-    let cardWidth = min(184, max(140, (content - 48) / 4))
-    let cardHeight = cardWidth * 1.05
-    let count = min(games.count, max(1, Int((content + 16) / (cardWidth + 16))))
-    let first = max(0, min(max(games.count - count, 0), selected - count + 1))
-    for slot in 0..<count {
-      let i = first + slot
-      let game = games[i]
-      let r = CGRect(
-        x: left + CGFloat(slot) * (cardWidth + 16), y: 143, width: cardWidth, height: cardHeight)
-      round(r, color(0x303d43))
-      cg.saveGState()
-      cg.addPath(CGPath(roundedRect: r, cornerWidth: 12, cornerHeight: 12, transform: nil))
-      cg.clip()
-      if let image = art.image(game.artworkURL, refresh: { [weak self] in self?.redraw() }) {
-        cg.saveGState()
-        cg.translateBy(x: r.minX, y: r.maxY)
-        cg.scaleBy(x: 1, y: -1)
-        cg.draw(image, in: CanvasGeometry.aspectFill(CGSize(width: CGFloat(image.width), height: CGFloat(image.height)), in: CGRect(origin: .zero, size: r.size)))
-        cg.restoreGState()
-      } else {
-        icon(
-          game.currentVariant?.platform == .macOS ? "apple.logo" : "gamecontroller.fill",
-          r.insetBy(dx: cardWidth * 0.32, dy: cardHeight * 0.32), tint: color(0x93bab3))
+    text(query.isEmpty ? (filter.map{$0.title+" · Libreria"} ?? "La tua libreria") : "Risultati per “\(query)”",
+      CGRect(x:left,y:91,width:content-110,height:36),size:25,bold:true)
+    let games=visibleGames
+    text("\(games.count) giochi",CGRect(x:width-137,y:102,width:100,height:22),size:12,color:color(0xafc1bc))
+    let gap:CGFloat=18
+    libraryViewport=CGRect(x:left-5,y:143,width:content+10,height:max(0,height-199))
+    libraryGridColumns=max(1,Int((content+gap)/178))
+    let cardWidth=floor((content-gap*CGFloat(libraryGridColumns-1))/CGFloat(libraryGridColumns))
+    let coverHeight=cardWidth*1.28,cardHeight=coverHeight+80
+    libraryCardStride=cardHeight+gap
+    let rows=(games.count+libraryGridColumns-1)/libraryGridColumns
+    libraryMaximumScroll=max(0,CGFloat(rows)*libraryCardStride-gap-libraryViewport.height)
+    libraryScroll=min(max(0,libraryScroll),libraryMaximumScroll)
+    cg.saveGState();cg.clip(to:libraryViewport)
+    for (i,game) in games.enumerated(){
+      let r=CGRect(x:left+CGFloat(i%libraryGridColumns)*(cardWidth+gap),y:143+CGFloat(i/libraryGridColumns)*libraryCardStride-libraryScroll,width:cardWidth,height:cardHeight)
+      guard r.intersects(libraryViewport)else{continue}
+      let installed=game.variants.contains{$0.installed}
+      round(r,color(installed ? 0x24332f:0x242a2d))
+      let cover=CGRect(x:r.minX,y:r.minY,width:r.width,height:coverHeight)
+      cg.saveGState();cg.addPath(CGPath(roundedRect:cover,cornerWidth:10,cornerHeight:10,transform:nil));cg.clip()
+      if let image=art.image(addresses:GameArtwork.candidates(for:game,role:.card),refresh:{[weak self]in self?.redraw()}){
+        cg.saveGState();cg.translateBy(x:cover.minX,y:cover.maxY);cg.scaleBy(x:1,y:-1)
+        cg.draw(image,in:GameArtwork.imageRect(imageSize:CGSize(width:image.width,height:image.height),in:CGRect(origin:.zero,size:cover.size),role:.card));cg.restoreGState()
+      }else{
+        let hash=game.id.utf8.reduce(0){($0*31+Int($1))&0xffffff}
+        cg.setFillColor(color(0x20363a | (hash&0x0f0f0f)).cgColor);cg.fill(cover)
+        text(String(game.title.prefix(2)).uppercased(),CGRect(x:cover.minX+16,y:cover.midY-28,width:cover.width-32,height:55),size:40,bold:true,color:color(0xb9d4ce,0.8))
+        icon("gamecontroller",CGRect(x:cover.minX+14,y:cover.minY+14,width:22,height:22),tint:color(0xc1d2ce,0.7))
       }
-      cg.setFillColor(color(0x050809, 0.85).cgColor)
-      cg.fill(CGRect(x: r.minX, y: r.maxY - 61, width: r.width, height: 61))
+      if !installed{cg.setBlendMode(.saturation);cg.setFillColor(NSColor.gray.cgColor);cg.fill(cover);cg.setBlendMode(.normal);cg.setFillColor(color(0x11171a,0.22).cgColor);cg.fill(cover)}
       cg.restoreGState()
-      text(
-        game.title, CGRect(x: r.minX + 12, y: r.maxY - 50, width: r.width - 24, height: 25),
-        size: 14, bold: true)
-      text(
-        game.currentVariant?.title ?? game.store.title,
-        CGRect(x: r.minX + 12, y: r.maxY - 26, width: r.width - 24, height: 20), size: 10,
-        color: color(0xc1d9d0))
-      if i == selected {
-        let outline = NSBezierPath(roundedRect: r.insetBy(dx: -4, dy: -4), xRadius: 15, yRadius: 15)
-        color(0xb5ffd0).setStroke()
-        outline.lineWidth = 2
-        outline.stroke()
+      text(game.title,CGRect(x:r.minX+10,y:cover.maxY+10,width:r.width-20,height:23),size:13,bold:true,color:installed ? .white:color(0xc6cdcd))
+      let chips=Self.platformLabels(game)
+      var chipX=r.minX+10
+      for chip in chips{
+        let chipWidth=ceil((chip as NSString).size(withAttributes:[.font:NSFont.systemFont(ofSize:9,weight:.semibold)]).width)+12
+        guard chipX+chipWidth<=r.maxX-6 else{break}
+        let chipRect=CGRect(x:chipX,y:cover.maxY+35,width:chipWidth,height:18)
+        round(chipRect,color(0x345245,0.8),radius:5)
+        text(chip,chipRect.insetBy(dx:6,dy:3),size:9,bold:true,color:color(0xb7e7ca));chipX+=chipWidth+5
       }
-      registerHit(r, hitRect: r.insetBy(dx: -4, dy: -4), id: "game." + game.id, action: .game(game.id))
+      text(installed ? "Installato":game.store.title,CGRect(x:r.minX+10,y:cover.maxY+56,width:r.width-20,height:16),size:10,color:color(0x93a3a4))
+      if i==selected{let outline=NSBezierPath(roundedRect:r.insetBy(dx:-3,dy:-3),xRadius:13,yRadius:13);color(0xb5ffd0).setStroke();outline.lineWidth=2;outline.stroke()}
+      registerHit(r,hitRect:r.intersection(libraryViewport),id:"game."+game.id,action:.game(game.id))
     }
-    if games.isEmpty {
-      let r = CGRect(x: left, y: 143, width: content, height: cardHeight)
-      round(r, color(0x222b30))
-      icon(
-        "plus.circle", CGRect(x: left + 23, y: 169, width: 36, height: 36), tint: color(0xa2eec2))
-      text(
-        "La tua prossima sessione comincia qui",
-        CGRect(x: left + 78, y: 165, width: content - 100, height: 32), size: 21, bold: true)
-      text(
-        "Collega uno store o importa un gioco già installato.",
-        CGRect(x: left + 78, y: 204, width: content - 100, height: 24), size: 15,
-        color: color(0xb5c2c7))
-      registerHit(r, id: "empty.import", action: .importGame)
+    cg.restoreGState()
+    if libraryMaximumScroll>0{
+      let track=CGRect(x:width-24,y:libraryViewport.minY,width:3,height:libraryViewport.height)
+      round(track,color(0xffffff,0.07),radius:2)
+      let thumbHeight=max(32,track.height*track.height/(track.height+libraryMaximumScroll))
+      round(CGRect(x:track.minX,y:track.minY+(track.height-thumbHeight)*libraryScroll/libraryMaximumScroll,width:3,height:thumbHeight),color(0x9bd2b6,0.65),radius:2)
     }
-    let y: CGFloat = 143 + cardHeight + 46
-    text(
-      "La tua libreria, il tuo modo di giocare", CGRect(x: left, y: y, width: content, height: 33),
-      size: 23, bold: true)
-    let featureWidth = (content - 20) / 2
-    let fh: CGFloat = min(200, height - y - 110)
-    if fh > 60 {
-      for i in 0..<2 {
-        let r = CGRect(
-          x: left + CGFloat(i) * (featureWidth + 20), y: y + 47, width: featureWidth, height: fh)
-        round(r, color(i == 0 ? 0x1c3a32 : 0x263547))
-        icon(
-          i == 0 ? "apple.logo" : "display",
-          CGRect(x: r.minX + 22, y: r.minY + 20, width: 36, height: 36),
-          tint: color(i == 0 ? 0xa3f5b9 : 0xa9cfff))
-        text(
-          i == 0 ? "Nativo quando disponibile" : "Tutto lo spazio al gioco",
-          CGRect(x: r.minX + 22, y: r.maxY - 76, width: r.width - 40, height: 30), size: 20,
-          bold: true)
-        text(
-          i == 0
-            ? "Scegli Apple Silicon o Windows per ogni titolo."
-            : "Il launcher rilascia le sue risorse grafiche durante la sessione.",
-          CGRect(x: r.minX + 22, y: r.maxY - 44, width: r.width - 40, height: 40), size: 13,
-          color: color(0xc3d0ce))
-        registerHit(r, id: i == 0 ? "feature.native" : "feature.resources", action: i == 0 ? .importGame : .settings)
-      }
+    if games.isEmpty{
+      let r=CGRect(x:left,y:143,width:content,height:220);round(r,color(0x222b30))
+      icon("gamecontroller",CGRect(x:left+24,y:171,width:38,height:38),tint:color(0xa2eec2))
+      text("La tua libreria comincia qui",CGRect(x:left+82,y:170,width:content-104,height:32),size:22,bold:true)
+      text("Collega uno store per vedere tutti i giochi posseduti, oppure importa un gioco installato.",CGRect(x:left+24,y:235,width:content-48,height:65),size:15,color:color(0xb5c2c7))
+      registerHit(r,id:"empty.import",action:.importGame)
     }
     finishScene(left: left, content: content, height: height, libraryHelp: true)
   }
@@ -469,7 +420,7 @@ final class MetalCanvas: NSView {
     if libraryHelp || !message.isEmpty {
       text(
         message.isEmpty
-          ? "← →  Seleziona     Invio  Gioca     Spazio  Opzioni     ⌘F  Cerca     ⌘O  Importa"
+          ? "↑ ↓ ← →  Esplora     Invio  Dettagli     Spazio  Opzioni     ⌘F  Cerca"
           : message,
         CGRect(x: left, y: height - (libraryHelp ? 38 : 21), width: content, height: libraryHelp ? 25 : 18),
         size: libraryHelp ? 12 : 11, color: color(0xaebcba))
@@ -502,12 +453,16 @@ final class MetalCanvas: NSView {
       guard section == .library else { return }
       focusID = nil
       selected = max(0, selected - 1)
-      redraw()
+      revealSelection();redraw()
     case 124:
       guard section == .library else { return }
       focusID = nil
       selected = min(max(visibleGames.count - 1, 0), selected + 1)
-      redraw()
+      revealSelection();redraw()
+    case 125,126:
+      guard section == .library else{return}
+      focusID=nil;selected=min(max(visibleGames.count-1,0),max(0,selected+(event.keyCode==125 ? libraryGridColumns:-libraryGridColumns)))
+      revealSelection();redraw()
     case 36:
       if let id = focusID, let target = hits.first(where: { $0.id == id }) { activate(target); return }
       guard section == .library else { return }
@@ -526,6 +481,35 @@ final class MetalCanvas: NSView {
     case 53: if window?.styleMask.contains(.fullScreen) == true { window?.toggleFullScreen(nil) }
     default: super.keyDown(with: event)
     }
+  }
+  private func revealSelection(){
+    let top=CGFloat(selected/max(1,libraryGridColumns))*libraryCardStride
+    if top<libraryScroll{libraryScroll=top}
+    else if top+libraryCardStride>libraryScroll+libraryViewport.height{libraryScroll=top+libraryCardStride-libraryViewport.height}
+    libraryScroll=min(libraryMaximumScroll,max(0,libraryScroll))
+  }
+  func moveLibrarySelection(_ direction:ControllerNavigation.Direction){
+    guard section == .library,interactionEnabled,!suspended else{return}
+    let delta:Int
+    switch direction{case .left:delta = -1;case .right:delta=1;case .up:delta = -libraryGridColumns;case .down:delta=libraryGridColumns}
+    selected=ControllerNavigation.movedSelection(selected,count:visibleGames.count,delta:delta)
+    revealSelection();redraw()
+  }
+  static func platformLabels(_ game:Game)->[String]{
+    var labels=[String]()
+    if game.variants.contains(where:{$0.platform == .macOS && $0.installed && ($0.architecture == .arm64 || $0.architecture == .universal)}){labels.append("Apple Silicon")}
+    else if game.variants.contains(where:{$0.platform == .macOS}){labels.append("Mac")}
+    if game.variants.contains(where:{$0.platform == .windows}){labels.append("Windows")}
+    return labels
+  }
+  override func scrollWheel(with event:NSEvent){
+    guard section == .library,interactionEnabled,!suspended else{super.scrollWheel(with:event);return}
+    let point=convert(event.locationInWindow,from:nil);guard libraryViewport.contains(point)else{return}
+    scrollLibrary(by: -event.scrollingDeltaY*(event.hasPreciseScrollingDeltas ? 1:24))
+  }
+  func scrollLibrary(by amount:CGFloat){
+    guard section == .library,interactionEnabled,!suspended,amount.isFinite else{return}
+    pressedID=nil;libraryScroll=min(libraryMaximumScroll,max(0,libraryScroll+amount));redraw()
   }
   override func mouseDown(with event: NSEvent) {
     guard interactionEnabled && !suspended else { return }

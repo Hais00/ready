@@ -58,7 +58,7 @@ arbitrary Cocoa applications. The executable and its vendor signature are not
 modified. The source-built GPL shim is a separately injected local component.
 
 Mouse/key events originate in the host view and travel over the authenticated
-session to the guest's local responder. Pointer protocol v3 makes Ready the
+session to the guest's local responder. The user-confirmed v3 pointer baseline makes Ready the
 physical owner: eligibility requires a valid first frame, completed fullscreen,
 focus and active Space. Guest associate/warp/cursor requests express virtual
 policy; a guest acknowledgement cannot release Ready's physical pointer, and
@@ -138,3 +138,21 @@ binds the journal, capture metadata and screenshot hashes. Raw logs, the full
 image, account identifiers and proprietary code remain local. Earlier partial
 frames and failures remain historical evidence; they were not rewritten as
 successful runs. No whole-application redistribution approval follows.
+
+## V4 performance work: build verified, recovery pending
+
+The committed v3 cursor/input evidence remains unchanged. A separate
+[performance checkpoint](../Validation/ready-hosted-performance-checkpoint.json)
+binds the matching-settings engine exports (37.71597 native / 34.20225 hosted
+FPS, −9.3163%, +2.723 ms mean engine frame time), the pre-v4 intro/title profile
+and the protocol-4 scoped fixtures. Engine CSVs describe engine timings, not
+on-glass display pacing. The sampled guest VSync was false while host VSync
+was true; that mismatch alone does not isolate the slowdown or stutter cause.
+
+V4 propagates the typed VSync property/ACK/cache, avoids foreground queries in
+render operations while retaining per-POLL/input checks without permission
+caching across turns, and includes mode-aware input FIFO and GPU completion
+deferral. Build and relocation pass. The current launch has no verified v4
+frames because CUA returned no window while unlock was pending. No recovery
+of stutter, input feel or performance parity is claimed. See the
+[implementation and measurement audit](HOSTED_PERFORMANCE_AUDIT.md).

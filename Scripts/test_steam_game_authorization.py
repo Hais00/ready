@@ -10,7 +10,9 @@ from swift_probe_support import prepare_core
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 WORK=pathlib.Path('/Volumes/Dati APFS/Codex-ready-01a17e79')
 FAKE=r'''
-import json,sys,threading,time
+import json,sys,threading,time,pathlib
+authorization_count=0
+pathlib.Path(__file__).with_name('authorization-count').write_text('0')
 profile=generation=None;sequence=0;state='offline';mode='valid';cancelled=False
 identity='76561198000000001';lock=threading.RLock();pending=set()
 def send(kind,id=None,**fields):
@@ -36,6 +38,7 @@ for line in sys.stdin:
  elif op=='fixture_mode':mode=request['mode'];send('result',id)
  elif op=='fixture_identity':identity=request['steamID'];send('persona',account=account());send('result',id)
  elif op=='authorize_game':
+  authorization_count+=1;pathlib.Path(__file__).with_name('authorization-count').write_text(str(authorization_count))
   assert set(request)=={'id','operation','profileID','profileGeneration','gameID'}
   app=int(request['gameID'])
   if mode=='delay':threading.Thread(target=lambda i=id,a=app:(time.sleep(.1),authorized(i,a)),daemon=True).start()
@@ -86,9 +89,9 @@ def main():
  else:products,modules,archive=prepare_core()
  run=pathlib.Path(tempfile.mkdtemp(prefix='steam-game-authorization-',dir=WORK/'tests'))
  fake=run/'fake.py';fake.write_text(FAKE);fake.chmod(0o600);binary=run/'probe'
- sources=['Sources/M1Launcher/Credentials.swift','Sources/M1Launcher/StoreClient.swift','Sources/M1Launcher/SteamClientSession.swift','Sources/M1Launcher/SteamGameAuthorization.swift','Synthetic/ReadySteamGameAuthorizationProbe.swift']
+ sources=['Sources/M1Launcher/Credentials.swift','Sources/M1Launcher/PrivateCredentialFile.swift','Sources/M1Launcher/StoreClient.swift','Sources/M1Launcher/SteamClientSession.swift','Sources/M1Launcher/SteamGameAuthorization.swift','Synthetic/ReadySteamGameAuthorizationProbe.swift']
  hashes={name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest()for name in sources}
- command=['swiftc','-swift-version','5','-parse-as-library','-I',str(modules),*[str(ROOT/x)for x in sources],str(archive),'-framework','Security','-o',str(binary)]
+ command=['swiftc','-swift-version','5','-parse-as-library','-module-cache-path',str(WORK/'cache/steam-ui-module-cache'),'-I',str(modules),*[str(ROOT/x)for x in sources],str(archive),'-framework','Security','-o',str(binary)]
  compiled=subprocess.run(command,cwd=ROOT,capture_output=True,text=True)
  if compiled.returncode:raise RuntimeError(compiled.stderr[-6000:])
  result=subprocess.run([str(binary),sys.executable,str(fake),str(run)],capture_output=True,text=True,timeout=30)
