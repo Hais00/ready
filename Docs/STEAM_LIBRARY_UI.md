@@ -48,7 +48,11 @@ scrolling. Standard Steam CDN URLs are candidates, never proof an image exists.
 Opening a detail shows the cached image first. It requests fresh public detail
 metadata and explicitly revalidates both icon and banner (plus the card) using
 conditional HTTP requests where validators exist. HTTP 304 and identical
-content hashes preserve the existing artwork revision. Only a successfully
+content hashes preserve the existing artwork revision. Revalidation pins the
+selected URL while it remains among the candidates: a reordered Store background
+cannot replace a selected library hero, and a failure at that URL does not trigger
+a switch to another image. New selections prefer the canonical Steam library hero
+before Store/background fallbacks. Only a successfully
 decoded replacement updates the binding; failed requests preserve the old good
 image. No image refresh timer invalidates this persistent cache. The first
 population still requires network transfer; prefetch cannot guarantee that every

@@ -7,19 +7,19 @@ private final class ImageProtocol:URLProtocol {
   private static let lock=NSLock()
   static var imageA=Data(),imageB=Data()
   private static var callsValue=[(String,String?,String?)](),active=0,peak=0
-  private static var changed=false,same200=false
+  private static var changed=false,same200=false,failedPaths=Set<String>()
   static func clear(){lock.lock();callsValue.removeAll();peak=0;lock.unlock()}
-  static func responseMode(changed:Bool=false,same200:Bool=false){lock.lock();self.changed=changed;self.same200=same200;lock.unlock()}
+  static func responseMode(changed:Bool=false,same200:Bool=false,failedPaths:Set<String>=[]){lock.lock();self.changed=changed;self.same200=same200;self.failedPaths=failedPaths;lock.unlock()}
   static var calls:[(String,String?,String?)]{lock.lock();defer{lock.unlock()};return callsValue}
   static var maximum:Int{lock.lock();defer{lock.unlock()};return peak}
   override class func canInit(with request:URLRequest)->Bool{request.url?.host=="artwork.invalid"}
   override class func canonicalRequest(for request:URLRequest)->URLRequest{request}
   override func startLoading(){
     let path=request.url!.path
-    Self.lock.lock();Self.active+=1;Self.peak=max(Self.peak,Self.active);Self.callsValue.append((path,request.value(forHTTPHeaderField:"If-None-Match"),request.value(forHTTPHeaderField:"If-Modified-Since")));let changed=Self.changed,same200=Self.same200;Self.lock.unlock()
+    Self.lock.lock();Self.active+=1;Self.peak=max(Self.peak,Self.active);Self.callsValue.append((path,request.value(forHTTPHeaderField:"If-None-Match"),request.value(forHTTPHeaderField:"If-Modified-Since")));let changed=Self.changed,same200=Self.same200,failed=Self.failedPaths.contains(path);Self.lock.unlock()
     DispatchQueue.global().asyncAfter(deadline:.now()+((path.hasPrefix("/20/") || path.hasPrefix("/21/")) ? 0.8:0.015)){[self]in
       let missing=path.contains("missing"),blue=changed && path.contains("new-banner"),etag=blue ? "\"blue\"":"\"red\""
-      let status=missing ? 404:(!same200 && self.request.value(forHTTPHeaderField:"If-None-Match")==etag ? 304:200)
+      let status=failed ? 503:missing ? 404:(!same200 && self.request.value(forHTTPHeaderField:"If-None-Match")==etag ? 304:200)
       let response=HTTPURLResponse(url:self.request.url!,statusCode:status,httpVersion:"HTTP/1.1",headerFields:["Content-Type":"image/png","ETag":etag,"Last-Modified":"Wed, 28 Oct 2026 12:00:00 GMT"])!
       Self.lock.lock();Self.active-=1;Self.lock.unlock()
       self.client?.urlProtocol(self,didReceive:response,cacheStoragePolicy:.notAllowed)
@@ -73,6 +73,12 @@ private final class ImageProtocol:URLProtocol {
     try spin{disk(directory)?.roles.values.first{$0.gameID==first.id && $0.role == .banner}?.preferredURL=="https://artwork.invalid/1/new-banner.png"}
     let current=disk(directory)!,indexed=current.roles.values.first{$0.gameID==first.id && $0.role == .banner}!
     try check(indexed.hash != oldIndex.roles.values.first{$0.gameID==first.id && $0.role == .banner}?.hash && current.urls[indexed.preferredURL!]?.etag=="\"blue\"","durableRoleIndexBindsPreferredURLContentHashAndETag")
+    var reordered=updated;reordered.metadata?["heroURL"] = .string("https://artwork.invalid/1/alternative-background.png")
+    notices.removeAll();ImageProtocol.clear();cache.revalidate(game:reordered);settle(0.4)
+    try check(!ImageProtocol.calls.contains{$0.0.contains("alternative-background")} && ImageProtocol.calls.contains{$0.0=="/1/new-banner.png"} && notices.isEmpty && ObjectIdentifier(cache.image(for:reordered,role:.banner,refresh:{})!)==ObjectIdentifier(cache.image(for:updated,role:.banner,refresh:{})!),"metadataReorderingKeepsSelectedBannerInsteadOfSwitchingToAnotherImage")
+    ImageProtocol.responseMode(changed:true,failedPaths:["/1/new-banner.png"]);ImageProtocol.clear();cache.revalidate(game:reordered);settle(0.4)
+    try check(!ImageProtocol.calls.contains{$0.0.contains("alternative-background")} && notices.isEmpty && disk(directory)?.roles.values.first{$0.gameID==first.id && $0.role == .banner}?.hash==indexed.hash,"selectedBannerFailureNeverSubstitutesAnAvailableDifferentBackground")
+    ImageProtocol.responseMode(changed:true)
     var unavailable=updated;unavailable.artworkURL="https://artwork.invalid/1/missing-card.png"
     unavailable.metadata?["capsuleURL"] = .string(unavailable.artworkURL!)
     unavailable.metadata?["iconURL"] = .string("https://artwork.invalid/1/missing-icon.png")
@@ -106,6 +112,13 @@ private final class ImageProtocol:URLProtocol {
     try spin{cache.image(for:updated,role:.banner,refresh:{}) != nil}
     try check(Date().timeIntervalSince(cacheReadStart)<0.4,"indexedDiskHitDoesNotWaitBehindSlowBackgroundDownloads")
     settle(1.0)
+    var sameAsset=game(30);sameAsset.metadata?["heroURL"] = .string("https://artwork.invalid/30/new-banner.png");sameAsset.metadata?["bannerURL"] = .string("https://artwork.invalid/30/new-banner.png")
+    ImageProtocol.responseMode();cache.prefetch(game:sameAsset);try spin{cache.image(for:sameAsset,role:.banner,refresh:{}) != nil};settle()
+    let sameBefore=ObjectIdentifier(cache.image(for:sameAsset,role:.banner,refresh:{})!);notices.removeAll();ImageProtocol.responseMode(changed:true);cache.revalidate(game:sameAsset)
+    try spin{notices.contains{($0["gameID"]as?String)==sameAsset.id && ($0["role"]as?String)=="banner" && ($0["changed"]as?Bool)==true}}
+    try check(ObjectIdentifier(cache.image(for:sameAsset,role:.banner,refresh:{})!) != sameBefore,"selectedBannerStillUpdatesWhenBytesAtTheSameURLActuallyChange")
+    var steam=game(31);steam.store = .steam;steam.storeID="31";steam.metadata?["heroURL"] = .string("https://artwork.invalid/store-background.png")
+    try check(GameArtwork.candidates(for:steam,role:.banner).first=="https://cdn.akamai.steamstatic.com/steam/apps/31/library_hero.jpg","steamLibraryHeroPriorityDoesNotDependOnStoreBackgroundMetadata")
     let indexMode=(try FileManager.default.attributesOfItem(atPath:directory.appendingPathComponent("index.json").path)[.posixPermissions]as!NSNumber).intValue
     try check(indexMode==0o600 && (try FileManager.default.attributesOfItem(atPath:directory.path)[.posixPermissions]as!NSNumber).intValue==0o700,"indexAndDirectoryRemainOwnerPrivate")
     let sentinel=directory.appendingPathComponent("unrelated-cache-file");try Data("keep".utf8).write(to:sentinel)

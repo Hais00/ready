@@ -18,7 +18,11 @@
     "detailRevalidatesIconAndBanner": true,
     "unchangedBytesDoNotInvalidate": true,
     "networkFailurePreservesGoodAsset": true,
-    "maximumConcurrentImageRequests": 2
+    "maximumConcurrentImageRequests": 2,
+    "selectedURLPinnedDuringDetailRevalidation": true,
+    "selectedURLFailureDoesNotSubstituteDifferentImage": true,
+    "canonicalSteamHeroPreferredForNewSelection": true,
+    "cachedBannerDiskReadDoesNotFlashIcon": true
   },
   "classification": {
     "authoritativePICSAndSelfOwnedGamesCM": true,
@@ -54,18 +58,19 @@
     "tileBytes": 25138176,
     "tileCount": 32,
     "chromeRastersDuringScroll": 0,
-    "onScreenSmoothnessVerified": false
+    "onScreenSmoothnessVerified": false,
+    "measurementPrecedesBannerStabilityFix": true
   },
   "tests": {
     "artwork-index-tests": {
       "passed": true,
-      "count": 22,
-      "reportSHA256": "582d60a04cd65daacaed3f3c54d087a545c9cfe2d8124d022dcdcbebe1cebd6e"
+      "count": 26,
+      "reportSHA256": "e7d465af14adf26f783c828922fa03a44e06935fd5000da0d4bf0a3fecee9579"
     },
     "launch-splash-ui-tests": {
       "passed": true,
       "count": 34,
-      "reportSHA256": "77f8ec8b682fef27d7277faf07d95bb33d599926021eb435276f2fb2855ef6b3"
+      "reportSHA256": "9c01a0173cd2da72608d91761793e2f701ff3b8f0e17e8b9587efb31e5c0ab7c"
     },
     "library-scroll-ui-tests": {
       "passed": true,
@@ -74,8 +79,8 @@
     },
     "library-detail-ui-tests": {
       "passed": true,
-      "count": 45,
-      "reportSHA256": "627a43cc2c7707764e11abdd92157a3056068712b7aa4eeca140bf3d796f3153"
+      "count": 47,
+      "reportSHA256": "a9102d4fe37444ccd2153212d6e1bb967b750208f86641a5518fb314ef33ce63"
     },
     "steam-library-tests": {
       "passed": true,
@@ -103,7 +108,7 @@
   "frontend": {
     "buildPassed": true,
     "relocationChecksPassed": 14,
-    "executableSHA256": "54d8ef50d1627ed981231466b4dad0a553de1f76f4de12972415900f6dca6405",
+    "executableSHA256": "b3ec6180205a899046ba6e55da7812ac37e1af26475ab3cc63425b069abdad8c",
     "correspondingSourceMatchesBundle": true,
     "sourceHashes": {
       "Sources/LauncherCore/ArchitectureProbe.swift": "c76c2768a6b0343880ffcbc6963e3a565c0f9ed22696cd473ed97d5730fae8a1",
@@ -126,7 +131,7 @@
       "Sources/LauncherCore/RuntimeLocationStore.swift": "6bdd15fa7466507740e11c8a4ad680072ac6b8f882cb2ce5b1ccee1e8bbd1252",
       "Sources/LauncherCore/StoreToolsLocation.swift": "feb97a5b06a39387105118c1b11e267f7ad960d55499d75faf0f6fde61e5fc2e",
       "Sources/LauncherCore/WindowsBuiltinBootstrap.swift": "1a27614bf254f40d06354d25e948d6f1a636eed8e87a8f486f9899e5e9d20cfa",
-      "Sources/M1Launcher/ArtworkCache.swift": "469c96add536efee60cba24492c90f3149e26e4e038f51488f26b033fee991a3",
+      "Sources/M1Launcher/ArtworkCache.swift": "c03ea6135558176da0b0c3dda4b13bcaa1432b6a90225bf4cacf42058fba84f8",
       "Sources/M1Launcher/ArtworkIndexStore.swift": "868360c4ada32a3b18399aa1fa77811bfaf776fda3711dd0a8c24e34bfa3462d",
       "Sources/M1Launcher/CanvasDrawing.swift": "67181a6fdaf482f9c3e69c1779819237dbbe730199bf187b9135d336272b87f7",
       "Sources/M1Launcher/CanvasShellRenderer.swift": "d96d2bcad0756e44d99967482cd068e8714f95a1a8cf6fb27bc2d79be2f83b1f",
@@ -135,10 +140,10 @@
       "Sources/M1Launcher/DataMaintenance.swift": "f78276e4e6b169b07820d48bc4c12918c65f94530be2ca2e4eb2f098e79975df",
       "Sources/M1Launcher/EvaluationSettings.swift": "2b5cebc32226c500a26798f709db0f1db7d1fae8c83c4639bb706c671b10c006",
       "Sources/M1Launcher/FrontendLifecycle.swift": "9ff4454991b21a6253a219d6820aa8652da6f241873f6d050524b76e9bb55c1b",
-      "Sources/M1Launcher/GameArtwork.swift": "e37c8746943ee29ceb444da11bc8e1ef79bb7875cf33d36db5329a6b63640d65",
+      "Sources/M1Launcher/GameArtwork.swift": "a41fcdd91dd46932a68e19d14fb4e3fe33019192b1951d4904aca4625835e080",
       "Sources/M1Launcher/GameDetailUI.swift": "28e6f09c418188dc7a0a51583942d9bae2b36fad35ea669ce3ce4dcc97ad0f43",
-      "Sources/M1Launcher/GameDetailView.swift": "bee001a04c50848e64140d5b85d8259da2552f6a9d551e5b1263190d0a4ac369",
-      "Sources/M1Launcher/GameLaunchSplash.swift": "68843d776dd4864c0805fc0543ad1db076a8528a743a25ffc7c3379eaf1630c8",
+      "Sources/M1Launcher/GameDetailView.swift": "f456ea0543f1a3e57bd6d246c345883fe92b75bb828dd2ddd88fa69c147eb05a",
+      "Sources/M1Launcher/GameLaunchSplash.swift": "7264193cf84305a32020b52037fee98da0bba05ac1a3142805b7f068e42d0ee7",
       "Sources/M1Launcher/GameLaunchUI.swift": "586d95e356a09803fe9dfaa1952856dc5bb407839bb0652128e20ee9d3122f1d",
       "Sources/M1Launcher/HostedGamePresentation.swift": "579910b77a326416680eaa96862399ff199faff4f4664546f67c69bc7267826d",
       "Sources/M1Launcher/LibraryEntryPresentation.swift": "68589d4dc1e2f1f5ef2c8f2e9b979cf17d53b76705674b866b050f18b24913fc",
@@ -177,10 +182,37 @@
     }
   },
   "limits": [
-    "On-screen review is deferred while the Mac is locked.",
+    "On-screen scrolling smoothness remains unmeasured; banner stability was visually checked across two detail openings for one title.",
     "Some license contents have no public Store title, description or publisher artwork.",
     "Initial background cache population and rate-limited metadata requests can remain in progress.",
     "Fresh private-file sign-in and authenticated self-owned-games CM response remain unverified.",
     "Raw validation outputs and publisher images remain local and excluded from Git."
-  ]
+  ],
+  "bannerStabilityFix": {
+    "date": "2026-10-29",
+    "tests": {
+      "artwork-index-tests": {
+        "passed": true,
+        "count": 26,
+        "reportSHA256": "e7d465af14adf26f783c828922fa03a44e06935fd5000da0d4bf0a3fecee9579"
+      },
+      "library-detail-ui-tests": {
+        "passed": true,
+        "count": 47,
+        "reportSHA256": "a9102d4fe37444ccd2153212d6e1bb967b750208f86641a5518fb314ef33ce63"
+      },
+      "launch-splash-ui-tests": {
+        "passed": true,
+        "count": 34,
+        "reportSHA256": "9c01a0173cd2da72608d91761793e2f701ff3b8f0e17e8b9587efb31e5c0ab7c"
+      }
+    },
+    "liveDetailOpenedTwice": true,
+    "liveTitleCount": 1,
+    "liveBannerURLAndHashUnchangedAcrossReopen": true,
+    "onScreenSameBannerObserved": true,
+    "gameLaunched": false,
+    "screenshotsUploadedToRepository": false,
+    "scope": "Selected URL remains pinned while still listed in metadata; changed bytes or a removed source can legitimately update the image."
+  }
 }

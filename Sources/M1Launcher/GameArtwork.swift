@@ -38,7 +38,9 @@ enum GameArtwork {
       let known=[string("portraitURL",game)]+[capsule,game.artworkURL].filter{portrait($0)}
       return unique(known+[base+"library_600x900.jpg",capsule,game.artworkURL,icon])
     case .banner:
-      return unique([hero,base+"library_hero.jpg",banner,game.artworkURL,base+"header.jpg"].filter{$0 != icon})
+      // Store backgrounds and library heroes are different artwork. The
+      // canonical library hero keeps selection independent of metadata arrival.
+      return unique([base+"library_hero.jpg",hero,banner,game.artworkURL,base+"header.jpg"].filter{$0 != icon})
     case .icon:return unique([icon,game.artworkURL,capsule,base+"header.jpg"])
     }
   }

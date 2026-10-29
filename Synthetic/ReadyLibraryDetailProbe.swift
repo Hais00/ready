@@ -130,6 +130,15 @@ private final class HiddenLibraryWindow:NSWindow {
     check("steam-artwork-prefers-portrait-hero-and-canonical-app-ids",cardCandidates.first?.hasSuffix("/500000/library_600x900.jpg")==true && bannerCandidates.first?.hasSuffix("/500000/library_hero.jpg")==true && !bannerCandidates.contains("https://artwork.ready.invalid/icon32.jpg") && GameArtwork.candidates(for:invalidID,role:.card).allSatisfy{!$0.contains("steam/apps/")} && GameArtwork.candidates(for:nonSteam,role:.card).first=="https://artwork.ready.invalid/capsule_184x69.jpg")
     let imageBounds=CGRect(x:10,y:20,width:200,height:260),smallRect=GameArtwork.imageRect(imageSize:CGSize(width:32,height:32),in:imageBounds,role:.card),wideRect=GameArtwork.imageRect(imageSize:CGSize(width:184,height:69),in:imageBounds,role:.card)
     check("small-or-low-resolution-artwork-centers-without-upscale",smallRect.size==CGSize(width:32,height:32) && smallRect.midX==imageBounds.midX && smallRect.midY==imageBounds.midY && wideRect.size==CGSize(width:184,height:69) && GameArtwork.shouldAspectFit(imageSize:CGSize(width:32,height:32),role:.banner) && GameArtwork.imageRect(imageSize:.zero,in:imageBounds,role:.icon) == .zero)
+    let cachedBannerGame=games[0]
+    let bannerDeadline=Date().addingTimeInterval(3)
+    while cache.image(for:cachedBannerGame,role:.banner,refresh:{})==nil && Date()<bannerDeadline{pump()};pump(0.15)
+    let coldCache=ArtworkCache(directory:disk,session:session,networkEnabled:false)
+    let iconDeadline=Date().addingTimeInterval(3)
+    while coldCache.image(for:cachedBannerGame,role:.icon,refresh:{})==nil && Date()<iconDeadline{pump()}
+    let stableDetail=GameDetailView(game:cachedBannerGame,artwork:coldCache,profile:UUID())
+    check("cached-banner-disk-load-does-not-flash-a-different-icon",coldCache.hasCachedImage(gameID:cachedBannerGame.id,role:.banner) && stableDetail.artworkSnapshot.role == .banner && !stableDetail.artworkSnapshot.hasImage)
+    pump(0.25);check("cached-banner-appears-after-disk-decode-without-role-switch",stableDetail.artworkSnapshot.role == .banner && stableDetail.artworkSnapshot.hasImage);coldCache.purge()
     let detail=GameDetailView(game:games[0],artwork:cache,profile:UUID())
     let detailWindow=HiddenLibraryWindow(contentRect:detail.frame,styleMask:[.titled],backing:.buffered,defer:false);detailWindow.isReleasedWhenClosed=false;detailWindow.contentView=detail
     defer{detailWindow.close()}

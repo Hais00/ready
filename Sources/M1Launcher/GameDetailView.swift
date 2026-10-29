@@ -78,6 +78,7 @@ private final class GameHeroView:NSView {
     let choices=presentedVariants
     return choices.first{$0.id==selectedID} ?? choices.first{$0.id==game.currentVariant?.id} ?? choices.first
   }
+  var artworkSnapshot:(role:GameArtwork.Role,hasImage:Bool){(hero.role,hero.image != nil)}
   var detailSnapshot:(gameID:String,variantID:String?,primaryTitle:String,primaryEnabled:Bool,contentHeight:CGFloat){(game.id,selectedVariant?.id,play.title,play.isEnabled,frame.height)}
   override var isFlipped:Bool{true}
   override var isOpaque:Bool{true}
@@ -141,7 +142,7 @@ private final class GameHeroView:NSView {
   private func updateHero(){
     let refresh:()->Void={ [weak self] in MainActor.assumeIsolated{if let self{self.updateHero()}} }
     if let image=artwork.image(for:game,role:.banner,refresh:refresh){hero.role = .banner;hero.image=image}
-    else{hero.role = .icon;hero.image=artwork.image(for:game,role:.icon,refresh:refresh)}
+    else if !artwork.hasCachedImage(gameID:game.id,role:.banner){hero.role = .icon;hero.image=artwork.image(for:game,role:.icon,refresh:refresh)}
   }
   private func render(){
     titleLabel.stringValue=LibraryEntryPresentation.title(game);hero.fallback=LibraryEntryPresentation.title(game);updateHero()

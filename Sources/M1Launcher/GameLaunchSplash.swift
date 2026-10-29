@@ -116,6 +116,7 @@ final class GameLaunchSplash:NSView {
     guard let game=artworkGame else{return}
     let refresh:()->Void={ [weak self] in self?.refreshArtwork() }
     let banner=artwork.image(for:game,role:.banner,refresh:refresh)
+    if banner==nil,artwork.hasCachedImage(gameID:game.id,role:.banner){return}
     guard let image=banner ?? artwork.image(for:game,role:.icon,refresh:refresh) else{return}
     let identifier=ObjectIdentifier(image)
     guard loadedImageIdentifier != identifier else{return}

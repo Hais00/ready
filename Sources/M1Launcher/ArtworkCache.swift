@@ -47,6 +47,7 @@ final class ArtworkCache {
   /// Called only by the detail-open flow, after showing its existing cache.
   /// Checks icon AND banner even if their URL strings have not changed.
   func revalidate(game:Game){whenLoaded{[weak self]in guard let self else{return};for role in [GameArtwork.Role.icon,.banner,.card]{self.bind(game,role:role);self.enqueue(gameID:game.id,role:role,force:true,priority:true)}}}
+  func hasCachedImage(gameID:String,role:GameArtwork.Role)->Bool{index.roles[key(gameID,role)]?.hash != nil}
   func revision(gameID:String,role:GameArtwork.Role)->UInt64{revisions[key(gameID,role)] ?? 0}
   func image(for game:Game,role:GameArtwork.Role,refresh:@escaping()->Void)->CGImage?{
     let binding=key(game.id,role)
@@ -111,7 +112,12 @@ final class ArtworkCache {
     }
     if !force,record.hash==nil,warmFinished.contains(id){return}
     if !force,let hash=record.hash,memory.object(forKey:memoryKey(hash,role)as NSString) != nil{return}
-    let job=Job(key:id,gameID:gameID,role:role,candidates:record.candidates,force:force,priority:priority)
+    // Metadata may reorder different Steam assets. Revalidate the selected
+    // asset itself; a transient failure must not replace it with another image.
+    let candidates:[String]
+    if force,record.hash != nil,let preferred=record.preferredURL,record.candidates.contains(preferred){candidates=[preferred]}
+    else{candidates=record.candidates}
+    let job=Job(key:id,gameID:gameID,role:role,candidates:candidates,force:force,priority:priority)
     if let existing=jobs[id]{
       if force{if !existing.force || existing.candidates != job.candidates{deferred[id]=job}}
       else if priority && !existing.priority {var upgraded=existing;upgraded.priority=true;jobs[id]=upgraded;tasks[id]?.priority=URLSessionTask.defaultPriority;if let i=pending.firstIndex(of:id){pending.remove(at:i);pending.insert(id,at:0)}}
