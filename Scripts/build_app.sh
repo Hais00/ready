@@ -35,6 +35,7 @@ else
   python3 Scripts/frontend_snapshot.py capture-inputs --output "$stage/build-inputs.json"
   sh Scripts/build_overlay.sh
   sh Scripts/build_session_host.sh
+  sh Scripts/build_hosted_game_shim.sh
   swift build -c release --product M1Launcher --jobs 2
   mkdir -p "$PWD/Build/AppBuildSnapshots"
   snapshot="$PWD/Build/AppBuildSnapshots/release-$(date +%Y%m%d%H%M%S)-$$"
@@ -60,6 +61,7 @@ cat > "$app/Contents/Info.plist" <<'EOF'
 EOF
 /usr/bin/codesign --verify --strict "$app/Contents/Resources/ReadySupport/Build/ReadySessionHost"
 /usr/bin/codesign --verify --strict "$app/Contents/Resources/ReadySupport/Build/libReadyOverlay.dylib"
+/usr/bin/codesign --verify --strict "$app/Contents/Resources/ReadySupport/Build/libReadyHostedGame.dylib"
 # Recheck exact sources/support before signing/publication too. Documentation and
 # packaging resources may change independently; compiled inputs may not.
 python3 Scripts/frontend_snapshot.py verify "$snapshot" >/dev/null

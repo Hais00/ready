@@ -22,14 +22,19 @@ def main():
         files = {'Package.swift': '// synthetic package fixture\n',
                  'Sources/LauncherCore/A.swift': '// synthetic Core fixture\n',
                  'Sources/M1Launcher/main.swift': '// synthetic App fixture\n',
+                 'Sources/ReadyHostedView/ReadyHostedView.m': '// synthetic owned hosted-view fixture\n',
+                 'Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h': '// synthetic public protocol fixture\n',
+                 'NativeEmbedding/ReadyHostedGameShim.m': '// synthetic owned shim fixture\n',
                  'Overlay/Overlay.m': '// synthetic overlay fixture\n',
                  'SessionHost/Host.c': '// synthetic helper fixture\n',
                  'Scripts/build_app.sh': '# synthetic top-level build flags/recipe\n',
                  'Scripts/frontend_snapshot.py': '# synthetic snapshot validator source\n',
                  'Scripts/build_overlay.sh': '# synthetic build recipe\n',
                  'Scripts/build_session_host.sh': '# synthetic build recipe\n',
+                 'Scripts/build_hosted_game_shim.sh': '# synthetic hosted shim build recipe\n',
                  'Build/libReadyOverlay.dylib': 'synthetic owned fixture bytes, not native code\n',
                  'Build/ReadySessionHost': 'synthetic owned fixture bytes, not native code\n',
+                 'Build/libReadyHostedGame.dylib': 'synthetic owned hosted fixture bytes, not native code\n',
                  'products/M1Launcher': 'synthetic owned executable bytes, never executed\n',
                  'products/LauncherCore.swiftmodule/arm64.swiftmodule': 'synthetic compiler-module fixture\n',
                  'products/M1Launcher.swiftmodule/arm64.swiftmodule': 'synthetic compiler-module fixture\n'}
@@ -70,6 +75,11 @@ def main():
         negative('unlistedArtifactRejected', lambda root: (root / 'snapshot/Modules/frontend-snapshot.json').write_text('unlisted artifact with metadata-like name'))
         negative('changedNativeSupportRejected', lambda root: (root / 'Build/ReadySessionHost').write_text('changed synthetic native support'))
         negative('changedOverlaySourceRejected', lambda root: (root / 'Overlay/Overlay.m').write_text('changed overlay source'))
+        negative('changedHostedGameShimSourceRejected', lambda root: (root / 'NativeEmbedding/ReadyHostedGameShim.m').write_text('changed shim source'))
+        negative('changedHostedGameBuildRecipeRejected', lambda root: (root / 'Scripts/build_hosted_game_shim.sh').write_text('changed shim build flags'))
+        negative('changedHostedViewSourceRejected', lambda root: (root / 'Sources/ReadyHostedView/ReadyHostedView.m').write_text('changed hosted view source'))
+        negative('changedHostedViewHeaderRejected', lambda root: (root / 'Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h').write_text('changed protocol header'))
+        negative('changedHostedGameSupportRejected', lambda root: (root / 'Build/libReadyHostedGame.dylib').write_text('changed synthetic hosted support'))
         legacy = parent / 'legacy-v1'; legacy.mkdir()
         (legacy / '.ready-controller-policy-core-snapshot.json').write_text('{"sourceSHA256":{},"archiveSHA256":"v1"}')
         try:

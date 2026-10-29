@@ -20,7 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 NAME = 'frontend-snapshot.json'
 KIND = 'ready-frontend-build-snapshot-v2'
 FIXTURE = KIND + '-test-fixture-only'
-SUPPORT = {'overlay': 'Build/libReadyOverlay.dylib', 'sessionHost': 'Build/ReadySessionHost'}
+SUPPORT = {'overlay': 'Build/libReadyOverlay.dylib', 'sessionHost': 'Build/ReadySessionHost',
+           'hostedGameShim': 'Build/libReadyHostedGame.dylib'}
 
 
 def digest(path):
@@ -62,7 +63,8 @@ def source_inputs(root):
     root = Path(root).resolve(strict=True)
     paths = [root / name for name in ('Package.swift', 'Scripts/build_app.sh',
                                     'Scripts/frontend_snapshot.py', 'Scripts/build_overlay.sh',
-                                    'Scripts/build_session_host.sh')]
+                                    'Scripts/build_session_host.sh', 'Scripts/build_hosted_game_shim.sh',
+                                    'NativeEmbedding/ReadyHostedGameShim.m')]
     for directory in ('Sources', 'Overlay', 'SessionHost'):
         base = root / directory
         if not base.is_dir() or base.is_symlink():
@@ -72,12 +74,14 @@ def source_inputs(root):
                 raise ValueError('Source symlinks are not accepted in a strict build snapshot')
             if path.is_file() and path.name != '.DS_Store':
                 paths.append(path)
-    for required in ('Sources/LauncherCore', 'Sources/M1Launcher'):
+    for required in ('Sources/LauncherCore', 'Sources/M1Launcher', 'Sources/ReadyHostedView'):
         if not any(path.is_relative_to(root / required) for path in paths):
-            raise ValueError('Core/App source inventory is empty')
+            raise ValueError('Core/App/hosted-view source inventory is empty')
     result = {}
     for path in sorted(set(paths)):
         regular(path)
+        if path.resolve(strict=True) != path:
+            raise ValueError('Source parent aliases are not accepted in a strict build snapshot')
         result[str(path.relative_to(root))] = digest(path)
     return result
 
@@ -214,7 +218,7 @@ def verify_snapshot(root, snapshot, allow_fixture=False):
     if not fixture:
         native_signature(snapshot / 'M1Launcher', executable=True)
     if support_state(root, fixture=fixture) != doc.get('nativeSupport'):
-        raise ValueError('Current signed overlay/helper differs from captured native support')
+        raise ValueError('Current signed native support differs from captured snapshot')
     return snapshot / 'M1Launcher'
 
 

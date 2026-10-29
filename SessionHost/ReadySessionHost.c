@@ -23,6 +23,7 @@ static volatile sig_atomic_t child_group=0;
 static volatile sig_atomic_t pending_signal=0;
 static int spawn_error=0;
 static int steam_bootstrap=0;
+static const char *presentation_shim=NULL;
 extern char **environ;
 
 static void forward_signal(int signal_number) {
@@ -34,7 +35,7 @@ static void forward_signal(int signal_number) {
 }
 static int usage(const char *message) {
     if(message)fprintf(stderr,"ReadySessionHost: %s\n",message);
-    fprintf(stderr,"usage: ReadySessionHost [--wine-server /path/wineserver --prefix /path/prefix] [--installation /absolute/root] [--steam-bootstrap] -- /path/program [args...]\n");
+    fprintf(stderr,"usage: ReadySessionHost [--wine-server /path/wineserver --prefix /path/prefix] [--installation /absolute/root] [--steam-bootstrap] [--presentation-shim /path/library --presentation-shim-sha256 digest] -- /path/program [args...]\n");
     return 64;
 }
 static int normal_status(int status) {
@@ -189,6 +190,24 @@ static int steam_adapters_valid(const char *list) {
     }
     free(copy);return valid&&count==3;
 }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+static int presentation_file_valid(const char *path,const char *expected) {
+    char canonical[PATH_MAX];struct stat before,after,named;
+    if(!path||path[0]!='/'||!ready_steam_digest_valid(expected)||!realpath(path,canonical)||strcmp(path,canonical))return 0;
+    int fd=open(path,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);if(fd<0)return 0;int valid=0;
+    if(fstat(fd,&before)||!S_ISREG(before.st_mode)||before.st_uid!=geteuid()||(before.st_mode&0022))goto finish;
+    CC_SHA256_CTX context;CC_SHA256_Init(&context);unsigned char bytes[65536],digest[CC_SHA256_DIGEST_LENGTH];
+    for(;;){ssize_t count=read(fd,bytes,sizeof bytes);if(count<0&&errno==EINTR)continue;if(count<0)goto finish;if(!count)break;CC_SHA256_Update(&context,bytes,(CC_LONG)count);}
+    CC_SHA256_Final(digest,&context);char actual[65];for(unsigned i=0;i<sizeof digest;i++)snprintf(actual+i*2,3,"%02x",digest[i]);
+    if(strcmp(actual,expected)||fstat(fd,&after)||lstat(path,&named))goto finish;
+    valid=before.st_dev==after.st_dev&&before.st_ino==after.st_ino&&before.st_size==after.st_size&&before.st_mode==after.st_mode&&before.st_uid==after.st_uid&&
+        before.st_mtimespec.tv_sec==after.st_mtimespec.tv_sec&&before.st_mtimespec.tv_nsec==after.st_mtimespec.tv_nsec&&
+        before.st_ctimespec.tv_sec==after.st_ctimespec.tv_sec&&before.st_ctimespec.tv_nsec==after.st_ctimespec.tv_nsec&&named.st_dev==after.st_dev&&named.st_ino==after.st_ino&&S_ISREG(named.st_mode);
+finish:
+    close(fd);return valid;
+}
+#pragma clang diagnostic pop
 static pid_t spawn_program(char *const argv[],int game,const sigset_t *original_mask) {
     posix_spawnattr_t attr;posix_spawn_file_actions_t actions;pid_t pid=-1;
     int error=posix_spawnattr_init(&attr);if(error){spawn_error=error;return -1;}
@@ -208,7 +227,13 @@ static pid_t spawn_program(char *const argv[],int game,const sigset_t *original_
     size_t used=0;
     for(size_t i=0;i<count;i++)if(strncmp(environ[i],"DYLD_INSERT_LIBRARIES=",22))environment[used++]=environ[i];
     char *injection=NULL;const char *overlay=getenv("READY_OVERLAY_LIBRARY");struct stat st;
-    if(game&&steam_bootstrap){
+    if(game&&presentation_shim){
+        const char *adapters=steam_bootstrap?getenv("READY_STEAM_ADAPTER_LIBRARIES"):NULL;
+        if(steam_bootstrap&&!steam_adapters_valid(adapters)){free(environment);error=EINVAL;goto finish;}
+        // The no-copy experiment must not create a separate guest overlay/HUD.
+        if(asprintf(&injection,"DYLD_INSERT_LIBRARIES=%s%s%s",adapters?adapters:"",adapters?":":"",presentation_shim)<0){free(environment);error=ENOMEM;goto finish;}
+        environment[used++]=injection;
+    } else if(game&&steam_bootstrap){
         const char *adapters=getenv("READY_STEAM_ADAPTER_LIBRARIES");
         if(!steam_adapters_valid(adapters)||(overlay&&*overlay&&!steam_adapter_file(overlay))){free(environment);error=EINVAL;goto finish;}
         if(asprintf(&injection,"DYLD_INSERT_LIBRARIES=%s%s%s",adapters,overlay&&*overlay?":":"",overlay&&*overlay?overlay:"")<0){free(environment);error=ENOMEM;goto finish;}
@@ -229,6 +254,7 @@ finish:
 int main(int argc,char **argv) {
     const char *server=NULL,*prefix=NULL,*installation=NULL,*installation_root=NULL;int command=0;
     const char *steam_executable_sha=NULL,*steam_sdk=NULL,*steam_sdk_sha=NULL;
+    const char *presentation_sha=NULL;
     for(int i=1;i<argc;i++){
         if(!strcmp(argv[i],"--")){command=i+1;break;}
         if(!strcmp(argv[i],"--wine-server") && i+1<argc)server=argv[++i];
@@ -239,12 +265,17 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[i],"--steam-executable-sha256")&&i+1<argc&&!steam_executable_sha)steam_executable_sha=argv[++i];
         else if(!strcmp(argv[i],"--steam-sdk")&&i+1<argc&&!steam_sdk)steam_sdk=argv[++i];
         else if(!strcmp(argv[i],"--steam-sdk-sha256")&&i+1<argc&&!steam_sdk_sha)steam_sdk_sha=argv[++i];
+        else if(!strcmp(argv[i],"--presentation-shim")&&i+1<argc&&!presentation_shim)presentation_shim=argv[++i];
+        else if(!strcmp(argv[i],"--presentation-shim-sha256")&&i+1<argc&&!presentation_sha)presentation_sha=argv[++i];
         else return usage("unknown or incomplete option");
     }
     if(command==0 || command>=argc || argv[command][0]!='/')return usage("program must be an absolute executable path after --");
     if(server && (server[0]!='/' || !prefix || prefix[0]!='/'))return usage("wine-server requires an absolute server path and explicit absolute prefix");
     if(prefix && prefix[0]!='/')return usage("prefix must be absolute");
     if(installation_root && !installation)return usage("installation-lock-root requires installation");
+    if((presentation_shim!=NULL)!=(presentation_sha!=NULL)||
+       (presentation_shim&&(!installation||server||presentation_shim[0]!='/'||!ready_steam_digest_valid(presentation_sha))))
+        return usage("presentation requires native installation and both pinned shim fields");
     int image_arguments=(steam_executable_sha!=NULL)+(steam_sdk!=NULL)+(steam_sdk_sha!=NULL);
     if(image_arguments&&(!steam_bootstrap||image_arguments!=3||!installation||!ready_steam_digest_valid(steam_executable_sha)||!ready_steam_digest_valid(steam_sdk_sha)||steam_sdk[0]!='/'))return usage("Steam image bindings require native bootstrap, installation and all three canonical bindings");
     int steam_health=-1,steam_control=-1;
@@ -270,6 +301,11 @@ int main(int argc,char **argv) {
     if(installation){
         int lease_result=ready_installation_read_lease(installation,installation_root,&installation_fds,&installation_fd_count);
         if(lease_result){fprintf(stderr,"ReadySessionHost: installation lease %s\n",lease_result==73?"busy (download/update active)":"invalid or unsafe");return lease_result;}
+    }
+    // Only trusted CLI fields can select this library. Rehash AFTER admitting
+    // the installation read lease and BEFORE Steam ACK or any child spawn.
+    if(presentation_shim&&!presentation_file_valid(presentation_shim,presentation_sha)){
+        fprintf(stderr,"ReadySessionHost: presentation shim binding invalid or changed\n");return 76;
     }
     if(steam_bootstrap){
         // Re-hash only AFTER the actual installation read lease is admitted.

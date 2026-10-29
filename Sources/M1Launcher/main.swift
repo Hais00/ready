@@ -28,6 +28,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   var steamDownloadsView: SteamDownloadsView?
   var steamGameAuthorization: SteamGameAuthorization?
   var steamNativeGame: SteamNativeGameSession?
+  var hostedPresentation:HostedGamePresentationController?
+  var hostedWindowPlacement:HostedWindowPlacement?
   var steamLaunchContinuation: (() -> Void)?
   var steamLaunchCancellation: (() -> Void)?
   var steamAccountDialog: UUID?
@@ -163,6 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       && !maintenanceInProgress
   }
   func windowShouldClose(_ sender: NSWindow) -> Bool {
+    if hostedPresentation != nil,session?.running==true{session.quit();return false}
     if dialogs.isPresenting {
       dialogs.cancelCurrent()
       return false
@@ -171,12 +174,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   }
   func windowWillClose(_ notification: Notification) {
     if (notification.object as? NSWindow) === window {
+      MainActor.assumeIsolated {
+        hostedPresentation?.stop(preserveFullscreen:false)
+        hostedWindowPlacement?.restore();hostedWindowPlacement=nil
+      }
       pageNavigationTransition = true
       pages.cancelCurrent()
       _ = pages.detachForSession()
       pageNavigationTransition = false
       cancelAuthentication()
       MainActor.assumeIsolated { cancelSteamGamePreparation() }
+    }
+  }
+  func applicationWillTerminate(_ notification: Notification) {
+    MainActor.assumeIsolated {
+      hostedPresentation?.stop(preserveFullscreen:false)
+      hostedWindowPlacement?.restore();hostedWindowPlacement=nil
     }
   }
   func cancelAuthentication(closePanel: Bool = true) {
@@ -202,7 +215,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     if dialogs.isPresenting { return .terminateCancel }
     if session?.running == true {
-      window.contentView = canvas
+      let hosted=MainActor.assumeIsolated{hostedPresentation?.active==true}
+      if !hosted{window.contentView = canvas}
       window.makeKeyAndOrderFront(nil)
       presentDialog(
         title: "Chiudere il gioco e ready?", message: "La sessione in corso verrà terminata.",
@@ -215,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if choice == 0 {
           self.session.quit()
           self.storeClient?.cancelAll()
-        } else {
+        } else if !hosted {
           self.window.orderOut(nil)
           self.window.contentView = nil
         }
@@ -233,11 +247,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     MainActor.assumeIsolated { steamNetwork?.stop() }
     return .terminateNow
   }
-  func windowDidResize(_ notification: Notification) { canvas?.refresh() }
+  func windowDidResize(_ notification: Notification) {
+    MainActor.assumeIsolated {
+      if hostedPresentation?.active==true{hostedPresentation?.resize()}else{canvas?.refresh()}
+    }
+  }
   // Called only at initial startup or while every session/store operation is idle.
   func configureRuntimeClients() {
     MainActor.assumeIsolated { steamNetwork?.stop(); steamNetwork = nil }
     session = SessionManager(paths: paths, project: project, runtimeRoot: runtimeRoot)
+    session.preparePresentation = {[weak self] game,variant,sessionID,completion in
+      guard let self else{completion(.failure(LauncherError.failed("Finestra del launcher non disponibile.")));return}
+      MainActor.assumeIsolated{self.prepareHostedGamePresentation(game:game,variant:variant,sessionID:sessionID,completion:completion)}
+    }
     session.onWillLaunch = { [weak self] in
       guard let self else { return }
       // Authentication is excluded by launchGame and all pending/session input gates.
@@ -249,9 +271,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       if self.backgroundNotices.count > 8 {
         self.backgroundNotices = Array(self.backgroundNotices.suffix(8))
       }
-      self.canvas.releaseGraphics()
-      self.window.orderOut(nil)
-      self.window.contentView = nil
+      if self.session.keepsLauncherWindow && MainActor.assumeIsolated({self.hostedPresentation?.active==true}) {
+        // The controller retains the rendered canvas until the first validated
+        // host PRESENT replaces it. Releasing here would expose a black layer.
+        self.window.makeKeyAndOrderFront(nil)
+      } else {
+        self.canvas.releaseGraphics()
+        self.window.orderOut(nil)
+        self.window.contentView = nil
+      }
     }
     session.onFinish = { [weak self] message in
       self?.steamNativeGame?.stop(); self?.steamNativeGame = nil
@@ -337,7 +365,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       else { refreshLocal() }
     }
   }
-  @objc func toggleFullscreen() { window.toggleFullScreen(nil) }
+  @objc func toggleFullscreen() {
+    let restored=MainActor.assumeIsolated { () -> Bool in
+      guard let placement=hostedWindowPlacement,placement.isDisplayFill else{return false}
+      hostedPresentation?.leaveFullscreen()
+      placement.restore();hostedWindowPlacement=nil
+      return true
+    }
+    if !restored{window.toggleFullScreen(nil)}
+  }
   @objc func steamAccountAction(){MainActor.assumeIsolated{showSteamAccount()}}
   @objc func steamDownloadsAction(){MainActor.assumeIsolated{showSteamDownloads()}}
   @objc func steamReconnectAction(){MainActor.assumeIsolated{if steamNetwork==nil{configureSteamNetwork()};steamNetwork?.reconnect()}}
@@ -1165,6 +1201,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 }
 
 let args = CommandLine.arguments
+// Read before NSApplication/device construction. Only the user experiment
+// enables the Ready process HUD; hosted guests explicitly receive HUD=0.
+if args.contains("--metal-hud"){setenv("MTL_HUD_ENABLED","1",1)}
+if let index=args.firstIndex(of:"--host-game-view") {
+  guard args.filter({$0=="--host-game-view"}).count==1,args.indices.contains(index+1),
+    !args[index+1].isEmpty,!args[index+1].hasPrefix("--"),args[index+1].utf8.count<=256,
+    !args[index+1].unicodeScalars.contains(where:CharacterSet.controlCharacters.contains) else{
+    FileHandle.standardError.write(Data("--host-game-view requires one explicit storeID.\n".utf8));exit(64)
+  }
+}
+if args.contains("--exclusive-hosted-view"),!args.contains("--host-game-view") {
+  FileHandle.standardError.write(Data("--exclusive-hosted-view requires --host-game-view.\n".utf8));exit(64)
+}
 var dataPaths = LauncherPaths()
 if let index = args.firstIndex(of: "--data-root") {
   guard args.indices.contains(index + 1), args[index + 1].hasPrefix("/"), args[index + 1] != "/"

@@ -4,10 +4,17 @@ import LauncherCore
 
 extension AppDelegate {
   func restoreLauncher(_ message: String) {
+    MainActor.assumeIsolated {
+      // A cancelled fullscreen transition may still be pending before active
+      // becomes true. stop() is idempotent and clears that preparation too.
+      hostedPresentation?.stop()
+      hostedPresentation=nil
+    }
     canvas.resumeGraphics()
     canvas.message =
       backgroundNotices.isEmpty ? message : message + " · Nuove notifiche in Libreria → Notifiche"
     window.contentView = canvas
+    window.makeFirstResponder(canvas)
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
     canvas.refresh()
@@ -48,6 +55,7 @@ extension AppDelegate {
       checks["realSessionStarted"] = started
       checks["returnRestoresCanvas"] = self.canvas.allocatedTextureBytes > 0
       checks["returnRestoresWindowContent"] = self.window.contentView === self.canvas
+      checks["returnRestoresKeyboardFocus"] = self.window.firstResponder === self.canvas
       checks["notificationRemainsAccessible"] = self.backgroundNotices.count == 3
       checks["interfaceCommandsRestoredAfterGame"] = self.validateMenuItem(
         NSMenuItem(title: "Settings", action: #selector(AppDelegate.settings), keyEquivalent: ""))

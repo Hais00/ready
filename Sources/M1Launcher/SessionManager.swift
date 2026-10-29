@@ -2,6 +2,7 @@ import AppKit
 // SPDX-License-Identifier: GPL-3.0-only
 import Foundation
 import LauncherCore
+import Darwin
 
 /// An internal capability created by an authenticated backend, never decoded
 /// from store JSON or launch environment variables. A fixture is not a licence.
@@ -29,6 +30,50 @@ extension SteamGameSessionLease {
   func stop(completion: @escaping () -> Void) { stop(); completion() }
 }
 
+/// Created by the launcher's explicit presentation experiment, never store JSON.
+struct SessionGamePresentation {
+  let environment:[String:String]
+  let shim:URL
+  let shimSHA256:String
+  let keepLauncherWindow:Bool
+  let stop:()->Void // Main queue; called once after producer/Steam cleanup.
+  fileprivate let identity=UUID()
+  init(environment:[String:String],shim:URL,shimSHA256:String,keepLauncherWindow:Bool,stop:@escaping()->Void){
+    self.environment=environment;self.shim=shim;self.shimSHA256=shimSHA256;self.keepLauncherWindow=keepLauncherWindow;self.stop=stop
+  }
+}
+private final class PresentationReply {
+  let signal=DispatchSemaphore(value:0)
+  private let lock=NSLock()
+  private var result:Result<SessionGamePresentation?,Error>?
+  private var answered=false,abandoned=false,taken=false
+  private var accepted:UUID?,stopped=Set<UUID>()
+  func receive(_ value:Result<SessionGamePresentation?,Error>){
+    lock.lock()
+    if !answered && !abandoned {
+      answered=true;result=value
+      if case .success(let cap)=value{accepted=cap?.identity}
+      lock.unlock();signal.signal();return
+    }
+    let late:SessionGamePresentation?
+    if case .success(let cap)=value,let cap,cap.identity != accepted,stopped.insert(cap.identity).inserted{late=cap}else{late=nil}
+    lock.unlock()
+    if let late{DispatchQueue.main.async{late.stop()}}
+  }
+  func abandon(){
+    lock.lock();abandoned=true
+    let value:SessionGamePresentation?
+    if !taken,case .success(let cap)?=result,let cap,stopped.insert(cap.identity).inserted{value=cap}else{value=nil}
+    result=nil;lock.unlock()
+    if let value{DispatchQueue.main.async{value.stop()}}
+  }
+  func take()throws->SessionGamePresentation? {
+    lock.lock();defer{lock.unlock()}
+    guard !abandoned,!taken,let result else{throw LauncherError.failed("Presentazione del gioco annullata.")}
+    taken=true;self.result=nil;return try result.get()
+  }
+}
+
 /// Main-queue lifecycle + a worker for prefix initialization. Every Wine process is supervised.
 final class SessionManager {
   private enum Phase { case idle, initializing, playing, stopping }
@@ -45,6 +90,7 @@ final class SessionManager {
     let extraEnvironment: [String: String]
     let steamSession: SteamGameSessionLease?
     var steamHandoff: SteamKeeperHandoff?
+    var presentation:SessionGamePresentation? // Worker publishes before spawn; Main owns cleanup.
     var completion: ((Result<Void, Error>) -> Void)?  // Accessed on the main queue only.
     var reportedStart = false
     var pendingExit: Int32?
@@ -122,6 +168,7 @@ final class SessionManager {
   var onFinish: ((String) -> Void)?
   /// Main queue, synchronously before the game is spawned. Loading UI can stay alive during prefix setup.
   var onWillLaunch: (() -> Void)?
+  var preparePresentation:((Game,GameVariant,UUID,@escaping(Result<SessionGamePresentation?,Error>)->Void)->Void)?
   var running: Bool {
     stateLock.lock()
     defer { stateLock.unlock() }
@@ -144,6 +191,7 @@ final class SessionManager {
       ?? paths.session(lastSessionID).appendingPathComponent("control.json")
   }
   var sessionProcessIdentifier: Int32? { currentContext()?.currentProcess()?.processIdentifier }
+  var keepsLauncherWindow:Bool {currentContext()?.presentation?.keepLauncherWindow==true}
   init(
     paths: LauncherPaths, project: URL, runtimeRoot: URL? = nil, initializationTimeout: TimeInterval = 120,
     shutdownGrace: TimeInterval = 10
@@ -181,6 +229,7 @@ final class SessionManager {
       || key == "VK_ICD_FILENAMES" || key.hasPrefix("READY_") || key.hasPrefix("M1L_")
       || key.hasPrefix("DYLD_")
       || key.hasPrefix("Steam") || key.hasPrefix("STEAM") || key.hasPrefix("steam_")
+      || key.hasPrefix("MTL_HUD_")
   }
   func start(
     game: Game, variant: GameVariant, profile: UUID, launchArguments: [String] = [],
@@ -295,6 +344,9 @@ final class SessionManager {
       ]
     }
     if let steam = ctx.steamSession { hostArguments += ["--steam-bootstrap"] + steam.keeperArguments }
+    if let presentation=ctx.presentation {
+      hostArguments += ["--presentation-shim",presentation.shim.path,"--presentation-shim-sha256",presentation.shimSHA256]
+    }
     task.arguments = hostArguments + ["--", program] + arguments
     task.currentDirectoryURL = directory
     var env = environment
@@ -406,6 +458,16 @@ final class SessionManager {
       gameEnvironment.merge(try steam.validatedEnvironment(
         game: ctx.game, variant: ctx.variant, profile: ctx.profile)) { _, trusted in trusted }
     }
+    let presentation=try prepareGamePresentation(ctx)
+    ctx.presentation=presentation
+    try checkCancellation(ctx)
+    if let presentation {
+      gameEnvironment.merge(presentation.environment){_,trusted in trusted}
+      gameEnvironment["MTL_HUD_ENABLED"]="0"
+      gameEnvironment.removeValue(forKey:"MTL_HUD_LOG_ENABLED")
+      gameEnvironment.removeValue(forKey:"READY_OVERLAY_LIBRARY")
+      gameEnvironment.removeValue(forKey:"DYLD_INSERT_LIBRARIES")
+    }
     // Initialization diagnostics must not poison classification of a later DRM/game failure.
     ctx.gameLogOffset = (try? ctx.log?.seekToEnd()) ?? 0
     let (task, input) = try configureHost(
@@ -452,6 +514,40 @@ final class SessionManager {
         finishGame(ctx, status: task.terminationStatus)
       }
     }
+  }
+  private func prepareGamePresentation(_ ctx:Context)throws->SessionGamePresentation? {
+    let reply=PresentationReply()
+    onMain{[weak self,ctx]in
+      guard let self,self.isCurrent(ctx),!ctx.isCancelled else{reply.abandon();reply.signal.signal();return}
+      guard let hook=self.preparePresentation else{reply.receive(.success(nil));return}
+      hook(ctx.game,ctx.variant,ctx.id){reply.receive($0)}
+    }
+    let deadline=DispatchTime.now()+15
+    while reply.signal.wait(timeout:.now()+0.05) == .timedOut {
+      if ctx.isCancelled{reply.abandon();throw LauncherError.failed("Avvio annullato.")}
+      if DispatchTime.now()>=deadline{reply.abandon();throw LauncherError.failed("Timeout durante la preparazione della finestra del gioco.")}
+    }
+    if ctx.isCancelled{reply.abandon();throw LauncherError.failed("Avvio annullato.")}
+    let presentation=try reply.take()
+    if let presentation {
+      do {
+        guard ctx.variant.platform == .macOS,let path=ctx.variant.executable else{throw LauncherError.invalid("La presentazione sperimentale richiede un gioco macOS nativo.")}
+        let target=URL(fileURLWithPath:path)
+        let executable=target.pathExtension.lowercased()=="app" ? try NativeBinaryProbe.applicationExecutable(target):target
+        let architecture=try NativeBinaryProbe.inspect(executable)
+        guard architecture == .arm64 || architecture == .universal else{throw LauncherError.invalid("La presentazione sperimentale richiede Apple Silicon.")}
+        let shim=presentation.shim
+        var info=stat()
+        guard shim.isFileURL,shim.path.hasPrefix("/"),shim.standardizedFileURL.path==shim.path,shim.resolvingSymlinksInPath().path==shim.path,
+          lstat(shim.path,&info)==0,info.st_mode&S_IFMT==S_IFREG,info.st_uid==getuid(),info.st_mode&0o022==0,
+          presentation.shimSHA256.utf8.count==64,presentation.shimSHA256.utf8.allSatisfy({(48...57).contains($0)||(97...102).contains($0)}) else{throw LauncherError.invalid("Componente di presentazione non valido.")}
+        let keys:Set<String>=["READY_HOSTED_GAME_SERVICE","READY_HOSTED_GAME_NONCE","MTL_HUD_ENABLED"]
+        guard Set(presentation.environment.keys).isSubset(of:keys),
+          presentation.environment["READY_HOSTED_GAME_SERVICE"].map({!$0.isEmpty && $0.utf8.count<=256 && !$0.utf8.contains(0)})==true,
+          presentation.environment["READY_HOSTED_GAME_NONCE"].map({!$0.isEmpty && $0.utf8.count<=256 && !$0.utf8.contains(0)})==true else{throw LauncherError.invalid("Metadati di presentazione non validi.")}
+      } catch {onMain{presentation.stop()};throw error}
+    }
+    return presentation
   }
   private func gameExited(_ ctx: Context, status: Int32) {
     guard isCurrent(ctx) else { return }
@@ -517,6 +613,7 @@ final class SessionManager {
         guard isCurrent(ctx), ctx.cleaning, !ctx.cleanupCompleted else { return }
         ctx.cleanupCompleted = true
         ctx.steamHandoff = nil
+        if let presentation=ctx.presentation{ctx.presentation=nil;presentation.stop()}
         // Break Context -> Process -> terminationHandler -> Context retention after exit.
         // A timed-out native keeper is independent and keeps its own inherited lease.
         if let task = ctx.currentProcess(), !task.isRunning { task.terminationHandler = nil }
@@ -530,8 +627,18 @@ final class SessionManager {
         completion()
       }
     }
-    if let steam = ctx.steamSession { steam.stop(completion: stopped) }
-    else { stopped() }
+    func stopDependenciesAfterProducer() {
+      guard isCurrent(ctx),ctx.cleaning,!ctx.cleanupCompleted else{return}
+      if ctx.presentation != nil,let task=ctx.currentProcess(),task.isRunning {
+        // A startup admission error may precede keeper exit. Never tear the
+        // shared drawable server down while a producer/group is still live.
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.05){stopDependenciesAfterProducer()}
+        return
+      }
+      if let steam=ctx.steamSession{steam.stop(completion:stopped)}else{stopped()}
+    }
+    if ctx.presentation != nil,ctx.currentProcess()?.isRunning==true{ctx.cancel();stopCurrent(ctx)}
+    stopDependenciesAfterProducer()
   }
   private func finish(_ ctx: Context, _ message: String) {
     guard isCurrent(ctx), !ctx.cleaning else { return }

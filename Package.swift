@@ -10,8 +10,15 @@ let package = Package(
   ],
   targets: [
     .target(name: "LauncherCore"),
+    .target(
+      name: "ReadyHostedView", publicHeadersPath: "include",
+      cSettings: [.unsafeFlags(["-fobjc-arc", "-fblocks", "-std=gnu11"])],
+      linkerSettings: [
+        .linkedFramework("AppKit"), .linkedFramework("Metal"), .linkedFramework("QuartzCore"),
+        .linkedFramework("IOSurface"), .linkedFramework("Security"), .linkedLibrary("bsm"),
+      ]),
     .executableTarget(
-      name: "M1Launcher", dependencies: ["LauncherCore"],
+      name: "M1Launcher", dependencies: ["LauncherCore", "ReadyHostedView"],
       linkerSettings: [
         .linkedFramework("AppKit"), .linkedFramework("Metal"), .linkedFramework("QuartzCore"),
         .linkedFramework("GameController"), .linkedFramework("Security"),

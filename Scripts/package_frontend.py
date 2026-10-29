@@ -18,7 +18,7 @@ def stage(destination):
     # caches, dotnet outputs, user data and every proprietary Apple input.
     sources = []
     source_extensions = {
-        'Sources': {'.swift'}, 'Overlay': {'.m', '.h'},
+        'Sources': {'.swift', '.m', '.h', '.c'}, 'Overlay': {'.m', '.h'},
         'SessionHost': {'.c', '.h'}, 'Synthetic': {'.swift', '.m', '.c'},
         'Tests': {'.swift', '.py'}, 'Docs': {'.md'},
     }
@@ -32,13 +32,14 @@ def stage(destination):
         'LICENSE', 'LICENSES/LGPL-2.1.txt', 'THIRD_PARTY_NOTICES.md', 'README.md', 'Package.swift', 'sources.lock.json',
         'StoreBridge/NOTICE', 'StoreBridge/dependencies.lock.json',
         'Scripts/build_app.sh', 'Scripts/build_overlay.sh', 'Scripts/build_session_host.sh',
+        'Scripts/build_hosted_game_shim.sh', 'NativeEmbedding/ReadyHostedGameShim.m',
         'Scripts/package_frontend.py', 'Scripts/test_frontend_package.py',
         'Scripts/frontend_snapshot.py', 'Scripts/test_frontend_snapshot.py',
     ))
-    sources.extend(ROOT / name for name in ('Build/libReadyOverlay.dylib', 'Build/ReadySessionHost'))
+    sources.extend(ROOT / name for name in ('Build/libReadyOverlay.dylib', 'Build/ReadySessionHost', 'Build/libReadyHostedGame.dylib'))
     inventory = []
     for path in sorted(set(sources)):
-        if path.is_symlink() or not path.is_file():
+        if path.is_symlink() or not path.is_file() or path.resolve(strict=True) != path:
             raise RuntimeError('Required owned payload is missing or a symlink: ' + str(path.relative_to(ROOT)))
         relative = path.relative_to(ROOT)
         target = destination / relative

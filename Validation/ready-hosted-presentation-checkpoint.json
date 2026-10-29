@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "date": "2026-10-29",
+  "status": "experimental-integration-visual-exclusive-check-pending",
+  "defaultLaunchBehaviorUnchanged": true,
+  "sameReadyWindowDisplayFill": {
+    "verified": true,
+    "windowResourceBefore": 8079,
+    "windowResourceAfter": 8079,
+    "nativeFullscreenSpace": false
+  },
+  "transport": {
+    "applicationGPUCopyFallback": false,
+    "hiddenGuestWindowFallback": false,
+    "hostCommandQueues": 0,
+    "hostCommandBuffers": 0,
+    "hostEncoders": 0,
+    "pixelReadbacks": 0
+  },
+  "synthetic": {
+    "unchangedGuestSHA256": "a614b2e149c9929ee87a7ff933e5333bc110a67b5259aaad73789de96e6c5ce3",
+    "offscreenFramesCompleted": 120,
+    "offscreenLoadingTransitionChecks": 15,
+    "offscreenReportSHA256": "7ecf4361a20ee9186a6b5f2d9865f762a9308f2a05ec5dafeab8826a7b825e80",
+    "metalHUDVisuallyObservedInReady": true,
+    "metalHUDModeObserved": "Composited",
+    "screenshotSHA256": "fb6b794b18339a87b81bc327055097ac6f8fca34166945b501e7a84032570258",
+    "screenshotsPublished": false
+  },
+  "commercialGame": {
+    "gameID": 1091500,
+    "genuineAuthenticatedFrameTransportObserved": true,
+    "partialPresentedFramesObserved": 72,
+    "stableMenuVerified": false,
+    "inputCompatibilityVerified": false,
+    "lastObservedCrash": {
+      "signal": "SIGSEGV",
+      "path": "GameView.resetCursorRects / NSView.addCursorRect"
+    },
+    "cursorRegistrationAdapterAdded": true,
+    "cursorFixLiveRetested": false,
+    "credentialsRemainedConnectedDuringAttempts": true
+  },
+  "newLoadingBehavior": {
+    "GPUCompletedFirstPresentCallback": true,
+    "UIRemovalSharesFirstPresentTransaction": true,
+    "onGlassTimestampSeparateFromCallback": true,
+    "boundedGPUFixturePassed": true,
+    "visualRetestAfterLoadingChange": false
+  },
+  "exclusiveDisplay": {
+    "implementationRequiresExplicitFlag": "--exclusive-hosted-view",
+    "captureAPI": "CGDisplayCaptureWithOptions",
+    "actualCaptureVerified": false,
+    "directScanoutVerified": false,
+    "manualMacUnlockRequiredForNextVisualTest": true
+  },
+  "regressions": {
+    "frontendLifecycleChecks": 14,
+    "presentationKeeperLifecycleChecks": 13,
+    "packagingFixtureGroups": 9,
+    "snapshotFixtureGroups": 19
+  },
+  "sourceHashes": {
+    "Sources/M1Launcher/HostedGamePresentation.swift": "58c252beaf4c55d24143bb209afe781a5a8715daa7be4a8c2adb3a22ddeb6c4b",
+    "Sources/ReadyHostedView/ReadyHostedView.m": "a858dbc315b8124b5ee696cfeb8a819b9cd0e91478475087700fa9c28c51e492",
+    "Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h": "64164b87d9883c6de91bff0937bb80cbc8926884b5767b49d463b1e5abf42c91",
+    "NativeEmbedding/ReadyHostedGameShim.m": "6b38da9213dbb5151dd0825962f91122e516e75f922695ec9a5d35be7e2d6e3b",
+    "SessionHost/ReadySessionHost.c": "541dd645835274f35f4ff47897464017b136eaf1bc243d0893240a4ddf5c51cb"
+  },
+  "limits": [
+    "Not a completed commercial-game embedding implementation.",
+    "Cocoa gestures, OS cursor presentation/relative capture, multiple displays and full drawable handler semantics remain limited.",
+    "The guest Ready overlay is omitted only in the explicit experiment; ordinary launches keep it.",
+    "Exclusive capture, Dock suppression and the latest loading/cursor fixes require live validation; capture success would not by itself prove direct scanout."
+  ]
+}

@@ -38,8 +38,9 @@ def check(app, installed_runtime=None):
         assert not (relocated / 'Contents/Resources/development-root.txt').exists()
         assert not any((code / name).exists() for name in ('Runtime', 'Vendor', 'Evidence', 'StoreBridge/Dependencies'))
         native = {path.relative_to(relocated).as_posix() for path in relocated.rglob('*') if path.is_file() and path.read_bytes()[:4] in (b'\xcf\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xca\xfe\xba\xbe', b'\xbe\xba\xfe\xca')}
-        assert native == {'Contents/MacOS/ready', 'Contents/Resources/ReadySupport/Build/ReadySessionHost', 'Contents/Resources/ReadySupport/Build/libReadyOverlay.dylib'}, native
-        checks.append('owned payload hashes and exact three-native-file inventory')
+        assert native == {'Contents/MacOS/ready', 'Contents/Resources/ReadySupport/Build/ReadySessionHost', 'Contents/Resources/ReadySupport/Build/libReadyOverlay.dylib', 'Contents/Resources/ReadySupport/Build/libReadyHostedGame.dylib'}, native
+        assert {'Sources/ReadyHostedView/include/ReadyHostedView.h', 'Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h', 'NativeEmbedding/ReadyHostedGameShim.m', 'Scripts/build_hosted_game_shim.sh'}.issubset({item['path'] for item in manifest['files']})
+        checks.append('owned payload hashes, hosted-view/shim corresponding sources and exact four-native-file inventory')
         subprocess.run(['/usr/bin/codesign', '--verify', '--strict', str(relocated)], check=True, capture_output=True)
         checks.append('relocated app signature verified')
 
