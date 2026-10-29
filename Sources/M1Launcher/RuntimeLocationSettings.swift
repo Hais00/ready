@@ -18,6 +18,7 @@ extension AppDelegate {
       )
       return
     }
+    beginSettingsSection(.runtime)
     let location = FrontendSupportPaths(paths: paths)
     let config = FrontendSupportPaths.configuration(paths: paths, runtimeRoot: runtimeRoot)
     let validation = try? RuntimeLocationStore.validate(runtimeRoot)
@@ -85,6 +86,7 @@ extension AppDelegate {
       // all use the same newly resolved external location immediately.
       runtimeRoot = FrontendSupportPaths(paths: paths).runtimeRoot
       configureRuntimeClients()
+      MainActor.assumeIsolated { configureSteamNetwork() }
       canvas.evaluationMode = activeRuntime().evaluationModeEnabled == true
       canvas.message =
         location.runtimeLocationOrigin == "environment"

@@ -12,13 +12,21 @@ an explicit sRGB BGRA8 contract. The prior NSBitmapImageRep path returned ARGB
 bytes despite its requested flags, putting the alpha byte into the blue channel.
 The real GPU roundtrip now returns the expected BGRA bytes [21,19,16,255].
 
-Search, profiles, game options, runtime selection, import, notifications, errors,
-authentication/QR, evaluation and migration/recovery are presented inside the
-existing application window. No NSAlert, NSOpenPanel, NSPanel or nested runModal
-call remains in the frontend. Panels are asynchronous and block input to the
-underlying canvas. Tab/Shift-Tab stay inside the panel; Escape selects the explicit
-cancel action. Destructive confirmation does not receive initial focus. The authentication
-request is invalidated and cancellation requested before its view is removed.
+Settings, account/friends, downloads and profiles are nonmodal navigation pages
+inside the main content area. Settings has persistent Generali, Account, Motori,
+Dati e ripristino and Toolkit Apple tabs. The sidebar and toolbar remain visible
+and usable; entering a page removes library cards and their game-launch hit
+regions. Search, import, game options, authentication, migration and notices use
+the same page surface rather than a floating card over a dimmed library.
+
+Only the critical quit confirmation while a game is running retains the transient
+internal presenter. The frontend does not use NSAlert, NSOpenPanel, NSPanel or
+nested runModal. Ordinary pages have no modal keyboard monitor or closed Tab loop.
+Validation errors appear inline and preserve the form. Navigation cancels an
+unfinished authentication flow; internal progress/QR transitions preserve the
+same request. Leaving the page does not stop a persistent Steam connection or
+its download queue. The page, its observers and canvas graphics are detached
+before a game session takes ownership of the window.
 
 The internal browser reads directories off the main thread and ignores stale
 responses. It hides dotfiles by default, supports explicit paths and disables
@@ -42,3 +50,17 @@ Backups use a non-launchable `.ready-backup` directory with a private inventory.
 Only the current published bundle is registered with Launch Services, preventing
 an older backup from appearing when the app is opened by name. See
 [frontend packaging](FRONTEND_PACKAGING.md) for exact restoration steps.
+
+The navigation-page checkpoint adds 80 AppKit lifecycle/geometry checks at two
+window sizes, 18 production canvas raster/hit/key/controller groups, 24 account
+layout checks and 15 delayed OAuth transition checks with network access denied.
+The frontend teardown passes 13 checks and the relocated package passes 14.
+Actual Cua verified all five settings sections, return to Steam through the
+sidebar, the empty downloads page, and final full tab labels/single focus ring.
+These UI changes did not run a new real account login, CDN download or game.
+See [the scoped checkpoint](../Validation/navigation-pages-checkpoint.json).
+
+Reproduce the page checks with `Scripts/test_ready_page_presenter.py`,
+`Scripts/test_ready_canvas_sections.py`, `Scripts/test_store_authentication_pages.py`
+and `Scripts/test_steam_account_layout.py`. Their offscreen fixtures are distinct
+from real user interaction and physical-controller coverage.

@@ -69,6 +69,8 @@ extension AppDelegate {
     maintenanceInProgress = true
     canvas.message = message
     canvas.refresh()
+    let progress = presentDialog(title: "Operazione in corso", message: message,
+      actions: []) { _ in }
     let paths = self.paths
     DispatchQueue.global(qos: .userInitiated).async { [weak self, paths, operation] in
       let result = Result { try operation.execute(paths: paths) }
@@ -81,13 +83,24 @@ extension AppDelegate {
           self.canvas.state = self.state
           self.canvas.message = message
           self.canvas.refresh()
-        case .failure(let error): self.showError(error)
+          if self.pages.isShowing(progress) {
+            self.dismissDialog(progress)
+            self.dataMaintenance()
+            self.pages.showNotice(message)
+          }
+        case .failure(let error):
+          if self.pages.isShowing(progress) {
+            self.dismissDialog(progress)
+            self.dataMaintenance()
+          }
+          self.showError(error)
         }
       }
     }
   }
   @objc func dataMaintenance() {
     guard canMaintainData() else { return }
+    beginSettingsSection(.data)
     if LegacyMigration.requiresRecovery(paths: paths) {
       let restoringRollback = LegacyMigration.recoveryKind(paths: paths) == "rollback"
       presentDialog(

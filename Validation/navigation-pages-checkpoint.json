@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "date": "2026-10-29",
+  "scope": "Ready nonmodal navigation pages; not complete Steam/client/runtime certification",
+  "implemented": [
+    "settings tabs in main content area",
+    "account/friends, downloads and profiles as pages",
+    "persistent usable sidebar and toolbar",
+    "inline form errors retain inputs",
+    "cancel request on explicit navigation; preserve auth during internal progress transitions",
+    "no hidden library game hit targets or controller activation",
+    "per-page observers and graphics detached at game start"
+  ],
+  "sourceHashes": {
+    "Sources/M1Launcher/NavigationPages.swift": "45cc9d2ad319899610d5c2cfe150eefe9def90aeea5b0b7f5175faadf663069f",
+    "Sources/M1Launcher/ReadyPagePresenter.swift": "f0ca10b4334066e605e4f0e54532fc10de5d6b7908d0df7fcf689c7c48e5b644",
+    "Sources/M1Launcher/MetalCanvas.swift": "a4725c2f3de2f5d8028a24ade475f1c53bba98bd0ab9d34fb8affa25dace04be",
+    "Sources/M1Launcher/main.swift": "19156ff35bb173d8eb862da146fb6dd2fcabec52cf164bb09eb905465c2ecc50"
+  },
+  "checks": {
+    "pagePresenter": {
+      "passed": true,
+      "count": 80,
+      "reportSHA256": "8ec7921da239e55b658ddea06a7671d4f1703792a55404ef7a98e3dbd1028dc7"
+    },
+    "accountLayout": {
+      "passed": true,
+      "count": 24,
+      "reportSHA256": "188189d0969b01271f27201ffe04a6ed347fde02a1d68f2b76d82859a3b7fc98"
+    },
+    "canvasSections": {
+      "passed": true,
+      "count": 18,
+      "reportSHA256": "7fa5d2f8a795d2d699083d3c7912e59c6290f8935a59fa589853b0ec3f28c007"
+    },
+    "delayedStoreAuthentication": {
+      "passed": true,
+      "count": 15,
+      "reportSHA256": "3e29891a54ca2e9f178f1ce96c773bd332630a2a3760095fc443b9f6ba580cf4",
+      "realAccountUsed": false
+    },
+    "frontendLifecycle": {
+      "passed": true,
+      "count": 13,
+      "reportSHA256": "b64120df255cbcbe60216a92a65fb6cb6f9e7a71352904a83ec8504a2c2d6386"
+    },
+    "relocatedPackage": {
+      "passed": true,
+      "count": 14,
+      "reportSHA256": "6e74ed9a1e5ab63405115b1e3c91a8ab8f1250a3a8ea85f8bc645a1825955891"
+    }
+  },
+  "manualCUA": {
+    "settingsSidebarAndShortcut": true,
+    "allFiveSettingsSections": true,
+    "returnToSteamLibraryFromSidebar": true,
+    "downloadPage": true,
+    "finalFullTabLabelsAndSingleFocusRing": true,
+    "screenshotSHA256": "5127af5cfa4b1247037d92b464d0651355354f4b6d370e0a9d762ec8f5df12a1",
+    "screenshotPublished": false
+  },
+  "limits": [
+    "No new real account login, CDN download, commercial game run or physical controller test in this UI checkpoint.",
+    "The critical confirmation for quitting during a running game retains the transient in-window presenter.",
+    "Automatic tests do not certify every server/store or runtime behavior."
+  ]
+}

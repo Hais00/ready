@@ -18,13 +18,17 @@ keyboard/mouse events, accessibility permission changes, or unconditional modal 
 | Steam QR login | B | Cancel this authentication request and close its QR panel |
 | Steam QR login | Other inputs | Consumed, without actions behind the panel |
 
-Routing priority is: running/initializing/stopping session, maintenance, modal dialog,
-QR authentication, then library. An inactive launcher ignores controller actions.
-Menu and shoulders are consumed inside a modal instead of opening another library
-screen. A modal opened while authentication is active takes precedence over the QR
-panel. Cancel matches whole button titles, so B does not choose a destructive
-“Chiudi sessione” button by substring. Buttons complete the original AppKit modal
-response, preserving the caller's `NSAlert` result handling.
+Ordinary settings/account/download/profile screens are navigation pages. Within
+an AppKit page, D-pad moves focus (or table/popup selection) and A activates the
+focused control. When focus is on the persistent shell, D-pad/A target only its
+visible navigation regions; they cannot activate library games behind a page.
+B returns to the library, Menu opens profiles and shoulders return to Home.
+Navigation is blocked during data maintenance or a pending game launch.
+
+Routing priority is the running session/maintenance guard, the critical in-window
+confirmation, a navigation page, authentication, then the library. An inactive
+launcher ignores controller actions. The older modal-control helper is retained
+for any external AppKit modal window; ordinary Ready flows do not create one.
 
 Every parent handler rejects input while `SessionManager.running` both when receiving
 an input callback and when delivering an action. The injected overlay remains the

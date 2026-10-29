@@ -10,8 +10,18 @@ struct SteamClientState {
   var friends=[SteamFriendState]();var retryAfter:Double?
   var online:Bool{connection=="online"}
 }
-final class MetalCanvas:NSView {var interactionEnabled=true}
-final class AppDelegate:NSObject {var dialogs:ReadyDialogPresenter!}
+final class MetalCanvas:NSView {
+  enum Section {case library,utility}
+  var interactionEnabled=true
+  var section:Section = .library
+}
+final class LayoutSession {var running=false}
+final class AppDelegate:NSObject {
+  var dialogs:ReadyDialogPresenter!,pages:ReadyPagePresenter!,canvas:MetalCanvas!,session:LayoutSession?
+  func beginPage(_ section:MetalCanvas.Section){canvas?.section=section}
+  func setPresentationActionEnabled(_ id:UUID,index:Int,enabled:Bool){}
+  func activatePresentationPrimary(_ id:UUID){}
+}
 enum ControllerNavigation {
   enum Direction{case up,down,left,right}
   enum Action:Equatable{case cancel,activate,move(Direction)}

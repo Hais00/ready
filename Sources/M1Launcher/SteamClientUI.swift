@@ -67,13 +67,15 @@ extension AppDelegate {
     if CredentialVault.steamStatus(CredentialVault.load(profile:profile,store:.steam,stateRoot:paths.root)) == .available { network.start() }
   }
   @MainActor func showSteamDownloads() {
+    if canvas.section == .downloads, steamDownloadsView != nil, pages.isPresenting { return }
     if steamDownloads==nil{configureSteamNetwork()}
     guard let downloads=steamDownloads else{return}
+    beginPage(.downloads)
     let view=SteamDownloadsView(frame:NSRect(x:0,y:0,width:670,height:430));steamDownloadsView=view
     view.titleForGame = {[weak self]id in self?.state.games.first(where:{$0.store == .steam && $0.storeID==id})?.title ?? id}
     view.onControl = {[weak downloads]id,action in downloads?.control(id,action:action)}
     view.update(downloads.snapshot)
-    _=presentDialog(title:"Download Steam",message:"Le installazioni sono condivise fra profili; account e salvataggi personali restano separati. Pausa e annullamento conservano i file.",content:view,actions:[.init("Chiudi",role:.cancel)]){[weak self]_ in self?.steamDownloadsView=nil}
+    _=presentDialog(title:"Download Steam",message:"Le installazioni sono condivise fra profili; account e salvataggi personali restano separati. Pausa e annullamento conservano i file.",content:view,actions:[]){[weak self]_ in self?.steamDownloadsView=nil}
   }
   @MainActor private func acceptSteamInstallation(_ job:SteamDownloadJob,profile:UUID) {
     guard state.activeProfile==profile,let value=job.raw["installedVariant"]as?[String:Any],
@@ -87,10 +89,12 @@ extension AppDelegate {
   }
   @MainActor func showSteamAccount() {
     guard !session.running, !maintenanceInProgress else { return }
+    if canvas.section == .steamAccount, steamAccountView != nil, pages.isPresenting { return }
     if steamNetwork == nil { configureSteamNetwork() }
     guard let network = steamNetwork else {
       showError(LauncherError.unavailable("Installa il servizio Steam centrale prima di collegare l’account.")); return
     }
+    beginPage(.steamAccount)
     let profile = state.activeProfile
     let view = SteamAccountView(frame:NSRect(x:0,y:0,width:660,height:710))
     steamAccountView = view; view.update(network.state)
@@ -114,7 +118,7 @@ extension AppDelegate {
       self.steamGameAuthorization?.cancel(); self.steamNativeGame?.stop()
       self.steamDownloads?.stop();network?.logout(); self.steamAccounts.signOut(profile:profile)
     }
-    steamAccountDialog = presentDialog(title:"Steam · account, amici e attività",message:"Un solo accesso per questo profilo, condiviso da giochi macOS e Windows. La password non viene salvata.",content:view,actions:[.init("Chiudi",role:.cancel)]) { [weak self,weak network] _ in
+    steamAccountDialog = presentDialog(title:"Account, amici e attività",message:"Un solo accesso per questo profilo, condiviso da giochi macOS e Windows. La password non viene salvata.",content:view,actions:[]) { [weak self,weak network] _ in
       network?.cancelAuthentication()
       self?.steamAccountView = nil; self?.steamAccountDialog = nil
       self?.steamLaunchContinuation = nil

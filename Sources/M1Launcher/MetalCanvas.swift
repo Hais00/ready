@@ -5,6 +5,10 @@ import LauncherCore
 import Metal
 import QuartzCore
 
+enum CanvasSection: Equatable, Sendable {
+  case library, settings, steamAccount, downloads, profiles, utility
+}
+
 enum CanvasAction {
   case game(String)
   case gameOptions(String)
@@ -62,11 +66,22 @@ final class MetalCanvas: NSView {
   private var canvasLayer: CAMetalLayer?
   private let art = ArtworkCache()
   var state = LibraryState.initial()
+  var section: CanvasSection = .library {
+    didSet {
+      guard oldValue != section else { return }
+      // Drop stale game targets immediately, including a mouse press started
+      // before a page change. Keep navigation focus when it still applies.
+      hits.removeAll(); hoverID = nil; pressedID = nil
+      if let id = focusID, !id.hasPrefix("nav.") && !id.hasPrefix("toolbar.") { focusID = nil }
+      window?.invalidateCursorRects(for: self)
+      redraw()
+    }
+  }
   var filter: Store?
   var query = ""
   var selected = 0 {
     didSet {
-      if oldValue != selected {
+      if oldValue != selected && section == .library {
         focusID = visibleGames.indices.contains(selected) ? "game." + visibleGames[selected].id : nil
       }
     }
@@ -179,6 +194,10 @@ final class MetalCanvas: NSView {
     }
   }
   private func activate(_ hit: CanvasHit) {
+    switch hit.action {
+    case .game, .gameOptions: guard section == .library else { return }
+    default: break
+    }
     focusID = hit.id
     if case .game(let id) = hit.action, let index = visibleGames.firstIndex(where: { $0.id == id }) { selected = index }
     onAction?(hit.action)
@@ -311,16 +330,16 @@ final class MetalCanvas: NSView {
     cg.fill(CGRect(x: 0, y: 0, width: 70, height: height))
     icon("gamecontroller.fill", CGRect(x: 23, y: 23, width: 24, height: 24), tint: color(0x95edb4))
     button(
-      CGRect(x: 12, y: 71, width: 46, height: 46), "house.fill", .store(nil), id: "nav.home", active: filter == nil)
+      CGRect(x: 12, y: 71, width: 46, height: 46), "house.fill", .store(nil), id: "nav.home", active: section == .library && filter == nil)
     let symbols = ["s.circle", "e.circle", "g.circle", "a.circle"]
     for (i, s) in [Store.steam, .epic, .gog, .amazon].enumerated() {
       let r = CGRect(x: 12, y: 132 + CGFloat(i) * 57, width: 46, height: 46)
-      button(r, symbols[i], .store(s), id: "nav.store." + s.rawValue, active: filter == s)
+      button(r, symbols[i], .store(s), id: "nav.store." + s.rawValue, active: section == .library && filter == s)
     }
-    button(CGRect(x: 12, y: height - 174, width: 46, height: 46), "person.2", .profiles, id: "nav.profiles")
-    button(CGRect(x:12,y:height-232,width:46,height:46),"arrow.down.circle",.downloads,id:"nav.downloads")
+    button(CGRect(x: 12, y: height - 174, width: 46, height: 46), "person.2", .profiles, id: "nav.profiles", active: section == .profiles)
+    button(CGRect(x:12,y:height-232,width:46,height:46),"arrow.down.circle",.downloads,id:"nav.downloads",active:section == .downloads)
     button(CGRect(x: 12, y: height - 116, width: 46, height: 46), "plus", .importGame, id: "nav.import")
-    button(CGRect(x: 12, y: height - 58, width: 46, height: 46), "gearshape", .settings, id: "nav.settings")
+    button(CGRect(x: 12, y: height - 58, width: 46, height: 46), "gearshape", .settings, id: "nav.settings", active: section == .settings)
     let left: CGFloat = 112
     let content = width - left - 36
     button(CGRect(x: left, y: 22, width: 37, height: 37), "arrow.clockwise", .refresh, id: "toolbar.refresh")
@@ -330,12 +349,18 @@ final class MetalCanvas: NSView {
       color: color(evaluationMode ? 0xe8b76d : 0xb2c2c1))
     let profile = state.profiles.first { $0.id == state.activeProfile }?.name ?? "Giocatore"
     text(profile, CGRect(x: width - 330, y: 29, width: 180, height: 27), size: 14, bold: true)
-    button(CGRect(x:width - 148,y:21,width:38,height:38),steamOnline ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.exclamationmark",.steamAccount,id:"toolbar.steam.account")
+    button(CGRect(x:width - 148,y:21,width:38,height:38),steamOnline ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.exclamationmark",.steamAccount,id:"toolbar.steam.account",active:section == .steamAccount)
     let fmt = DateFormatter()
     fmt.dateFormat = "HH:mm"
     text(
       fmt.string(from: Date()), CGRect(x: width - 98, y: 28, width: 64, height: 25), size: 16,
       bold: true)
+    // AppKit page content is hosted at x112/y88, width-148/height-112.
+    // Non-library pages retain only this shell, navigation and a quiet footer.
+    guard section == .library else {
+      finishScene(left: left, content: content, height: height, libraryHelp: false)
+      return
+    }
     text(
       query.isEmpty ? (filter?.title ?? "Riprendi a giocare") : "Risultati per “\(query)”",
       CGRect(x: left, y: 91, width: content, height: 36), size: 25, bold: true)
@@ -424,6 +449,9 @@ final class MetalCanvas: NSView {
         registerHit(r, id: i == 0 ? "feature.native" : "feature.resources", action: i == 0 ? .importGame : .settings)
       }
     }
+    finishScene(left: left, content: content, height: height, libraryHelp: true)
+  }
+  private func finishScene(left: CGFloat, content: CGFloat, height: CGFloat, libraryHelp: Bool) {
     let nextHover = pointerLocation.flatMap { hit(at: $0)?.id }
     if nextHover != hoverID {
       hoverID = nextHover
@@ -435,11 +463,29 @@ final class MetalCanvas: NSView {
         }
       }
     }
-    text(
-      message.isEmpty
-        ? "← →  Seleziona     Invio  Gioca     Spazio  Opzioni     ⌘F  Cerca     ⌘O  Importa"
-        : message, CGRect(x: left, y: height - 38, width: content, height: 25), size: 12,
-      color: color(0xaebcba))
+    if libraryHelp || !message.isEmpty {
+      text(
+        message.isEmpty
+          ? "← →  Seleziona     Invio  Gioca     Spazio  Opzioni     ⌘F  Cerca     ⌘O  Importa"
+          : message,
+        CGRect(x: left, y: height - (libraryHelp ? 38 : 21), width: content, height: libraryHelp ? 25 : 18),
+        size: libraryHelp ? 12 : 11, color: color(0xaebcba))
+    }
+  }
+  // Controller focus on the persistent shell must never activate hidden games.
+  func handleShellController(_ action: ControllerNavigation.Action) {
+    guard section != .library, interactionEnabled, !suspended else { return }
+    switch action {
+    case .move(let direction):
+      guard !hits.isEmpty else { return }
+      let step = direction == .left || direction == .up ? -1 : 1
+      let current = focusID.flatMap { id in hits.firstIndex { $0.id == id } } ?? (step > 0 ? -1 : 0)
+      focusID = hits[(current + step + hits.count) % hits.count].id
+      redraw()
+    case .activate:
+      if let id = focusID, let target = hits.first(where: { $0.id == id }) { activate(target) }
+    default: break
+    }
   }
   override func keyDown(with event: NSEvent) {
     guard interactionEnabled && !suspended else { return }
@@ -450,17 +496,27 @@ final class MetalCanvas: NSView {
       let current = focusID.flatMap { id in hits.firstIndex { $0.id == id } } ?? (step > 0 ? -1 : 0)
       focusID = hits[(current + step + hits.count) % hits.count].id; redraw()
     case 123:
+      guard section == .library else { return }
       focusID = nil
       selected = max(0, selected - 1)
       redraw()
     case 124:
+      guard section == .library else { return }
       focusID = nil
       selected = min(max(visibleGames.count - 1, 0), selected + 1)
       redraw()
     case 36:
       if let id = focusID, let target = hits.first(where: { $0.id == id }) { activate(target); return }
+      guard section == .library else { return }
       if visibleGames.indices.contains(selected) { onAction?(.game(visibleGames[selected].id)) }
     case 49:
+      if let id = focusID, let target = hits.first(where: { $0.id == id }) {
+        if case .game(let gameID) = target.action {
+          if section == .library { onAction?(.gameOptions(gameID)) }
+        } else { activate(target) }
+        return
+      }
+      guard section == .library else { return }
       if visibleGames.indices.contains(selected) {
         onAction?(.gameOptions(visibleGames[selected].id))
       }
@@ -482,6 +538,7 @@ final class MetalCanvas: NSView {
     if shouldActivate, let target { activate(target) }
   }
   override func rightMouseDown(with event: NSEvent) {
+    guard section == .library else { return }
     guard let target = hit(at: convert(event.locationInWindow, from: nil)), case .game(let id) = target.action else { return }
     onAction?(.gameOptions(id))
   }

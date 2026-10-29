@@ -35,11 +35,12 @@ extension AppDelegate {
       content: NSView(frame: NSRect(x: 0, y: 0, width: 120, height: 60)),
       actions: [.init("Chiudi", role: .cancel)]
     ) { _ in }
-    presentDialog(
+    dialogs.present(
       title: "Synthetic queued panel", message: "Queued notification during play",
+      content:nil,
       actions: [.init("Chiudi", role: .cancel)]
     ) { _ in }
-    checks["internalPanelPresentBeforeLaunch"] = dialogs.isPresenting
+    checks["internalPanelPresentBeforeLaunch"] = dialogs.isPresenting && pages.isPresenting
     var started = false
     session.onFinish = { [weak self] message in
       guard let self else { return }
@@ -77,7 +78,7 @@ extension AppDelegate {
         started = true
         self.showError(LauncherError.failed("Synthetic background store failure"))
         checks["errorDoesNotCreateModal"] = NSApp.modalWindow == nil && !self.dialogs.isPresenting
-        checks["activeAndQueuedPanelsDetachedDuringGame"] = !self.dialogs.isPresenting
+        checks["activeAndQueuedPanelsDetachedDuringGame"] = !self.dialogs.isPresenting && !self.pages.isPresenting
         checks["errorDoesNotShowLauncher"] = !self.window.isVisible
         checks["errorDoesNotRestoreGPUTexture"] = self.canvas.allocatedTextureBytes == 0
         checks["errorIsDeferred"] = self.backgroundNotices.count == 3

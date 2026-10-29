@@ -34,6 +34,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   var steamPreparationID: UUID?
   var steamConnectionDiagnosticSignature = ""
   lazy var dialogs = ReadyDialogPresenter(window: { [weak self] in self?.window })
+  lazy var pages: ReadyPagePresenter = {
+    let presenter = ReadyPagePresenter(window: { [weak self] in self?.window }, host: { [weak self] in self?.canvas })
+    presenter.onNeedsLanding = { [weak self] in self?.pageNeedsLanding() }
+    presenter.canNavigate = { [weak self] in
+      guard let self else { return false }
+      return !self.maintenanceInProgress && self.session?.running != true && self.pendingLaunch == nil
+    }
+    return presenter
+  }()
+  var settingsPageSection = SettingsPageSection.overview
+  var pageNavigationTransition = false
   var qrDialog: UUID?
   var qrImage: NSImageView?
   var steamAuthDiagnostics: SteamAuthDiagnostics?
@@ -160,6 +171,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   }
   func windowWillClose(_ notification: Notification) {
     if (notification.object as? NSWindow) === window {
+      pageNavigationTransition = true
+      pages.cancelCurrent()
+      _ = pages.detachForSession()
+      pageNavigationTransition = false
       cancelAuthentication()
       MainActor.assumeIsolated { cancelSteamGamePreparation() }
     }
@@ -209,6 +224,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       return .terminateLater
     }
     storeClient?.cancelAll()
+    pageNavigationTransition = true
+    pages.cancelCurrent()
+    _ = pages.detachForSession()
+    pageNavigationTransition = false
     MainActor.assumeIsolated { cancelSteamGamePreparation() }
     MainActor.assumeIsolated { steamDownloads?.stop() }
     MainActor.assumeIsolated { steamNetwork?.stop() }
@@ -222,7 +241,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     session.onWillLaunch = { [weak self] in
       guard let self else { return }
       // Authentication is excluded by launchGame and all pending/session input gates.
-      for notice in self.dialogs.detachForSession() where !self.backgroundNotices.contains(notice) {
+      let notices = self.pages.detachForSession() + self.dialogs.detachForSession()
+      self.canvas.section = .library
+      for notice in notices where !self.backgroundNotices.contains(notice) {
         self.backgroundNotices.append(notice)
       }
       if self.backgroundNotices.count > 8 {
@@ -257,7 +278,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     library.submenu = NSMenu()
     for (name, key, selector) in [
       ("Importa gioco…", "o", #selector(importGame)), ("Cerca…", "f", #selector(search)),
-      ("Profili…", "u", #selector(profiles)), ("Account e runtime…", ",", #selector(settings)),
+      ("Profili…", "u", #selector(profiles)), ("Impostazioni", ",", #selector(settings)),
       ("Motori…", "", #selector(runtimeLocationSettings)),
       ("Dati e ripristino…", "", #selector(dataMaintenance)),
       ("Notifiche…", "", #selector(showNotifications)),
@@ -301,9 +322,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     case .game(let id): activateGame(id)
     case .gameOptions(let id): gameOptions(id)
     case .store(let store):
-      canvas.filter = store
-      canvas.selected = 0
-      canvas.refresh()
+      navigateToLibrary(store: store)
     case .profiles: profiles()
     case .importGame: importGame()
     case .settings: settings()
@@ -311,7 +330,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     case .downloads: MainActor.assumeIsolated { showSteamDownloads() }
     case .search: search()
     case .fullscreen: toggleFullscreen()
-    case .refresh: refreshLocal()
+    case .refresh:
+      if canvas.section == .settings { openSettingsSection(settingsPageSection) }
+      else if canvas.section == .steamAccount { _ = MainActor.assumeIsolated { steamNetwork?.request("snapshot") { _ in } } }
+      else if canvas.section == .downloads { MainActor.assumeIsolated { steamDownloads?.restore() } }
+      else { refreshLocal() }
     }
   }
   @objc func toggleFullscreen() { window.toggleFullScreen(nil) }
@@ -352,6 +375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   }
   @objc func importGame() {
     guard !maintenanceInProgress, !dialogs.isPresenting else { return }
+    beginPage(.utility)
     let profile = state.activeProfile
     selectLocalFile(
       title: "Importa un’app macOS o un eseguibile Windows", prompt: "Importa",
@@ -389,6 +413,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
   }
   @objc func search() {
+    beginPage(.utility)
     let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 540, height: 28))
     input.stringValue = canvas.query
     input.placeholderString = "Titolo del gioco"
@@ -410,6 +435,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         LauncherError.unavailable("Completa le operazioni in corso prima di cambiare profilo."))
       return
     }
+    beginPage(.profiles)
     let profiles = state.profiles
     let pick = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 540, height: 30))
     pick.addItems(withTitles: profiles.map { $0.name })
@@ -669,29 +695,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
   }
   @objc func settings() {
+    guard !maintenanceInProgress, session?.running != true, pendingLaunch == nil else { return }
+    beginSettingsSection(.overview)
     let cfg = activeRuntime()
     let detail =
-      "Wine: \(cfg.wineVersion ?? "in preparazione")\nKosmicKrisp: \(cfg.kosmicICD == nil ? "in preparazione":"rilevato")\nGPTK 4 beta 3: componente proprietario opzionale per valutazione\n\nAmbienti isolati per gioco e profilo. Motori condivisi.\n\nDurante il gioco il frontend rilascia texture e drawable. Il direct-to-display deve essere verificato con Metal HUD."
+      "Organizza account, motori e dati dei profili dalle schede in alto.\n\nProfilo attivo: \(state.profiles.first(where: { $0.id == state.activeProfile })?.name ?? "Giocatore")\nMotore Windows: \(cfg.wineVersion ?? "da configurare")\n\nOgni gioco Windows usa un ambiente separato per profilo. Documenti e salvataggi restano nelle cartelle persistenti del profilo.\n\nDurante il gioco Ready libera le risorse grafiche della propria interfaccia."
     presentDialog(
-      title: "Account e runtime", message: detail,
-      actions: [
-        .init("Collega uno store…", role: .primary), .init("Motori…"), .init("Dati e ripristino…"),
-        .init("Valutazione Apple…"), .init("Chiudi", role: .cancel),
-      ]
-    ) { [weak self] choice in
-      guard let self else { return }
-      switch choice {
-      case 0: self.connectStore()
-      case 1: self.runtimeLocationSettings()
-      case 2: self.dataMaintenance()
-      case 3: self.evaluationSettings()
-      default: break
-      }
-    }
+      title: "Preferenze di Ready", message: detail,
+      actions: []
+    ) { _ in }
   }
   func connectStore() {
     guard !maintenanceInProgress else { return }
     cancelAuthentication()
+    beginSettingsSection(.accounts)
     let profile = state.activeProfile
     let stores: [Store] = [.steam, .epic, .gog, .amazon]
     let pick = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 540, height: 30))
@@ -726,7 +743,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         stores[pick.indexOfSelectedItem], profile: profile, synchronize: choice == 1)
     }
   }
-  private func beginStoreConnection(_ store: Store, profile: UUID, synchronize: Bool) {
+  private func cancelStoreAuthentication(_ authentication: UUID) {
+    guard authenticationSession == authentication else { return }
+    cancelAuthentication()
+  }
+  private func dismissStoreAuthenticationPresentation(_ authentication: UUID) {
+    guard authenticationSession == authentication else { return }
+    let previous = qrDialog
+    qrDialog = nil; qrImage = nil
+    if let previous { dismissDialog(previous) } // Internal transition, no onCancel.
+  }
+  private func showStoreAuthenticationProgress(_ authentication: UUID, store: Store, message: String) {
+    guard authenticationSession == authentication else { return }
+    dismissStoreAuthenticationPresentation(authentication)
+    qrDialog = presentDialog(title:"Accesso a \(store.title)",message:message,
+      actions:[.init("Annulla accesso",role:.cancel)],
+      onCancel:{[weak self] in self?.cancelStoreAuthentication(authentication)}) { _ in }
+  }
+  private func finishStoreAuthentication(_ authentication: UUID, store: Store, profile: UUID, error: Error? = nil) {
+    guard authenticationSession == authentication else { return }
+    dismissStoreAuthenticationPresentation(authentication)
+    authenticationSession = nil; authenticationRequest = nil; steamAuthenticationRequest = nil
+    if let error { showError(error); return }
+    navigateToLibrary(store:store)
+    syncStore(store,profile:profile)
+  }
+  private func beginStoreConnection(_ store: Store, profile: UUID, synchronize: Bool,
+      openAuthorizationURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) }) {
     if store == .steam && !synchronize {
       MainActor.assumeIsolated { showSteamAccount() }
       return
@@ -739,23 +782,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     canvas.refresh()
     let authentication = UUID()
     authenticationSession = authentication
+    showStoreAuthenticationProgress(authentication,store:store,message:"Preparazione dell’accesso…")
     let handleEvent: ([String: Any]) -> Void = {
       [weak self] event in
       guard let self, self.authenticationSession == authentication else { return }
       switch event["type"] as? String {
       case "error":
-        self.authenticationSession = nil
-        self.authenticationRequest = nil
-        self.steamAuthenticationRequest = nil
-        if let id = self.qrDialog { self.dismissDialog(id) }
-        self.qrDialog = nil
-        self.qrImage = nil
-        self.showError(LauncherError.failed(event["message"] as? String ?? "Accesso non riuscito"))
+        self.finishStoreAuthentication(authentication,store:store,profile:profile,
+          error:LauncherError.failed(event["message"] as? String ?? "Accesso non riuscito"))
       case "qr":
         if let url = event["url"] as? String ?? event["challengeUrl"] as? String {
-          self.showQR(url)
+          self.showQR(url,authentication:authentication)
         } else {
-          self.cancelAuthentication()
+          self.cancelStoreAuthentication(authentication)
           self.showError(LauncherError.invalid("Risposta QR dello store non valida."))
         }
       case "auth_url":
@@ -763,14 +802,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
           url.scheme == "https", url.host?.isEmpty == false,
           let authState = event["authState"] as? [String: Any]
         else {
-          self.cancelAuthentication()
+          self.cancelStoreAuthentication(authentication)
           self.showError(LauncherError.invalid("Risposta di accesso dello store non valida."))
           return
         }
-        if let id = self.qrDialog { self.dismissDialog(id) }
-        self.qrDialog = nil
-        self.qrImage = nil
-        NSWorkspace.shared.open(url)
+        self.dismissStoreAuthenticationPresentation(authentication)
+        openAuthorizationURL(url)
         let input = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 540, height: 28))
         self.qrDialog = self.presentDialog(
           title: "Completa l’accesso a \(store.title)",
@@ -778,42 +815,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             "Accedi nel browser e incolla qui l’URL finale o il codice di autorizzazione. Il valore non viene registrato nei log.",
           content: input,
           actions: [.init("Collega", role: .primary), .init("Annulla", role: .cancel)],
-          onCancel: { [weak self] in self?.cancelAuthentication() }
+          onCancel: { [weak self] in self?.cancelStoreAuthentication(authentication) }
         ) { [weak self] choice in
           guard let self, self.authenticationSession == authentication else { return }
-          self.qrDialog = nil
-          guard choice == 0, !input.stringValue.isEmpty else {
-            self.cancelAuthentication()
+          guard choice == 0 else {
+            self.cancelStoreAuthentication(authentication)
             return
           }
+          guard !input.stringValue.isEmpty else {
+            self.showError(LauncherError.invalid("Inserisci l’URL finale o il codice di autorizzazione.")); return
+          }
           let value = input.stringValue
+          input.stringValue = ""
           let options: [String: Any] = [
             "authState": authState, value.hasPrefix("https://") ? "redirectURL" : "code": value,
           ]
+          self.showStoreAuthenticationProgress(authentication,store:store,message:"Verifica dell’autorizzazione…")
           self.authenticationRequest = self.storeClient.request(
             operation: "auth_complete", store: store, profile: profile, options: options
           ) { [weak self] e in
             guard let self, self.authenticationSession == authentication else { return }
             if e["type"] as? String == "result" {
-              self.authenticationSession = nil
-              self.authenticationRequest = nil
-              self.syncStore(store, profile: profile)
+              self.finishStoreAuthentication(authentication,store:store,profile:profile)
             } else if e["type"] as? String == "error" {
-              self.authenticationSession = nil
-              self.authenticationRequest = nil
-              self.showError(
-                LauncherError.failed(e["message"] as? String ?? "Accesso non riuscito"))
+              self.finishStoreAuthentication(authentication,store:store,profile:profile,
+                error:LauncherError.failed(e["message"] as? String ?? "Accesso non riuscito"))
             }
           }
         }
       case "result":
-        self.authenticationSession = nil
-        self.authenticationRequest = nil
-        self.steamAuthenticationRequest = nil
-        if let id = self.qrDialog { self.dismissDialog(id) }
-        self.qrDialog = nil
-        self.qrImage = nil
-        self.syncStore(store, profile: profile)
+        self.finishStoreAuthentication(authentication,store:store,profile:profile)
       default: break
       }
     }
@@ -826,7 +857,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         operation: "auth_begin", store: store, profile: profile, event: handleEvent)
     }
   }
-  func showQR(_ value: String) {
+  func showQR(_ value: String, authentication: UUID) {
+    guard authenticationSession == authentication else { return }
     guard let filter = CIFilter(name: "CIQRCodeGenerator") else {
       cancelAuthentication()
       showError(LauncherError.failed("Codice QR non disponibile."))
@@ -845,6 +877,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       view.image = qr
       return
     }
+    dismissStoreAuthenticationPresentation(authentication)
     let view = NSImageView(frame: NSRect(x: 130, y: 0, width: 280, height: 280))
     view.image = qr
     view.imageScaling = .scaleProportionallyUpOrDown
@@ -855,7 +888,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       title: "Accedi con Steam Guard", message: "Scansiona con l’app Steam del tuo telefono.",
       content: host,
       actions: [.init("Annulla accesso", role: .cancel)],
-      onCancel: { [weak self] in self?.cancelAuthentication() }
+      onCancel: { [weak self] in self?.cancelStoreAuthentication(authentication) }
     ) { _ in }
   }
   func syncStore(_ store: Store, profile: UUID) {
@@ -1007,6 +1040,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
           self.dialogs.handleController(action)
           return
         }
+        if self.pages.isPresenting {
+          guard !self.session.running, !self.maintenanceInProgress, NSApp.isActive else { return }
+          if action == .profiles { self.profiles(); return }
+          if action == .previousStore || action == .nextStore { self.navigateToLibrary(); return }
+          if action == .cancel { self.navigateToLibrary(store:self.canvas.filter); return }
+          if !self.pages.handleController(action) { self.canvas.handleShellController(action) }
+          return
+        }
         let modal = NSApp.modalWindow ?? self.window.attachedSheet
         switch ControllerNavigation.destination(
           running: self.session.running, maintenance: self.maintenanceInProgress,
@@ -1103,6 +1144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       }
       return
     }
+    if pages.isPresenting { pages.showNotice(error.localizedDescription); return }
     presentDialog(
       title: "Operazione non riuscita", message: error.localizedDescription,
       actions: [.init("Chiudi", role: .cancel)]
@@ -1110,6 +1152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   }
   @objc func showNotifications() {
     guard session?.running != true, !maintenanceInProgress, pendingLaunch == nil else { return }
+    beginPage(.utility)
     let notices = backgroundNotices
     presentDialog(
       title: "Notifiche",

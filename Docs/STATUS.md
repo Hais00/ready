@@ -13,6 +13,8 @@ Started 2026-10-27. Repository: `https://github.com/Hais00/ready` (private). Loc
 
 ## Latest steering and progress
 
+- Settings now has persistent main-content tabs; account/friends, downloads, profiles and ordinary forms use nonmodal pages with the sidebar available. Actual Cua and the scoped automatic checks are recorded in [navigation pages](../Validation/navigation-pages-checkpoint.json). The older floating-dialog UI evidence below is historical. Game-time quit confirmation remains transient. No new server login/download/game certification is implied by this UI checkpoint.
+
 - Latest beta releases requested explicitly; fetched Wine 11.20, Mesa/KosmicKrisp 26.3.0-rc2, SteamKit 3.5.1-Alpha.1, plus latest available DXVK/VKD3D/MoltenVK source artifacts.
 - Single-prefix design superseded by **game/profile prefixes**. See REQUIREMENTS and PREFIXES.
 - Native Swift/Metal frontend compiles and visually checked text orientation/icons. It renders only on change and tears down its canvas at actual game launch, after asynchronous Wine initialization.

@@ -8,7 +8,7 @@ def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--observe',action='store_true');args=parser.parse_args()
     run=pathlib.Path(tempfile.mkdtemp(prefix='steam-account-layout-',dir=WORK/'tests'));run.chmod(0o700)
-    sources=[ROOT/x for x in ['Sources/M1Launcher/SteamAccountView.swift','Sources/M1Launcher/ReadyDialogs.swift','Synthetic/ReadySteamAccountLayoutProbe.swift']]
+    sources=[ROOT/x for x in ['Sources/M1Launcher/SteamAccountView.swift','Sources/M1Launcher/ReadyDialogs.swift','Sources/M1Launcher/ReadyPagePresenter.swift','Synthetic/ReadySteamAccountLayoutProbe.swift']]
     before={str(p.relative_to(ROOT)):sha(p)for p in sources}
     binary=run/'ReadySteamAccountLayoutProbe'
     env={k:v for k,v in os.environ.items()if not k.startswith(('READY_','DYLD_','Steam','STEAM'))};env['TMPDIR']=str(WORK/'tmp')+'/'

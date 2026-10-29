@@ -284,7 +284,7 @@ final class SteamAuthDiagnostics {
     do {
       if let state = try reader.next() { apply(state) }
       if !acknowledged, let delegate, let dialog, delegate.window.isVisible,
-        delegate.dialogs.isShowing(dialog)
+        delegate.isPresentationShowing(dialog)
       {
         try reader.acknowledge()
         acknowledged = true

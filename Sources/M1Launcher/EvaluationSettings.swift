@@ -16,6 +16,7 @@ extension AppDelegate {
           "Attendi il termine delle operazioni in corso prima di cambiare runtime."))
       return
     }
+    beginSettingsSection(.evaluation)
     let restoring =
       activeRuntime().evaluationModeEnabled == true || EvaluationMode.hasRestorePoint(paths: paths)
     let title = restoring ? "Ripristina il runtime precedente" : "Valutazione locale con il toolkit Apple"

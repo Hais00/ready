@@ -457,11 +457,19 @@ extension AppDelegate {
     title: String, message: String, content: NSView? = nil, actions: [ReadyDialogAction],
     onCancel: (() -> Void)? = nil, completion: @escaping (Int) -> Void
   ) -> UUID {
-    dialogs.present(
+    if canvas != nil, session?.running != true {
+      if canvas.section == .library { beginPage(.utility) }
+      return pages.present(title:title,message:message,content:content,actions:actions,
+        onCancel:onCancel,completion:completion)
+    }
+    return dialogs.present(
       title: title, message: message, content: content, actions: actions, onCancel: onCancel,
       completion: completion)
   }
-  func dismissDialog(_ id: UUID) { dialogs.dismiss(id) }
+  func dismissDialog(_ id: UUID) {
+    if pages.isShowing(id) { pages.dismiss(id) }
+    else { dialogs.dismiss(id) }
+  }
 }
 
 // Local browsing stays in ready. This grants no extra filesystem permissions and
@@ -645,8 +653,8 @@ extension AppDelegate {
       completion(choice == 0 ? browser.selected : nil)
     }
     browser.selectionChanged = { [weak self] enabled in
-      self?.dialogs.setActionEnabled(id, index: 0, enabled: enabled)
+      self?.setPresentationActionEnabled(id, index: 0, enabled: enabled)
     }
-    browser.acceptSelection = { [weak self] in self?.dialogs.activatePrimary(id) }
+    browser.acceptSelection = { [weak self] in self?.activatePresentationPrimary(id) }
   }
 }
