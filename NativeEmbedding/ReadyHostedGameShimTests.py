@@ -25,6 +25,22 @@ _Static_assert(RHG_VERSION==6,"Own CPU fixture must track protocol V6");
 -(void)mouseUp:(NSEvent*)event{(void)event;self.mouseUps++;}
 -(void)flagsChanged:(NSEvent*)event{if(event.modifierFlags==0)self.flags++;}
 @end
+@interface FocusScrollController:NSObject
+@property BOOL focused;
+@property unsigned gained,lost,mainGained,mainLost;
+@end
+@implementation FocusScrollController
+-(void)windowDidBecomeKey:(NSNotification*)n{(void)n;self.focused=YES;self.gained++;}
+-(void)windowDidResignKey:(NSNotification*)n{(void)n;self.focused=NO;self.lost++;}
+-(void)windowDidBecomeMain:(NSNotification*)n{(void)n;self.mainGained++;}
+-(void)windowDidResignMain:(NSNotification*)n{(void)n;self.mainLost++;}
+@end
+@interface FocusScrollRecorder:ScrollRecorder
+@property(nonatomic,strong)FocusScrollController *controller;
+@end
+@implementation FocusScrollRecorder
+-(void)scrollWheel:(NSEvent*)event{if(self.controller.focused)[super scrollWheel:event];}
+@end
 @interface UnsupportedWindow:NSWindow @end
 @implementation UnsupportedWindow @end
 @interface RHGFixtureWindow:NSWindow @end
@@ -157,6 +173,18 @@ int main(int argc,char **argv){@autoreleasepool{
  [child addCursorRect:child.bounds cursor:cursor];[child discardCursorRects];
  require([window makeFirstResponder:child]&&window.firstResponder==child);
  [NSApp updateWindows];
+ if(!strcmp(mode,"focus-scroll")){
+  FocusScrollController *controller=[FocusScrollController new];window.delegate=(id)controller;
+  [window orderOut:nil];require(!controller.focused&&controller.lost==1&&controller.mainLost==1);
+  [window makeKeyAndOrderFront:nil];[window makeKeyAndOrderFront:nil];require(controller.focused&&controller.gained==1&&controller.mainGained==1);
+  FocusScrollRecorder *recorder=[[FocusScrollRecorder alloc]initWithFrame:NSMakeRect(0,0,320,180)];recorder.controller=controller;window.contentView=recorder;[window makeFirstResponder:recorder];
+  void(*deliver)(RHGInput)=dlsym(RTLD_DEFAULT,"RHGFixtureDeliverInput");require(deliver);
+  RHGInput scroll={.type=RHG_SCROLL,.deltaY=-1,.scrollingDeltaY=-10,.scrollFixedY=-10,.scrollLineY=-1,.scrollPointY=-10,.scrollPrecise=1,.timestamp=123,.x=.5,.y=.5};
+  deliver(scroll);require(recorder.scrolls==1);
+  deliver((RHGInput){.type=RHG_FOCUS,.keyCode=0});deliver((RHGInput){.type=RHG_FOCUS,.keyCode=0});require(!controller.focused&&controller.lost==2&&controller.mainLost==1&&window.isMainWindow&&!window.isKeyWindow);deliver(scroll);require(recorder.scrolls==1);
+  deliver((RHGInput){.type=RHG_FOCUS,.keyCode=1});deliver((RHGInput){.type=RHG_FOCUS,.keyCode=1});require(controller.focused&&controller.gained==2&&controller.mainGained==1);deliver(scroll);require(recorder.scrolls==2);
+  FocusScrollController *replacement=[FocusScrollController new];window.delegate=(id)replacement;[window orderOut:nil];[window makeKeyAndOrderFront:nil];require(controller.gained==2&&controller.lost==2&&replacement.gained==1&&replacement.lost==1&&replacement.focused);
+ }
  if(!strcmp(mode,"scroll-input")){
   ScrollRecorder *recorder=[[ScrollRecorder alloc]initWithFrame:NSMakeRect(0,0,320,180)];window.contentView=recorder;require([window makeFirstResponder:recorder]);
   void(*deliver)(RHGInput)=dlsym(RTLD_DEFAULT,"RHGFixtureDeliverInput");require(deliver!=NULL);
@@ -217,7 +245,7 @@ void RHGFixtureOriginalMouseControl(BOOL enable){
  checks={}
  regular=run/'RegularGuestFixture.app/Contents';(regular/'MacOS').mkdir(parents=True,mode=0o700);shutil.copy2(binary,regular/'MacOS/driver')
  (regular/'Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable':'driver','CFBundleIdentifier':'local.ready.hosted.regular.'+uuid.uuid4().hex,'CFBundlePackageType':'APPL','LSUIElement':False}))
- for mode,expected in [('logical',0),('scroll-input',0),('poll-position',0),('pointer-inactive',0),('bad-pointer',77),('regular-policy',0),('subclass',0),('unsupported',77),('multiple',77),('unknown-selector',77),('bad-reply',77),('bad-metadata',77)]:
+ for mode,expected in [('logical',0),('scroll-input',0),('focus-scroll',0),('poll-position',0),('pointer-inactive',0),('bad-pointer',77),('regular-policy',0),('subclass',0),('unsupported',77),('multiple',77),('unknown-selector',77),('bad-reply',77),('bad-metadata',77)]:
   env={k:v for k,v in os.environ.items()if not k.startswith(('READY_','DYLD_','Steam','STEAM'))}
   env.update(DYLD_INSERT_LIBRARIES=str(library),READY_HOSTED_GAME_SERVICE='local.ready.hostedgame.fixture.'+uuid.uuid4().hex,READY_HOSTED_GAME_NONCE='a1'*32,MTL_HUD_ENABLED='0')
   executable=regular/'MacOS/driver'if mode=='regular-policy'else binary

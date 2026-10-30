@@ -17,6 +17,9 @@ extension AppDelegate {
       backgroundNotices.isEmpty ? message : message + " · Nuove notifiche in Libreria → Notifiche"
     window.contentView = canvas
     window.makeFirstResponder(canvas)
+    // Build the chrome and sparse card layers before exposing the restored
+    // library. Metal compilation now runs independently of this CPU path.
+    canvas.renderDisplayTick()
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
     canvas.refresh()
@@ -26,7 +29,10 @@ extension AppDelegate {
     let games=canvas.gameplayViewportGames
     canvas.artworkCache.restoreFirstViewport(games:games){[weak self]in
       guard let self,self.session?.running != true else{return}
-      self.setSteamMaintenanceSuspended(false)
+      self.canvas.restoreVisibleLibrary{[weak self]in
+        guard let self,self.session?.running != true else{return}
+        self.setSteamMaintenanceSuspended(false)
+      }
     }
   }
 
@@ -44,6 +50,7 @@ extension AppDelegate {
     var checks = [String: Bool]()
     window.makeKeyAndOrderFront(nil)
     canvas.refresh()
+    canvas.renderDisplayTick()
     checks["initialCanvasAllocated"] = canvas.allocatedTextureBytes > 0
     // Exercise the new defensive teardown with an active internal panel and a
     // queued panel, not merely NSApp.modalWindow (which is intentionally nil).
@@ -63,7 +70,8 @@ extension AppDelegate {
       guard let self else { return }
       self.restoreLauncher(message)
       checks["realSessionStarted"] = started
-      checks["returnRestoresCanvas"] = self.canvas.allocatedTextureBytes > 0
+      let graphics=self.canvas.graphicsRestoreSnapshot
+      checks["returnRestoresCanvas"] = !graphics.suspended && (graphics.cpuChromeVisible || graphics.rendererReady)
       checks["returnRestoresWindowContent"] = self.window.contentView === self.canvas
       checks["returnRestoresKeyboardFocus"] = self.window.firstResponder === self.canvas
       checks["notificationRemainsAccessible"] = self.backgroundNotices.count == 3

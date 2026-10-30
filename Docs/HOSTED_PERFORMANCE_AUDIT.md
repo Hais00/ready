@@ -1,6 +1,33 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 # Audit della pipeline hosted — 29 ottobre 2026
 
+## Aggiornamento del 30 ottobre: stutter, input e ritorno
+
+Il percorso attuale conserva la pipeline GPU con crediti limitati e ACK dopo
+la PRESENT corretta: nessun anticipo del fence o copia aggiuntiva delle superfici.
+Il polling input salta un tentativo quando la transazione RPC è occupata dal
+rendering, mantenendo la singola reply-port protetta. La prova di completamento
+verifica anche 128 tentativi a lock occupato senza inviare nuove richieste.
+
+La verifica CoreGraphics della sessione console gira su una coda indipendente,
+con refresh a 100 ms, età massima 350 ms e invalidazione immediata sugli eventi
+di sessione/focus/Space/schermo. I controlli AppKit, frontmost e dell’eseguibile
+peer restano freschi; una prova mancante, scaduta o invalidata nega la cattura.
+Un risultato asincrono obsoleto non può riabilitarla. Il percorso POLL/mouse non
+effettua più una query WindowServer della sessione per ogni pacchetto.
+
+Serializzazione e scrittura del journal host sono asincrone e limitate a 64
+record pendenti. Il journal periodico ogni 120 frame è ora legato alla diagnostica
+prestazioni opt-in; non trattiene l’ACK dei frame durante il normale gioco.
+
+Le prove controllate verificano una console-provider lenta, un writer bloccato,
+scadenza/revoca e completamenti GPU/Mach con backpressure. Non dimostrano la
+scomparsa dello stutter in Cyberpunk: il benchmark e il gesto fisico restano
+all’utente. Per scroll/cursore e ritorno, vedere [focus/input](HOSTED_SCROLL_FOCUS.md),
+[ripristino libreria](NATIVE_LIBRARY_RETURN.md) e [checkpoint](../Validation/hosted-native-interaction-checkpoint.json).
+
+## Audit storico
+
 La prima sezione conserva l’audit storico iniziale in sola lettura; le sezioni successive documentano implementazioni e prove distinte. Audit iniziale in sola lettura. Nessuna modifica di produzione, esecuzione del gioco, acquisizione del mouse/display, build globale o misurazione GPU eseguita da questo agente. Il confronto riferito dall'utente (37,72 FPS nativo contro circa 34 FPS hosted) equivale aritmeticamente a −9,86% e a un intervallo medio teorico da 26,51 a 29,41 ms, cioè circa +2,90 ms. Non è un benchmark A/B controllato né una misura della causa. Lo stutter richiede distribuzioni dei tempi e non si descrive con la sola media FPS.
 
 Sorgenti ispezionati: `NativeEmbedding/ReadyHostedGameShim.m`, `Sources/ReadyHostedView/ReadyHostedView.m` e `Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h`, protocollo 3. Fingerprint letti durante l'audit: shim `94833ebbd16ecf953a0685a58c2b90d519166d59f8b7f04f119da6be6bc86ecb`, host `01085dab3dd11b29856e5c111e57c35ca9463112e35f1b3635791cebb778df42`, protocollo `053b8d7f838e794f31ba9422f748f5af4937791a3bb245d5adbe12321bc1315f`. L'agente input possiede modifiche contemporanee nelle sezioni mouse/POLL; questi fingerprint descrivono il punto letto, non congelano una futura build.

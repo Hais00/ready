@@ -1,0 +1,117 @@
+{
+  "schema": 1,
+  "date": "2026-10-30",
+  "scope": "Native hosted input focus/cursor, hot-path blocking and post-exit library restoration.",
+  "sourceHashes": {
+    "NativeEmbedding/ReadyHostedGameShim.m": "c56c1bbd2c5265cebebbc219a3b5d98eefe62c61376b1612304858702a408cb3",
+    "Sources/ReadyHostedView/ReadyHostedView.m": "a7da1f67caabfb8bbfc3913bda4996d0a3b896196854be70dd3eae56d1f0c29e",
+    "Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h": "182c7ae11ca6fe16b3c22abd2a641edd76ac77b544c9735c55a518145c4625ee",
+    "Sources/M1Launcher/FrontendLifecycle.swift": "fb8b384f6407a95f32323e099c9cb083a088d61ef08a3674cc749f49cdd927c5",
+    "Sources/M1Launcher/MetalCanvas.swift": "a37b311f14331d13fa2b822ba4032e286313c01c3da7b4ca22746f9c6aa1974d",
+    "NativeEmbedding/ReadyHostedGameShimTests.py": "49b89ec4b4f86e15a85c9d41128174ce3e38c519a6daa92bb06a7c55735f6823",
+    "Synthetic/ReadyHostedCompletionProbe.m": "efd7d4b3cc8744e69363bdafd5a7d71237eb3abb79b817f483598d3fc350af62",
+    "Synthetic/ReadyHostedScrollProbe.m": "75922bed3e2301ab30ae6e5ed0d7f688bfbda068c58e665b714563f4276141db",
+    "Synthetic/ReadyHostedHotPathProbe.m": "9b3575f443283142076509ce313ae9aec4c62e921eda08875e44cc98be9a3d63",
+    "Synthetic/ReadyLibraryAppearanceProbe.swift": "519de5922758fc0bbfbb980a647490a6e8eb7aae48368dfff685789c79b8f848",
+    "Scripts/test_hosted_hotpath.py": "7eb64539827bb021423f97d99d8e01064c8776f39ab78f84c9b250ce42cdddb2"
+  },
+  "checks": {
+    "hostHotPath": {
+      "passed": true,
+      "reportSHA256": "e6cd9ec2a9689ca56cad8d2501f95eb9ed5012007e2768381bab6441818688ae",
+      "count": 27
+    },
+    "guestCompletionAndRPC": {
+      "passed": true,
+      "reportSHA256": "7557e914b49ad38f23b8c85e82b3c994683b0d41831590fbea12654b857cb13a",
+      "statsChecks": 26,
+      "completionChecks": 149,
+      "negativeCases": 2
+    },
+    "realMetalPipeline": {
+      "passed": true,
+      "reportSHA256": "516a13440225d8482fafa92f8b0c4cb1a683ee2d538f857c083609c9a125236f"
+    },
+    "keeperExitAndPresentation": {
+      "passed": true,
+      "reportSHA256": "9388f5175ddf5788472deb25d4cfedbdf9642caa27442d26fdacf5faa13bd000",
+      "count": 13
+    },
+    "scrollCaptureAndCursor": {
+      "passed": true,
+      "reportSHA256": "4ba3339a4c7506904b02c15854dc4aa77cca4734577f74db78a4d9cf186089c5",
+      "count": 15
+    },
+    "libraryReturn": {
+      "passed": true,
+      "reportSHA256": "9297fe1993152aae62c57d31ef8fbce48c7721c56b8068910471d416e8f2e084",
+      "count": 36
+    },
+    "logicalGameFocus": {
+      "passed": true,
+      "cases": 13,
+      "reportSHA256": "f1bbac3133889613357b3ea1ffa61e63b9f80217b804e5f3c8a4ccc14905a147"
+    },
+    "pointerState": {
+      "passed": true,
+      "checks": 18,
+      "reportSHA256": "160f6c184c7e34ff32d29a64494fd563c943929c471498d6b0a9889d7b97c44e"
+    },
+    "actualFrontendKeeperReturn": {
+      "passed": true,
+      "checks": 14,
+      "reportSHA256": "ba83927c6e95709475c635705f2e6abf1948a79cf9e2f8ebeec7a132e3d9e661"
+    }
+  },
+  "build": {
+    "releaseBuildPassed": true,
+    "signatureAndRelocationPassed": true,
+    "relocationChecks": 14,
+    "packageReportSHA256": "e04a77deaab12cab2f03bc433defaaa3ad09c8fde0a68a34c587ffb5f06247bf",
+    "frontendSHA256": "cc83dee56f0d47ff7d08891aa9df1d682db1449ac0b7f2e839c901d48500de8d",
+    "hostedShimSHA256": "1cf823662b3cc3cf9ea8e56f2482849e51e99c91a7a35195a355111f577dad48"
+  },
+  "rendering": {
+    "protocolVersion": 6,
+    "frameDepthChanged": false,
+    "GPUFenceAndPresentACKPreserved": true,
+    "productionExtraSurfaceCopies": 0,
+    "consoleAuditOnInputHotPath": false,
+    "consoleAuditRefreshMilliseconds": 100,
+    "consoleProofMaximumAgeMilliseconds": 350,
+    "diagnosticWriterOnMainThread": false,
+    "diagnosticPendingLimit": 64,
+    "periodicPresentJournalDefaultEnabled": false,
+    "pollQueuesBehindBusyRenderTransaction": false
+  },
+  "return": {
+    "actualProducerExitBarrierPreserved": true,
+    "thumbnailRAMRetainedDuringGameplay": false,
+    "priorityDiskArtworkReads": true,
+    "shaderCompilationOnReturnMainThread": false,
+    "firstVisibleCardCommitBeforeBulkMaintenance": true,
+    "lateRendererCannotReattachAfterNewGame": true,
+    "genericRendererCanSurviveProfileSwitch": true
+  },
+  "input": {
+    "logicalKeyWindowEdgesReachNativeDelegate": true,
+    "mainWindowNotificationsFollowVisibility": true,
+    "physicalCursorCaptureUsesBalancedAppKitHide": true,
+    "perScrollShowHideRepairRemoved": true,
+    "scrollFieldsAndFocusLossCancellationPreserved": true
+  },
+  "acceptance": {
+    "commercialGameLaunchedByAgent": false,
+    "commercialBenchmarkRunByAgent": false,
+    "commercialGameScreenshotOrRecording": false,
+    "physicalTrackpadVerified": false,
+    "stutterEliminationVerified": false,
+    "manualCyberpunkCheckRequired": true
+  },
+  "limits": [
+    "Own-process focus-gated wheel and mock cursor balance do not prove the physical gesture in Cyberpunk.",
+    "Known blocking work was removed; disappearance of periodic frametime spikes requires the user benchmark.",
+    "Controlled return ordering is not an on-glass latency guarantee; uncached disk/network assets may still arrive later.",
+    "Owned resource counters are not a claim of zero system-wide GPU memory."
+  ]
+}

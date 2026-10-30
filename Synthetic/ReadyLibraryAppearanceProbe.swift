@@ -10,6 +10,16 @@ private final class AppearanceArtworkProtocol:URLProtocol{
   override func stopLoading(){}
 }
 private final class AppearanceWindow:NSWindow{override func constrainFrameRect(_ rect:NSRect,to screen:NSScreen?)->NSRect{rect}}
+private final class AppearanceRendererGate {
+  let permit=DispatchSemaphore(value:0)
+  private let lock=NSLock();private var began=0,ended=0
+  var counts:(began:Int,ended:Int){lock.lock();defer{lock.unlock()};return(began,ended)}
+  func build(_ device:MTLDevice)throws->CanvasShellRenderer{
+    lock.lock();began+=1;lock.unlock();defer{lock.lock();ended+=1;lock.unlock()}
+    guard permit.wait(timeout:.now()+10) == .success else{throw NSError(domain:"own-return-renderer-gate",code:1)}
+    return try CanvasShellRenderer(device:device)
+  }
+}
 @main struct ReadyLibraryAppearanceProbe {
   @MainActor static func main()throws {
     _=NSApplication.shared;NSApp.setActivationPolicy(.prohibited)
@@ -37,7 +47,8 @@ private final class AppearanceWindow:NSWindow{override func constrainFrameRect(_
     var modeGame=game;modeGame.metadata=["achievementsCount":.unsigned(50),"categories":.array([.string("Co-op")]),"launch":.array([.object(["description":.string("Zombies")])])]
     let modeDetail=GameDetailView(game:modeGame,artwork:cache,profile:state.activeProfile)
     try check(modeDetail.catalogFactsSnapshot.contains("50")&&modeDetail.catalogFactsSnapshot.contains("Co-op")&&modeDetail.catalogFactsSnapshot.contains("Zombies"),"partialModeEntryShowsAvailableObjectiveFeatureAndLaunchFacts")
-    let canvas=MetalCanvas(frame:NSRect(x:0,y:0,width:1000,height:820),device:device,artworkCache:cache)
+    let rendererGate=AppearanceRendererGate()
+    let canvas=MetalCanvas(frame:NSRect(x:0,y:0,width:1000,height:820),device:device,artworkCache:cache,returnRendererBuilder:{try rendererGate.build($0)})
     canvas.state=state
     for item in state.games{let deadline=Date().addingTimeInterval(3);while cache.image(for:item,role:.card,refresh:{})==nil && Date()<deadline{pump(0.01)}}
     let window=AppearanceWindow(contentRect:canvas.bounds,styleMask:[.titled],backing:.buffered,defer:false);window.isReleasedWhenClosed=false;window.contentView=canvas
@@ -70,14 +81,34 @@ private final class AppearanceWindow:NSWindow{override func constrainFrameRect(_
     cache.restoreFirstViewport(games:snapshot){restored=true}
     let returnDeadline=Date().addingTimeInterval(3)
     while !restored && Date()<returnDeadline{pump(0.01)}
-    canvas.resumeGraphics();canvas.renderDisplayTick();pump();canvas.renderDisplayTick()
+    let resumeBegan=ProcessInfo.processInfo.systemUptime;canvas.resumeGraphics()
+    try check(ProcessInfo.processInfo.systemUptime-resumeBegan<0.1,"returnDoesNotWaitForBlockedMetalCompiler")
+    var visibleReady=false,visibleHadRealCards=false
+    canvas.restoreVisibleLibrary{visibleReady=true;visibleHadRealCards=canvas.viewportArtworkSnapshot.committedIDs.isSuperset(of:Set(snapshot.map(\.id)))}
+    let stampDeadline=Date().addingTimeInterval(3)
+    while !visibleReady && Date()<stampDeadline{canvas.renderDisplayTick();pump(0.01)}
     let returnMilliseconds=(ProcessInfo.processInfo.systemUptime-returnBegan)*1000
     try check(restored && canvas.visibleGames.map(\.id)==sortBefore && canvas.viewportArtworkSnapshot.committedIDs.isSuperset(of:Set(snapshot.map(\.id))),"returnRestoresFirstViewportRealArtworkAndCachedSortBeforeBackgroundWarm")
     try check(returnMilliseconds<500,"ownIndexedDiskViewportReturnCompletesWithoutWaitingForAllArtwork")
+    try check(visibleReady && visibleHadRealCards && canvas.graphicsRestoreSnapshot.cpuChromeVisible && !canvas.graphicsRestoreSnapshot.rendererReady,"firstViewportAndCPUChromeRestoreBeforeMetalCompileAndBackgroundResume")
+    var duringCompile=state;duringCompile.activeProfile=UUID();canvas.state=duringCompile
+    rendererGate.permit.signal();let rendererDeadline=Date().addingTimeInterval(3)
+    while !canvas.graphicsRestoreSnapshot.rendererReady && Date()<rendererDeadline{pump(0.01)}
+    try check(canvas.graphicsRestoreSnapshot.rendererReady,"optionalMetalRendererInstallsAfterVisibleLibrary")
+    try check(canvas.state.activeProfile==duringCompile.activeProfile && canvas.graphicsRestoreSnapshot.rendererReady,"genericRendererCompletesAcrossProfileSwitch")
+    canvas.state=state
     var nextProfileState=state;nextProfileState.activeProfile=UUID();nextProfileState.games=[Game(id:"new-profile",store:.local,storeID:"new",title:"New profile")];canvas.state=nextProfileState
     try check(canvas.gameplayViewportGames.map(\.id)==["new-profile"],"profileChangeCannotRestorePreviousProfileViewportModels")
     canvas.state=state
     canvas.resumeGraphics()
+    cache.beginGameplay();canvas.releaseGraphics();canvas.resumeGraphics();canvas.renderDisplayTick()
+    let lateBuildDeadline=Date().addingTimeInterval(2)
+    while rendererGate.counts.began<2 && Date()<lateBuildDeadline{pump(0.01)}
+    canvas.releaseGraphics();rendererGate.permit.signal()
+    while rendererGate.counts.ended<2 && Date()<lateBuildDeadline{pump(0.01)}
+    try check(rendererGate.counts.ended==2 && canvas.graphicsRestoreSnapshot.suspended && !canvas.graphicsRestoreSnapshot.rendererReady && !canvas.graphicsRestoreSnapshot.cpuChromeVisible && canvas.allocatedTextureBytes==0,"lateRendererCannotReallocateUIAfterAnotherGameplayRelease")
+    var cacheResumed=false;cache.restoreFirstViewport(games:snapshot){cacheResumed=true};let cacheDeadline=Date().addingTimeInterval(2)
+    while !cacheResumed && Date()<cacheDeadline{pump(0.01)}
     let scroll=NSScrollView(frame:NSRect(x:0,y:0,width:760,height:620));scroll.drawsBackground=false;scroll.hasVerticalScroller=true
     let detail=GameDetailView(game:game,artwork:cache,profile:state.activeProfile);detail.setFrameSize(NSSize(width:740,height:1000));scroll.documentView=detail
     let dw=AppearanceWindow(contentRect:scroll.frame,styleMask:[.titled],backing:.buffered,defer:false);dw.isReleasedWhenClosed=false;dw.contentView=scroll;defer{dw.close()}

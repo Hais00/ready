@@ -5,6 +5,12 @@ import LauncherCore
 import Metal
 import QuartzCore
 
+private final class CanvasRendererBuildTicket {
+  private let lock=NSLock();private var cancelled=false
+  var active:Bool{lock.lock();defer{lock.unlock()};return !cancelled}
+  func cancel(){lock.lock();cancelled=true;lock.unlock()}
+}
+
 enum CanvasSection: Equatable, Sendable {
   case library, settings, steamAccount, downloads, profiles, utility
 }
@@ -25,6 +31,11 @@ struct CanvasHit {
 final class MetalCanvas: NSView {
   let device: MTLDevice
   private var shellRenderer:CanvasShellRenderer?
+  private let returnRendererBuilder:(MTLDevice)throws->CanvasShellRenderer
+  private var rendererBuild:CanvasRendererBuildTicket?,graphicsGeneration=UUID()
+  private var chromePreview:CALayer?
+  private var returnViewportCompletion:(()->Void)?
+  var graphicsRestoreSnapshot:(suspended:Bool,rendererReady:Bool,cpuChromeVisible:Bool){(suspended,shellRenderer != nil,chromePreview?.contents != nil)}
   private var gridSurface:LibraryGridSurface?
   private let tileCache=LibraryTileCache()
   private var displayLink:CADisplayLink?,linkTarget:CanvasDisplayLinkTarget?
@@ -117,8 +128,8 @@ final class MetalCanvas: NSView {
   func resetViewportArtworkMetrics(){artworkEntries.removeAll();entryCount=0;cachedEntryCount=0;droppedEntries=0;entryRAMms=[];entryTilems=[];cachedEntryTilems=[];trackingArtworkInvalidations=0}
   override var acceptsFirstResponder: Bool { interactionEnabled && !suspended }
   override var isFlipped: Bool { true }
-  init(frame: NSRect, device: MTLDevice,artworkCache:ArtworkCache=ArtworkCache(),offscreenShellTarget:MTLTexture?=nil) {
-    self.device = device;self.art=artworkCache;self.offscreenShellTarget=offscreenShellTarget
+  init(frame: NSRect, device: MTLDevice,artworkCache:ArtworkCache=ArtworkCache(),offscreenShellTarget:MTLTexture?=nil,returnRendererBuilder:@escaping(MTLDevice)throws->CanvasShellRenderer={try CanvasShellRenderer(device:$0)}) {
+    self.device = device;self.art=artworkCache;self.offscreenShellTarget=offscreenShellTarget;self.returnRendererBuilder=returnRendererBuilder
     super.init(frame: frame)
     wantsLayer = true
     do { try configure() } catch { message = error.localizedDescription }
@@ -128,8 +139,9 @@ final class MetalCanvas: NSView {
     }
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-  private func configure() throws {
-    shellRenderer=try CanvasShellRenderer(device:device)
+  private func configure(asyncRenderer:Bool=false) throws {
+    rendererBuild?.cancel();graphicsGeneration=UUID()
+    if !asyncRenderer{shellRenderer=try CanvasShellRenderer(device:device)}
     let l = CAMetalLayer()
     // The diagnostic HUD belongs to the hosted game layer, including after
     // this library layer is recreated on return from a session.
@@ -144,6 +156,28 @@ final class MetalCanvas: NSView {
     layer = l
     canvasLayer = l
     for overlay in [shellHover,shellFocus]{overlay.fillColor=NSColor.clear.cgColor;overlay.isHidden=true;l.addSublayer(overlay)}
+    if asyncRenderer{
+      // Rebuild visible UI immediately after confirmed producer exit. Compiling
+      // a new Metal library/pipeline must not block its first grid or disk reads.
+      let preview=CALayer();preview.contentsGravity = .resize;preview.frame=bounds
+      l.insertSublayer(preview,at:0);chromePreview=preview
+      // This pipeline has no profile/game data. Only a new graphics lifecycle
+      // can obsolete it; a profile change simply redraws current chrome.
+      let ticket=CanvasRendererBuildTicket(),epoch=graphicsGeneration,device=self.device,builder=returnRendererBuilder
+      rendererBuild=ticket
+      DispatchQueue.global(qos:.userInitiated).async{[weak self]in
+        guard ticket.active else{return}
+        let result=Result{try builder(device)}
+        DispatchQueue.main.async{[weak self]in
+          guard let self,ticket.active,!self.suspended,self.graphicsGeneration==epoch else{
+            if case .success(let renderer)=result{renderer.stop()};return
+          }
+          self.rendererBuild=nil
+          if case .success(let renderer)=result{self.shellRenderer=renderer;self.lastChromeKey="";self.redraw()}
+          // A failed optional Metal rebuild leaves the CPU chrome operational.
+        }
+      }
+    }
   }
   var allProfileGames:[Game]{
     if let cachedProfileGames{return cachedProfileGames}
@@ -231,12 +265,25 @@ final class MetalCanvas: NSView {
   }
   deinit{displayLink?.invalidate();if let artworkObserver{NotificationCenter.default.removeObserver(artworkObserver)}}
   func releaseGraphics(){
+    rendererBuild?.cancel();rendererBuild=nil;graphicsGeneration=UUID();returnViewportCompletion=nil
     suspended=true;renderDirty=false;displayLink?.invalidate();displayLink=nil;linkTarget=nil
     gridSurface?.clear();gridSurface=nil;tileCache.clear();previousTiles.removeAll();tileArtwork.removeAll();tileVersions.removeAll();pendingArtInvalidations.removeAll();artworkEntries.removeAll()
-    shellRenderer?.stop();shellRenderer=nil;canvasLayer?.device=nil;canvasLayer?.removeFromSuperlayer();canvasLayer=nil;layer=nil
+    shellRenderer?.stop();shellRenderer=nil;chromePreview?.contents=nil;chromePreview?.removeFromSuperlayer();chromePreview=nil;canvasLayer?.device=nil;canvasLayer?.removeFromSuperlayer();canvasLayer=nil;layer=nil
     lastChromeKey="";cachedShellHits=[];art.purge();hits=[];hoverID=nil;pressedID=nil;window?.invalidateCursorRects(for:self)
   }
-  func resumeGraphics(){if suspended{suspended=false;try?configure()};redraw()}
+  func resumeGraphics(){if suspended{suspended=false;try?configure(asyncRenderer:true)};redraw()}
+  /// Called after the return's priority disk reads. Only visible card stamps
+  /// must commit before unrelated catalog/artwork maintenance can resume.
+  func restoreVisibleLibrary(completion:@escaping()->Void){
+    guard !suspended else{return}
+    returnViewportCompletion=completion;redraw();renderDisplayTick()
+  }
+  private func visibleLibraryRestored(){
+    guard let completion=returnViewportCompletion else{return};returnViewportCompletion=nil
+    CATransaction.flush()
+    let epoch=graphicsGeneration
+    DispatchQueue.main.async{[weak self]in guard let self,!self.suspended,self.graphicsGeneration==epoch else{return};completion()}
+  }
   /// Input only requests a display tick. It never rasterizes/uploads a canvas.
   func redraw(){
     guard !suspended else{return};renderDirty=true
@@ -308,11 +355,20 @@ final class MetalCanvas: NSView {
       if let bitmap=CanvasRaster(width:w,height:h){
         drawingChrome=true;bitmap.draw(logicalSize:bounds.size,scale:scale){drawScene($0)};drawingChrome=false;cachedShellHits=hits
         canvasLayer.contentsScale=scale;canvasLayer.drawableSize=CGSize(width:w,height:h)
+        let epoch=graphicsGeneration
         let completion:((Bool)->Void) = {[weak self] success in
-          guard let self,!self.suspended else{return};if !success{self.lastChromeKey="";self.redraw()}
+          guard let self,!self.suspended,self.graphicsGeneration==epoch else{return}
+          if !success{self.lastChromeKey="";self.redraw()}
+          else{self.chromePreview?.contents=nil;self.chromePreview?.removeFromSuperlayer();self.chromePreview=nil}
         }
         let accepted=offscreenShellTarget.map{renderer.submit(bitmap,target:$0,completion:completion)} ?? renderer.submit(bitmap,layer:canvasLayer,completion:completion)
         if accepted{lastChromeKey=key;chromeRasters+=1}else{renderDirty=true}
+      }
+    }else if key != lastChromeKey,shellRenderer==nil,let preview=chromePreview{
+      let w=max(1,Int(bounds.width*scale)),h=max(1,Int(bounds.height*scale))
+      if let bitmap=CanvasRaster(width:w,height:h){
+        drawingChrome=true;bitmap.draw(logicalSize:bounds.size,scale:scale){drawScene($0)};drawingChrome=false;cachedShellHits=hits
+        preview.frame=bounds;preview.contentsScale=scale;preview.contents=bitmap.context.makeImage();lastChromeKey=key;chromeRasters+=1
       }
     }else if key != lastChromeKey{renderDirty=true}
     rebuildInteractiveHits()
@@ -358,7 +414,9 @@ final class MetalCanvas: NSView {
       func gameID(_ id:String?)->String?{id.flatMap{$0.hasPrefix("game.") ? String($0.dropFirst(5)):nil}}
       surface.update(tiles,selected:visibleGames.indices.contains(selected) ? visibleGames[selected].id:nil,hovered:gameID(hoverID),focused:gameID(focusID),pressed:gameID(pressedID),showFocus:window?.isKeyWindow==true && window?.firstResponder===self)
       for id in visibleIDs where realArtworkIDs.contains(id){recordArtworkCommit(id)}
-    }else{gridSurface?.isHidden=true}
+      let visibleStamped=visibleRange.allSatisfy{images[$0] != nil}
+      if visibleStamped,Set(visibleIDs).intersection(ramReadyIDs).isSubset(of:realArtworkIDs){visibleLibraryRestored()}
+    }else{gridSurface?.isHidden=true;visibleLibraryRestored()}
     updateShellFeedback()
     cpuFrameTimes.append((ProcessInfo.processInfo.systemUptime-began)*1000);if cpuFrameTimes.count>4096{cpuFrameTimes.removeFirst(cpuFrameTimes.count-4096)}
     displayLink?.isPaused = !renderDirty

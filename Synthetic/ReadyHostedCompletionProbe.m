@@ -35,6 +35,9 @@ int main(int argc,char **argv){@autoreleasepool{
  if(!name||mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&port)||mach_port_insert_right(mach_task_self(),port,port,MACH_MSG_TYPE_MAKE_SEND)||bootstrap_register(bootstrap_port,(char*)name,port))return 85;
  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE,0),^{fixtureServer(port);});
  rhgConnect();require(dispatch_semaphore_wait(rhgFrameAvailable,DISPATCH_TIME_NOW)==0);
+ pthread_mutex_lock(&rhgRPCLock);uint64_t beforePoll=rhgRequestID;
+ for(unsigned i=0;i<128;i++){RHGReply skipped={0};require(!rhgTryPoll(&skipped));}
+ require(rhgRequestID==beforePoll);pthread_mutex_unlock(&rhgRPCLock);
  RHGDrawable *drawable=[RHGDrawable new];drawable.frameID=0;drawable.surfaceID=42;drawable.generation=rhgConfigurationGeneration;rhgRegisterDrawable(drawable);
  RHGFixtureResidency *residency=[RHGFixtureResidency new];if(@available(macOS 15,*))drawable.importedResidency=(id<MTLResidencySet>)residency;
  RHGFixtureBuffer *buffer=[RHGFixtureBuffer new];buffer.status=badGPU?MTLCommandBufferStatusError:MTLCommandBufferStatusCompleted;

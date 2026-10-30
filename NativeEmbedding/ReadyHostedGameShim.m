@@ -97,13 +97,15 @@ static void rhgFail(NSString *reason) {
 @interface RHGLogicalWindow:NSObject
 @property(copy)NSString *title;
 @property(nonatomic,strong)NSView *contentView;
-@property(weak)id delegate;
+@property(nonatomic,weak)id delegate;
 @property NSRect frame;
 @property NSSize contentAspectRatio; // Guest hint only; Ready owns host geometry.
 @property NSSize minSize,maxSize,contentMinSize,contentMaxSize;
 @property NSSize resizeIncrements,contentResizeIncrements,aspectRatio;
 @property NSWindowStyleMask styleMask;
-@property BOOL releasedWhenClosed,visible,opaque,acceptsMouseMovedEvents,ignoresMouseEvents;
+@property BOOL releasedWhenClosed,opaque,acceptsMouseMovedEvents,ignoresMouseEvents;
+@property(nonatomic)BOOL visible;
+@property BOOL notifiedKey,notifiedMain;
 @property NSWindowCollectionBehavior collectionBehavior;
 @property NSInteger level;
 @property(strong)NSColor *backgroundColor;
@@ -124,6 +126,12 @@ static unsigned rhgWindowCount;
 static char rhgViewWindowKey;
 static IMP rhgOriginalViewWindow;
 static BOOL rhgFocused=YES;
+static void rhgSynchronizeLogicalFocus(RHGLogicalWindow *window);
+static NSDictionary<NSNotificationName,NSString*> *rhgFocusDelegateNotifications(void){
+    static NSDictionary *values;static dispatch_once_t once;dispatch_once(&once,^{values=@{
+        NSWindowDidBecomeKeyNotification:@"windowDidBecomeKey:",NSWindowDidResignKeyNotification:@"windowDidResignKey:",
+        NSWindowDidBecomeMainNotification:@"windowDidBecomeMain:",NSWindowDidResignMainNotification:@"windowDidResignMain:"};});return values;
+}
 // The real guest owns no visible WindowServer window. Tell Foundation about
 // this finite user-initiated rendering session without disabling idle sleep.
 // Only authenticated POLL focus edges can acquire a token; repeated edges are
@@ -191,6 +199,16 @@ static NSRect rhgContentRect(void) {
         view.frame=rhgContentRect();}
 }
 -(void)setM_view:(NSView*)view{_m_view=view;self.contentView=view;}
+-(void)setDelegate:(id)value {
+    if(_delegate==value)return;NSNotificationCenter *center=NSNotificationCenter.defaultCenter;
+    for(NSNotificationName name in rhgFocusDelegateNotifications())if(_delegate)[center removeObserver:_delegate name:name object:self];
+    _delegate=value;
+    for(NSNotificationName name in rhgFocusDelegateNotifications()){
+        SEL selector=NSSelectorFromString(rhgFocusDelegateNotifications()[name]);
+        if([value respondsToSelector:selector])[center addObserver:value selector:selector name:name object:self];
+    }
+}
+-(void)setVisible:(BOOL)value{_visible=value;rhgSynchronizeLogicalFocus(self);}
 -(BOOL)isVisible{return self.visible;}
 -(BOOL)hasTitleBar{return (self.styleMask&NSWindowStyleMaskTitled)!=0;}
 -(void)setIsVisible:(BOOL)value{self.visible=value;}
@@ -235,6 +253,17 @@ static NSRect rhgContentRect(void) {
 -(void)setTouchBar:(id)value{(void)value;}
 -(void)doesNotRecognizeSelector:(SEL)selector{rhgFailSelector(@"unsupported-window-selector",self.requestedClass?:NSWindow.class,selector);}
 @end
+static void rhgSynchronizeLogicalFocus(RHGLogicalWindow *window){
+    if(!window)return;BOOL focused=window.visible&&rhgFocused;window.m_isActive=focused;
+    // A logical window still has Cocoa focus semantics. In particular native
+    // GameView wheel consumers gate on their controller's key-window callback.
+    // Direct key/mouse delivery can otherwise appear healthy while wheel input
+    // is discarded. Emit only edges and only for this owned logical window.
+    if(window.notifiedKey!=focused){window.notifiedKey=focused;[NSNotificationCenter.defaultCenter postNotificationName:focused?NSWindowDidBecomeKeyNotification:NSWindowDidResignKeyNotification object:window];}
+    // The logical main window remains the visible main window while Ready is
+    // inactive/overlayed; only key status follows authenticated host focus.
+    if(window.notifiedMain!=window.visible){window.notifiedMain=window.visible;[NSNotificationCenter.defaultCenter postNotificationName:window.visible?NSWindowDidBecomeMainNotification:NSWindowDidResignMainNotification object:window];}
+}
 
 static id rhgAllocateWindow(id type,SEL selector,NSZone *zone) __attribute__((ns_returns_retained));
 static id rhgAllocateWindow(id type,SEL selector,NSZone *zone) {
@@ -417,10 +446,7 @@ static void rhgMetadataFromReply(RHGReply reply) {
     if(rhgMetadata.window && (reply.window!=rhgMetadata.window || reply.deviceRegistryID!=rhgMetadata.deviceRegistryID))rhgFail(@"host-identity-changed");
     rhgMetadata=(RHGWindowMetadata){reply.window,reply.width,reply.height,reply.pixelFormat,reply.deviceRegistryID,reply.backingScale,reply.logicalWidth,reply.logicalHeight,reply.quartzOriginX,reply.quartzOriginY,reply.cocoaOriginX,reply.cocoaOriginY};
 }
-static RHGReply rhgExchange(uint32_t operation,RHGRequest fields) {
-    uint64_t began=RHGPerfNow();
-    pthread_mutex_lock(&rhgRPCLock);
-    uint64_t locked=RHGPerfNow();
+static RHGReply rhgExchangeLocked(uint32_t operation,RHGRequest fields,uint64_t began,uint64_t locked) {
     RHGRequest request=fields;
     request.h=(mach_msg_header_t){.msgh_bits=MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND,MACH_MSG_TYPE_MAKE_SEND_ONCE),
         .msgh_size=sizeof request,.msgh_remote_port=rhgPeer,.msgh_local_port=rhgReceive};
@@ -465,6 +491,17 @@ static RHGReply rhgExchange(uint32_t operation,RHGRequest fields) {
         rhgPerfAdd(&rhgPerformance.rpcLock[op],began,locked);rhgPerfAdd(&rhgPerformance.rpcSend[op],locked,sent);
         rhgPerfAdd(&rhgPerformance.rpcReceive[op],sent,receivedAt);rhgPerfAdd(&rhgPerformance.rpcTotal[op],began,RHGPerfNow());}
     return reply;
+}
+static RHGReply rhgExchange(uint32_t operation,RHGRequest fields) {
+    uint64_t began=RHGPerfNow();pthread_mutex_lock(&rhgRPCLock);
+    return rhgExchangeLocked(operation,fields,began,RHGPerfNow());
+}
+static BOOL rhgTryPoll(RHGReply *reply) {
+    uint64_t began=RHGPerfNow();
+    // A timer-driven input poll must not queue ahead of pending rendering RPCs.
+    // The shared reply port and strict single-transaction ownership stay intact.
+    if(pthread_mutex_trylock(&rhgRPCLock)!=0)return NO;
+    *reply=rhgExchangeLocked(RHG_POLL,(RHGRequest){0},began,RHGPerfNow());return YES;
 }
 static int rhgHex(unsigned char value) {
     if(value>='0'&&value<='9')return value-'0';if(value>='a'&&value<='f')return value-'a'+10;return -1;
@@ -533,7 +570,7 @@ static void rhgDeliverInput(RHGInput input) {
             if(rhgScrollActive){RHGInput end=rhgLastScroll;end.scrollPhase=NSEventPhaseCancelled;end.scrollMomentumPhase=NSEventPhaseEnded;end.scrollCGPhase=kCGScrollPhaseCancelled;end.scrollCGMomentumPhase=kCGMomentumScrollPhaseEnd;end.deltaX=end.deltaY=end.scrollingDeltaX=end.scrollingDeltaY=end.scrollFixedX=end.scrollFixedY=0;end.scrollLineX=end.scrollLineY=end.scrollPointX=end.scrollPointY=0;end.timestamp=input.timestamp;rhgDeliverInput(end);rhgScrollActive=NO;}
         }
         if(!input.keyCode)rhgLatchedScrollTarget=nil;
-        rhgFocused=input.keyCode!=0;window.m_isActive=rhgFocused;return;
+        rhgFocused=input.keyCode!=0;rhgSynchronizeLogicalFocus(window);return;
     }
     // Cocoa routes wheel events to the view under the pointer (latched for a
     // gesture), not the keyboard first responder. An inherited NSResponder
@@ -601,7 +638,7 @@ static void rhgConnect(void) {
         rhgFrameAvailable=dispatch_semaphore_create(rhgFrameDepth);rhgMetadataFromReply(hello);
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE,0),^{
             for(;;){@autoreleasepool{
-                RHGReply reply=rhgExchange(RHG_POLL,(RHGRequest){0});
+                RHGReply reply={0};if(!rhgTryPoll(&reply)){usleep(8000);continue;}
                 // Apply the activity lease before dispatching input to Main:
                 // loading may block Main and the logical window may not exist.
                 for(unsigned i=0;i<reply.eventCount;i++)rhgActivityForTrustedFocus(reply.events[i]);

@@ -43,6 +43,7 @@ typedef struct {
 @public os_unfair_lock perfLock;
 @public RHGHostPerformance performance;
 @public _Atomic bool perfWritePending;
+@public _Atomic unsigned diagnosticPending;
 }
 @property(nonatomic,weak)NSWindow *window;
 @property(nonatomic,strong)RHGView *view;
@@ -65,8 +66,12 @@ typedef struct {
 @property(nonatomic,assign)void *firstFrameContext;
 @property(nonatomic)int diagnosticFD;
 @property(nonatomic,strong)NSLock *diagnosticLock;
+@property(nonatomic,strong)dispatch_queue_t diagnosticQueue;
+@property(nonatomic)BOOL consoleSessionValid,consoleSessionPending;
+@property(nonatomic)double consoleSessionChecked;
+@property(nonatomic)uint64_t consoleSessionEpoch;
 @property(nonatomic)double began;
-@property(nonatomic)BOOL overlayVisible,cursorRepairPending,cursorGestureRepairPending;
+@property(nonatomic)BOOL overlayVisible;
 @property(nonatomic)BOOL pointerEnabled,pointerSuspended,pointerFullscreenSuspended,pointerRetryBlocked,virtualAssociated,virtualInitialized,virtualHiddenUntilMove;
 @property(nonatomic)uint32_t virtualHideCount;
 @property(nonatomic)double virtualX,virtualY;
@@ -76,6 +81,11 @@ typedef struct {
 -(void)input:(NSEvent*)event type:(uint32_t)type;
 -(void)shutdown;
 -(BOOL)foregroundEligible;
+-(BOOL)foregroundWindowEligible;
+-(BOOL)readConsoleSessionProof;
+-(BOOL)consoleSessionAllowed;
+-(void)invalidateConsoleSession;
+-(void)refreshConsoleSession;
 -(void)perfInterval:(RHGPerfStats*)metric begin:(uint64_t)begin end:(uint64_t)end;
 -(void)profileSnapshot;
 -(void)observePresentedTime:(double)time;
@@ -144,8 +154,11 @@ static void RHGRetireRenderSlots(NSArray<RHGRenderSlot*> *slots,pid_t peer,uint6
 
 static RHGHost *RHGPointerOwner;
 static int32_t RHGAssociate(bool connected,void*context){(void)context;return CGAssociateMouseAndMouseCursorPosition(connected);}
-static int32_t RHGHide(void*context){(void)context;return CGDisplayHideCursor(kCGDirectMainDisplay);}
-static int32_t RHGShow(void*context){(void)context;return CGDisplayShowCursor(kCGDirectMainDisplay);}
+// AppKit must own the hide too: a raw CG hide leaves its cursor bookkeeping
+// unaware and gesture dispatch can restore the arrow over the anchored point.
+// Exactly one hide/unhide pair belongs to a capture; never show/hide per packet.
+static int32_t RHGHide(void*context){(void)context;[NSCursor hide];return kCGErrorSuccess;}
+static int32_t RHGShow(void*context){(void)context;[NSCursor unhide];return kCGErrorSuccess;}
 static int32_t RHGAnchor(void*context){
  RHGHost*host=(__bridge RHGHost*)context;NSRect rect=[host.window convertRectToScreen:[host.view convertRect:host.view.bounds toView:nil]];
  if(!isfinite(rect.origin.x)||!isfinite(rect.origin.y)||rect.size.width<=0||rect.size.height<=0)return kCGErrorIllegalArgument;
@@ -176,10 +189,11 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
 -(void)scrollWheel:(NSEvent*)e{[self.owner input:e type:RHG_SCROLL];}
 @end
 @implementation RHGHost
--(instancetype)init{if((self=[super init])){atomic_init(&stopped,false);atomic_init(&perfWritePending,false);perfLock=(os_unfair_lock)OS_UNFAIR_LOCK_INIT;_diagnosticFD=-1;_diagnosticLock=[NSLock new];_slots=[NSMutableArray new];_pipelineDepth=RHG_MAX_FRAMES_IN_FLIGHT;_configurationGeneration=1;_pointerObservers=[NSMutableArray new];_virtualAssociated=YES;_virtualX=_virtualY=.5;_began=CACurrentMediaTime();}return self;}
+-(instancetype)init{if((self=[super init])){atomic_init(&stopped,false);atomic_init(&perfWritePending,false);atomic_init(&diagnosticPending,0);perfLock=(os_unfair_lock)OS_UNFAIR_LOCK_INIT;_diagnosticFD=-1;_diagnosticLock=[NSLock new];_diagnosticQueue=dispatch_queue_create("app.ready.hosted.diagnostics",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_UTILITY,0));_slots=[NSMutableArray new];_pipelineDepth=RHG_MAX_FRAMES_IN_FLIGHT;_configurationGeneration=1;_pointerObservers=[NSMutableArray new];_virtualAssociated=YES;_virtualX=_virtualY=.5;_began=CACurrentMediaTime();}return self;}
 -(void)dealloc{[_pointerTimer invalidate];for(NSArray*pair in _pointerObservers)[pair[0]removeObserver:pair[1]];if(_diagnosticFD>=0)close(_diagnosticFD);if(_port)mach_port_destroy(mach_task_self(),_port);}
 -(void)record:(NSString*)phase reason:(NSString*)reason{
  if(self.diagnosticFD<0)return;
+ if(atomic_fetch_add(&diagnosticPending,1)>=64){atomic_fetch_sub(&diagnosticPending,1);return;}
  NSMutableDictionary*v=[@{@"schema":@1,@"phase":phase,@"elapsedMilliseconds":@((CACurrentMediaTime()-self.began)*1000),@"hostPID":@(getpid()),@"guestPID":@(self.guestPID),@"window":@(self.window.windowNumber),@"frames":@(self.frames),@"acquires":@(self.acquires),@"requests":@(self.requests),@"hostCommandQueues":@0,@"hostCommandBuffers":@0,@"hostEncoders":@0,@"applicationSurfaceCopies":@0,@"pixelReadbacks":@0,@"metalHUDRequested":@(self.metalHUD),@"presentsWithTransaction":@(self.metal.presentsWithTransaction)}mutableCopy];
  if(reason)v[@"reason"]=reason;
  v[@"outstandingFrames"]=@(self.slots.count);v[@"maximumFramesInFlight"]=@(self.pipelineDepth);
@@ -188,8 +202,12 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
  v[@"pointerError"]=@(self->pointer.error);
  v[@"pointerAnchored"]=@(self->pointer.anchored);
  if([phase hasPrefix:@"pointer-"]){v[@"cursorVisibleReported"]=@(CGCursorIsVisible());v[@"cursorVisibilityQueryDeprecated"]=@YES;}
- NSData*d=[NSJSONSerialization dataWithJSONObject:v options:NSJSONWritingSortedKeys error:nil];if(!d)return;
- NSMutableData*line=[d mutableCopy];[line appendBytes:"\n" length:1];[self writeDiagnostic:line];
+ NSDictionary *snapshot=[v copy];__weak RHGHost *weak=self;
+ dispatch_async(self.diagnosticQueue,^{@autoreleasepool{
+  RHGHost *host=weak;if(!host)return;
+  @try{NSData*d=[NSJSONSerialization dataWithJSONObject:snapshot options:NSJSONWritingSortedKeys error:nil];if(d){NSMutableData*line=[d mutableCopy];[line appendBytes:"\n" length:1];[host writeDiagnostic:line];}}
+  @finally{atomic_fetch_sub(&host->diagnosticPending,1);}
+ }});
 }
 -(void)writeDiagnostic:(NSData*)line{
  [self.diagnosticLock lock];const uint8_t*b=line.bytes;size_t offset=0;
@@ -219,14 +237,38 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
   atomic_store(&self->perfWritePending,false);
  }});
 }
--(BOOL)foregroundEligible {
- uint64_t began=RHGPerfNow();@try{
+-(BOOL)foregroundWindowEligible {
  if(atomic_load(&stopped)||self.overlayVisible||self.pointerSuspended||self.pointerFullscreenSuspended||!self.window||self.view.window!=self.window||self.view.isHiddenOrHasHiddenAncestor||!NSApp.isActive||NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier!=getpid()||!self.window.isKeyWindow||!self.window.isOnActiveSpace||self.window.isMiniaturized||!(self.window.occlusionState&NSWindowOcclusionStateVisible))return NO;
  if(self.guestPID>0){char path[PROC_PIDPATHINFO_MAXSIZE]={0};if(proc_pidpath(self.guestPID,path,sizeof path)<=0||strcmp(path,self.expectedExecutable.fileSystemRepresentation))return NO;}
+ return YES;
+}
+-(BOOL)readConsoleSessionProof {
  CFDictionaryRef session=CGSessionCopyCurrentDictionary();if(!session)return NO;
  CFTypeRef console=CFDictionaryGetValue(session,kCGSessionOnConsoleKey),login=CFDictionaryGetValue(session,kCGSessionLoginDoneKey),user=CFDictionaryGetValue(session,kCGSessionUserIDKey);
  int32_t uid=-1;BOOL valid=console==kCFBooleanTrue&&login==kCFBooleanTrue&&user&&CFGetTypeID(user)==CFNumberGetTypeID()&&CFNumberGetValue(user,kCFNumberSInt32Type,&uid)&&uid==(int32_t)getuid();CFRelease(session);return valid;
- }@finally{[self perfInterval:&performance.eligibility begin:began end:RHGPerfNow()];}
+}
+-(BOOL)consoleSessionAllowed {
+ double age=CACurrentMediaTime()-self.consoleSessionChecked;
+ return self.consoleSessionValid&&age>=0&&age<=.35;
+}
+-(void)invalidateConsoleSession {self.consoleSessionEpoch++;self.consoleSessionValid=NO;self.consoleSessionChecked=0;}
+-(void)refreshConsoleSession {
+ if(atomic_load(&stopped)||self.consoleSessionPending)return;
+ self.consoleSessionPending=YES;uint64_t epoch=self.consoleSessionEpoch;__weak RHGHost *weak=self;
+ static dispatch_queue_t audits;static dispatch_once_t once;
+ dispatch_once(&once,^{audits=dispatch_queue_create("app.ready.hosted.console-audit",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_UTILITY,0));});
+ dispatch_async(audits,^{@autoreleasepool{
+  RHGHost *host=weak;if(!host)return;BOOL valid=[host readConsoleSessionProof];double checked=CACurrentMediaTime();
+  dispatch_async(dispatch_get_main_queue(),^{RHGHost *current=weak;if(!current)return;current.consoleSessionPending=NO;
+   if(atomic_load(&current->stopped))return;
+   if(current.consoleSessionEpoch!=epoch){[current refreshConsoleSession];return;}
+   current.consoleSessionValid=valid;current.consoleSessionChecked=checked;[current reconcilePointer];
+  });
+ }});
+}
+-(BOOL)foregroundEligible {
+ uint64_t began=RHGPerfNow();@try{return [self foregroundWindowEligible]&&[self consoleSessionAllowed];}
+ @finally{[self perfInterval:&performance.eligibility begin:began end:RHGPerfNow()];}
 }
 -(void)releasePointer {
  BOOL owned=self->pointer.detached||self->pointer.hidden;int32_t previousError=self->pointer.error;
@@ -245,10 +287,6 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
  if(RHGPointerOwner&&RHGPointerOwner!=self){[RHGPointerOwner releasePointer];if(RHGPointerOwner)return;}
  if(!self.virtualInitialized){NSPoint p=[self.view convertPoint:self.window.mouseLocationOutsideOfEventStream fromView:nil];self.virtualX=fmax(0,fmin(1,p.x/fmax(1,self.view.bounds.size.width)));self.virtualY=fmax(0,fmin(1,p.y/fmax(1,self.view.bounds.size.height)));self.virtualInitialized=YES;}
  BOOL was=self->pointer.captured;RHGPointerReconcile(&self->pointer,RHGOps(self),true);
- if(self->pointer.captured && CGCursorIsVisible()){
-  if(!RHGPointerRehideIfVisible(&self->pointer,RHGOps(self),true)){self.pointerRetryBlocked=YES;[self record:@"pointer-rehide-failed" reason:nil];}
-  else [self record:@"pointer-rehidden" reason:nil];
- }
  if(self->pointer.detached||self->pointer.hidden)RHGPointerOwner=self;
  if(!was&&self->pointer.captured){
   [self record:@"pointer-captured" reason:nil];
@@ -269,12 +307,8 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
   // A bounded queue must not silently lose a release and leave held controls.
   [self record:@"input-rejected" reason:@"input-control-queue-overflow"];[self shutdown];
  }
- if(type==RHG_SCROLL)self.cursorGestureRepairPending=YES;
- if(!self.cursorRepairPending){self.cursorRepairPending=YES;__weak RHGHost*weak=self;dispatch_async(dispatch_get_main_queue(),^{RHGHost*host=weak;if(!host)return;BOOL gesture=host.cursorGestureRepairPending;host.cursorGestureRepairPending=NO;host.cursorRepairPending=NO;[host reconcilePointer];
-  // AppKit may unhide after scroll dispatch. Re-arm our existing hide once,
-  // without depending on the deprecated visibility query for this path.
-  if(gesture&&host->pointer.captured){if(!RHGPointerRehideIfVisible(&host->pointer,RHGOps(host),true)){host.pointerRetryBlocked=YES;[host record:@"pointer-rehide-failed" reason:nil];}else[host record:@"pointer-rehidden" reason:@"post-scroll"];}
- });}
+ // Capture was reconciled before delivery. A post-scroll show/hide repair
+ // itself exposes the cursor and accumulates run-loop work during a gesture.
 }
 -(void)shutdown{
  if(atomic_exchange(&stopped,true))return;
@@ -398,7 +432,7 @@ static void RHGServe(RHGHost*host){
     if(atomic_load(&host->stopped)){reply.status=RHG_STOPPED;return;}
     if(host.slots.firstObject!=slot){reply.status=RHG_REJECTED;return;}
     reply.frameID=slot.frameID;reply.surfaceID=slot.surfaceID;reply.configurationGeneration=slot.generation;host.frames++;
-    if(host.frames==1||host.frames%120==0)[host record:@"present-call" reason:nil];host.drawable=nil;[host.slots removeObjectAtIndex:0];
+    if(host.frames==1||(RHGPerfProfileEnabled()&&host.frames%120==0))[host record:@"present-call" reason:nil];host.drawable=nil;[host.slots removeObjectAtIndex:0];
    }else if(q->op==RHG_POINTER_ASSOCIATE||q->op==RHG_POINTER_WARP||q->op==RHG_POINTER_CURSOR){
     if(![host foregroundEligible]){reply.status=RHG_REJECTED;reply.pointerError=kCGErrorInvalidOperation;return;}
     RHGVirtualPointer virtual={host.virtualAssociated,host.virtualInitialized,host.virtualHiddenUntilMove,host.virtualHideCount,host.virtualX,host.virtualY};
@@ -428,17 +462,18 @@ RHGHostRef RHGHostCreate(void*windowPointer,bool hud,const char*expectedExecutab
  CAMetalLayer*layer=[CAMetalLayer layer];layer.device=host.device;layer.pixelFormat=MTLPixelFormatBGRA8Unorm;layer.framebufferOnly=YES;layer.opaque=YES;layer.backgroundColor=NSColor.blackColor.CGColor;layer.contentsScale=window.backingScaleFactor;layer.drawableSize=CGSizeMake(MAX(1,view.bounds.size.width*window.backingScaleFactor),MAX(1,view.bounds.size.height*window.backingScaleFactor));layer.maximumDrawableCount=3;view.layer=layer;layer.presentsWithTransaction=NO;host.metal=layer;
  if(hud)layer.developerHUDProperties=@{@"mode":@"main",@"MTL_HUD_ENABLED":@1,@"MTL_HUD_DISABLE_MENU_BAR":@1,@"MTL_HUD_ALIGNMENT":@"topleft",@"MTL_HUD_ELEMENTS":@"device,layersize,fps,framenumber,frameinterval,frameintervalgraph,presentdelay"};
  __weak RHGHost *weak=host;
- host.pointerTimer=[NSTimer timerWithTimeInterval:.1 repeats:YES block:^(NSTimer*t){(void)t;[weak reconcilePointer];}];
+ [host refreshConsoleSession];
+ host.pointerTimer=[NSTimer timerWithTimeInterval:.1 repeats:YES block:^(NSTimer*t){(void)t;[weak refreshConsoleSession];[weak reconcilePointer];}];
  [NSRunLoop.mainRunLoop addTimer:host.pointerTimer forMode:NSRunLoopCommonModes];
  NSNotificationCenter *normal=NSNotificationCenter.defaultCenter,*workspace=NSWorkspace.sharedWorkspace.notificationCenter;
  for(NSNotificationName name in @[NSApplicationWillResignActiveNotification,NSApplicationWillTerminateNotification,NSWindowWillExitFullScreenNotification,NSWindowWillCloseNotification]){
-  id token=[normal addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification*n){RHGHost*h=weak;if(!h)return;if(n.object!=NSApp&&n.object!=h.window)return;if([n.name isEqualToString:NSWindowWillExitFullScreenNotification])h.pointerFullscreenSuspended=YES;else h.pointerSuspended=YES;[h releasePointer];}];[host.pointerObservers addObject:@[normal,token]];
+  id token=[normal addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification*n){RHGHost*h=weak;if(!h)return;if(n.object!=NSApp&&n.object!=h.window)return;[h invalidateConsoleSession];if([n.name isEqualToString:NSWindowWillExitFullScreenNotification])h.pointerFullscreenSuspended=YES;else h.pointerSuspended=YES;[h releasePointer];}];[host.pointerObservers addObject:@[normal,token]];
  }
  for(NSNotificationName name in @[NSApplicationDidBecomeActiveNotification,NSWindowDidBecomeKeyNotification,NSWindowDidResignKeyNotification,NSWindowDidChangeOcclusionStateNotification,NSWindowDidEnterFullScreenNotification]){
-  id token=[normal addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification*n){RHGHost*h=weak;if(!h)return;if(n.object!=NSApp&&n.object!=h.window)return;if([n.name isEqualToString:NSWindowDidEnterFullScreenNotification])h.pointerFullscreenSuspended=NO;if([n.name isEqualToString:NSApplicationDidBecomeActiveNotification]||[n.name isEqualToString:NSWindowDidBecomeKeyNotification])h.pointerSuspended=NO;[h reconcilePointer];}];[host.pointerObservers addObject:@[normal,token]];
+  id token=[normal addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification*n){RHGHost*h=weak;if(!h)return;if(n.object!=NSApp&&n.object!=h.window)return;[h invalidateConsoleSession];[h refreshConsoleSession];if([n.name isEqualToString:NSWindowDidEnterFullScreenNotification])h.pointerFullscreenSuspended=NO;if([n.name isEqualToString:NSApplicationDidBecomeActiveNotification]||[n.name isEqualToString:NSWindowDidBecomeKeyNotification])h.pointerSuspended=NO;[h reconcilePointer];}];[host.pointerObservers addObject:@[normal,token]];
  }
  for(NSNotificationName name in @[NSWorkspaceSessionDidResignActiveNotification,NSWorkspaceScreensDidSleepNotification,NSWorkspaceActiveSpaceDidChangeNotification,NSWorkspaceSessionDidBecomeActiveNotification,NSWorkspaceScreensDidWakeNotification]){
-  id token=[workspace addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification*n){RHGHost*h=weak;if(!h)return;if(n.name==NSWorkspaceSessionDidResignActiveNotification||n.name==NSWorkspaceScreensDidSleepNotification){h.pointerSuspended=YES;[h releasePointer];}else{h.pointerSuspended=NO;[h reconcilePointer];}}];[host.pointerObservers addObject:@[workspace,token]];
+  id token=[workspace addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification*n){RHGHost*h=weak;if(!h)return;[h invalidateConsoleSession];if(n.name==NSWorkspaceSessionDidResignActiveNotification||n.name==NSWorkspaceScreensDidSleepNotification){h.pointerSuspended=YES;[h releasePointer];}else{h.pointerSuspended=NO;[h refreshConsoleSession];[h reconcilePointer];}}];[host.pointerObservers addObject:@[workspace,token]];
  }
  mach_port_t port=MACH_PORT_NULL;if(mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&port)!=KERN_SUCCESS)return NULL;host.port=port;
  if(mach_port_insert_right(mach_task_self(),host.port,host.port,MACH_MSG_TYPE_MAKE_SEND)!=KERN_SUCCESS||bootstrap_register(bootstrap_port,(char*)host.service.UTF8String,host.port)!=KERN_SUCCESS)return NULL;
