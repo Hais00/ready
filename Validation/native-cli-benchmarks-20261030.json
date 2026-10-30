@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "date": "2026-10-30",
+  "game": "Cyberpunk 2077 native macOS 2.5",
+  "scope": "Engine benchmark exports; no physical input latency, thermal control or direct-display certification",
+  "method": "CLI game -benchmark; no Computer Use for native-ready-backend, hosted-candidate, hosted-control from launch through process exit; HUD and profiling off",
+  "runs": {
+    "native-measured": {
+      "averageFPS": 37.519081115722656,
+      "frameCount": 2409,
+      "durationSeconds": 64.20732879638672,
+      "engineFrameMilliseconds": {
+        "mean": 26.654084682440846,
+        "p50": 25.5,
+        "p95": 35.31,
+        "p99": 41.03,
+        "maximum": 58.96,
+        "over50ms": 9,
+        "over100ms": 0
+      },
+      "sourceHashes": {
+        "summary.json": "bdc44c34f728c6cb1e87cc8d8b139d4bfbacf122ae62fe406e420710924e5dd9",
+        "frames.csv": "dfefa15649581b4e47d497197a2b78066691c8b18dcbfc6857875716a7256219"
+      }
+    },
+    "native-ready-backend": {
+      "averageFPS": 37.50859069824219,
+      "frameCount": 2410,
+      "durationSeconds": 64.25194549560547,
+      "engineFrameMilliseconds": {
+        "mean": 26.661273858921163,
+        "p50": 25.74,
+        "p95": 34.15,
+        "p99": 43.42,
+        "maximum": 87.07,
+        "over50ms": 10,
+        "over100ms": 0
+      },
+      "sourceHashes": {
+        "summary.json": "e3b0574e3c3785807f62bbdff96494c32e8bcaa2e17cbbdff93d00d98d56abda",
+        "frames.csv": "eb73c2445749e1d6164a0ae22f0ad885ecb2dd0ced676774c335b6ed81215be0"
+      }
+    },
+    "hosted-current": {
+      "averageFPS": 30.22768783569336,
+      "frameCount": 1948,
+      "durationSeconds": 64.44422912597656,
+      "engineFrameMilliseconds": {
+        "mean": 33.06699691991786,
+        "p50": 33.06,
+        "p95": 45.54,
+        "p99": 62.85,
+        "maximum": 117.81,
+        "over50ms": 53,
+        "over100ms": 2
+      },
+      "sourceHashes": {
+        "summary.json": "905e8fface00c60ecaa35ec159a16f952d8f58d91d8d62c30df2b98ab79bde24",
+        "frames.csv": "69d981b067f6376701d7f5307d64235ea95a7a8b9039347182cba376e8b7a140"
+      }
+    },
+    "hosted-candidate": {
+      "averageFPS": 36.981693267822266,
+      "frameCount": 2379,
+      "durationSeconds": 64.3291244506836,
+      "engineFrameMilliseconds": {
+        "mean": 27.044245481294663,
+        "p50": 26.56,
+        "p95": 33.46,
+        "p99": 38.21,
+        "maximum": 122.85,
+        "over50ms": 9,
+        "over100ms": 1
+      },
+      "sourceHashes": {
+        "summary.json": "d7fabba48a8d1a4acd731723304248721a71ec87bb7980e7d8b12c76d38b4641",
+        "frames.csv": "a0640221fc6d2bdabe7856b68afc78755331d44cd74d4397657c93e1bf3faa57"
+      }
+    },
+    "hosted-control": {
+      "averageFPS": 37.0252571105957,
+      "frameCount": 2378,
+      "durationSeconds": 64.22642517089844,
+      "engineFrameMilliseconds": {
+        "mean": 27.00984440706476,
+        "p50": 26.38,
+        "p95": 33.72,
+        "p99": 40.52,
+        "maximum": 109.93,
+        "over50ms": 8,
+        "over100ms": 1
+      },
+      "sourceHashes": {
+        "summary.json": "dfd6b21742fa6ecec9f2244c36a77f6036a25aa8f004b037a7d48e90005affe4",
+        "frames.csv": "d9a693ddaadeba20f3022ef79e5f61af8f17ce9b5dc49e0c6ed9002a16b1ceb8"
+      }
+    }
+  },
+  "graphicsSettingsEqual": true,
+  "settingsFileUnchanged": true,
+  "originalSettingsSHA256": "57f63fa846f442b62bed6b786d958895fbfce544ff861b97617d81b4eb2a1664",
+  "interpretation": "Candidate and previous shim with same Ready host are essentially equal in average FPS. Initial hosted-current run was initiated via Computer Use and is excluded from clean CLI comparison. No queue-fix FPS gain or stutter elimination is established."
+}

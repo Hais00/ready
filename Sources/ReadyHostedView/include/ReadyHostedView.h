@@ -10,6 +10,9 @@ typedef void (*RHGHostFirstFrameCallback)(void *context);
 /* All calls except copy-metrics are on the main thread. Window/view are AppKit
  * object pointers, never copied/reparented between processes. */
 RHGHostRef RHGHostCreate(void *window, bool metalHUD, const char *expectedExecutable, const char *diagnosticPath);
+/* Experimental remote CoreAnimation transport. Reuses an existing device identity;
+ * never creates a host Metal device, drawable pool, or per-frame render RPC. */
+RHGHostRef RHGHostCreateRemote(void *window, uint64_t existingDeviceRegistryID, const char *expectedExecutable, const char *diagnosticPath);
 void *RHGHostGetView(RHGHostRef host);
 const char *RHGHostService(RHGHostRef host);
 const char *RHGHostNonce(RHGHostRef host);

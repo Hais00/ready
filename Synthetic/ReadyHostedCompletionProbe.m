@@ -30,6 +30,7 @@ static void fixtureServer(mach_port_t port){for(;;){@autoreleasepool{
 #define require(value) do{if(!(value)){fprintf(stderr,"completion-fixture-line:%d\n",__LINE__);_exit(81);}checks++;}while(0)
 int main(int argc,char **argv){@autoreleasepool{
  alarm(10);unsigned checks=0;fixtureBadIdentity=argc==2&&!strcmp(argv[1],"bad-identity");BOOL badGPU=argc==2&&!strcmp(argv[1],"bad-gpu");
+ rhgPerfPrepareOutput(); // Production constructor is disabled only in this fixture.
  fixtureArrived=dispatch_semaphore_create(0);fixtureReply=dispatch_semaphore_create(0);
  mach_port_t port=0;const char *name=getenv("READY_HOSTED_GAME_SERVICE");
  if(!name||mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&port)||mach_port_insert_right(mach_task_self(),port,port,MACH_MSG_TYPE_MAKE_SEND)||bootstrap_register(bootstrap_port,(char*)name,port))return 85;

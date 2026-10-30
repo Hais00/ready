@@ -21,7 +21,8 @@
 #import "RHGPerformance.h"
 typedef struct {
  RHGPerfStats mainDispatch[RHG_PERF_OPERATIONS],service[RHG_PERF_OPERATIONS];
- RHGPerfStats nextDrawable,presentCall,eligibility;
+ RHGPerfStats nextDrawable,presentCall,eligibility,requestedMinimumDuration;
+ uint64_t presentModes[3];
  RHGPerfPresentation presentation;
 } RHGHostPerformance;
 @interface RHGRenderSlot:NSObject
@@ -31,7 +32,21 @@ typedef struct {
 @property uint32_t surfaceID;
 @end
 @implementation RHGRenderSlot @end
+@interface RHGAcquireOperation:NSObject {
+@public RHGReply response;
+@public uint64_t serviceBegan;
+}
+@property(nonatomic,strong)CAMetalLayer *layer;
+@property(nonatomic)uint64_t generation,frameID;
+@end
+@implementation RHGAcquireOperation
+-(void)dealloc{if(response.h.msgh_remote_port)mach_msg_destroy(&response.h);}
+@end
+@protocol RHGRemoteLayerHosting <NSObject>
+@property(nonatomic)uint32_t contextId;
+@end
 @class RHGHost;
+static void RHGCancelPendingAcquire(RHGHost*host);
 @interface RHGView:NSView
 @property(nonatomic,weak)RHGHost *owner;
 @end
@@ -48,9 +63,21 @@ typedef struct {
 @property(nonatomic,weak)NSWindow *window;
 @property(nonatomic,strong)RHGView *view;
 @property(nonatomic,strong)CAMetalLayer *metal;
+/* Experimental remote transport owns only a CALayerHost, never producer drawables. */
+@property(nonatomic,strong)CALayer<RHGRemoteLayerHosting> *remoteLayer;
+@property(nonatomic)BOOL remoteMode;
+@property(nonatomic)BOOL remoteTraceEnabled;
+@property(nonatomic)unsigned remoteTraceRows;
+@property(nonatomic)double remoteTraceLastAt;
+@property(nonatomic,copy)NSDictionary *remoteStartupSnapshot;
+@property(nonatomic)uint32_t remoteContextID,remoteWidth,remoteHeight,remotePixelFormat;
+@property(nonatomic)uint64_t remoteDeviceRegistryID;
 @property(nonatomic,strong)id<MTLDevice> device;
 @property(nonatomic,strong)id<CAMetalDrawable> drawable; // Alias only during present/legacy inspection.
 @property(nonatomic,strong)NSMutableArray<RHGRenderSlot*> *slots;
+@property(nonatomic,strong)RHGAcquireOperation *pendingAcquire;
+@property(nonatomic,strong)dispatch_queue_t acquireQueue;
+@property(nonatomic)BOOL acquirePending;
 @property(nonatomic)uint32_t pipelineDepth;
 @property(nonatomic)uint64_t configurationGeneration;
 @property(nonatomic)BOOL renderNegotiated;
@@ -61,6 +88,8 @@ typedef struct {
 @property(nonatomic)uint64_t frameID;
 @property(nonatomic)uint32_t surfaceID;
 @property(nonatomic)NSUInteger frames,acquires,requests;
+@property(nonatomic)BOOL inputTraceEnabled;
+@property(nonatomic)uint64_t scrollReceived,scrollPreciseReceived,scrollEligibilityDropped,scrollQueued,scrollDelivered;
 @property(nonatomic)BOOL configured,metalHUD,lastFocus,firstFrameAnnounced;
 @property(nonatomic,assign)RHGHostFirstFrameCallback firstFrameCallback;
 @property(nonatomic,assign)void *firstFrameContext;
@@ -78,6 +107,7 @@ typedef struct {
 @property(nonatomic,strong)NSTimer *pointerTimer;
 @property(nonatomic,strong)NSMutableArray *pointerObservers;
 -(void)record:(NSString*)phase reason:(NSString*)reason;
+-(void)traceRemoteStartup:(NSString*)stage;
 -(void)input:(NSEvent*)event type:(uint32_t)type;
 -(void)shutdown;
 -(BOOL)foregroundEligible;
@@ -133,7 +163,8 @@ static dispatch_queue_t RHGRetirementQueue(void){
 }
 @end
 static NSUInteger RHGRetiredSlotCount(void){NSUInteger count=0;for(RHGRetiredRenderPool *pool in RHGRetiredPools)count+=pool.resources.count;return count;}
-static BOOL RHGHasRetiredPool(void){return RHGRetiredPools.count>0;}
+static NSUInteger RHGPendingAcquisitionCount; // Main-owned, including stopped workers until nextDrawable returns.
+static BOOL RHGHasRetiredPool(void){return RHGRetiredPools.count>0||RHGPendingAcquisitionCount>0;}
 static void RHGRetireRenderSlots(NSArray<RHGRenderSlot*> *slots,pid_t peer,uint64_t seconds,uint64_t microseconds){
  if(!slots.count||RHGPeerLifeState(peer,seconds,microseconds)==RHGPeerGone)return;
  // Normal use has one session. Refuse another host while this bounded pool is
@@ -167,8 +198,14 @@ static int32_t RHGAnchor(void*context){
 }
 static RHGPointerOps RHGOps(RHGHost*host){return (RHGPointerOps){RHGAssociate,RHGHide,RHGShow,RHGAnchor,(__bridge void*)host};}
 static void RHGMainSync(dispatch_block_t block){if(NSThread.isMainThread)block();else dispatch_sync(dispatch_get_main_queue(),block);}
+static BOOL RHGInputTraceEnabled(void){static BOOL enabled;static dispatch_once_t once;dispatch_once(&once,^{const char*value=getenv("RHG_INPUT_TRACE");enabled=value&&strcmp(value,"1")==0;});return enabled;}
+static BOOL RHGRemoteTraceEnabled(void){const char*value=getenv("RHG_REMOTE_TRACE");return value&&strcmp(value,"1")==0;}
+static id RHGTraceNumber(double value){return isfinite(value)?@(value):NSNull.null;}
+static NSArray*RHGTraceRect(CGRect rect){return @[RHGTraceNumber(rect.origin.x),RHGTraceNumber(rect.origin.y),RHGTraceNumber(rect.size.width),RHGTraceNumber(rect.size.height)];}
+static NSDictionary*RHGTraceLayer(CALayer*layer){return @{@"frame":RHGTraceRect(layer.frame),@"bounds":RHGTraceRect(layer.bounds),@"opacity":RHGTraceNumber(layer.opacity),@"hidden":@(layer.hidden),@"masksToBounds":@(layer.masksToBounds),@"contentsScale":RHGTraceNumber(layer.contentsScale)};}
 static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||format==MTLPixelFormatBGRA8Unorm_sRGB||format==MTLPixelFormatRGBA8Unorm||format==MTLPixelFormatRGBA8Unorm_sRGB||format==MTLPixelFormatRGB10A2Unorm||format==MTLPixelFormatRGBA16Float;}
 @implementation RHGView
+-(CALayer*)makeBackingLayer{return self.owner.remoteMode?[NSClassFromString(@"CALayerHost") new]:[super makeBackingLayer];}
 -(BOOL)acceptsFirstResponder{return YES;}
 -(BOOL)isOpaque{return YES;}
 -(BOOL)isFlipped{return YES;}
@@ -189,14 +226,18 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
 -(void)scrollWheel:(NSEvent*)e{[self.owner input:e type:RHG_SCROLL];}
 @end
 @implementation RHGHost
--(instancetype)init{if((self=[super init])){atomic_init(&stopped,false);atomic_init(&perfWritePending,false);atomic_init(&diagnosticPending,0);perfLock=(os_unfair_lock)OS_UNFAIR_LOCK_INIT;_diagnosticFD=-1;_diagnosticLock=[NSLock new];_diagnosticQueue=dispatch_queue_create("app.ready.hosted.diagnostics",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_UTILITY,0));_slots=[NSMutableArray new];_pipelineDepth=RHG_MAX_FRAMES_IN_FLIGHT;_configurationGeneration=1;_pointerObservers=[NSMutableArray new];_virtualAssociated=YES;_virtualX=_virtualY=.5;_began=CACurrentMediaTime();}return self;}
+-(instancetype)init{if((self=[super init])){atomic_init(&stopped,false);atomic_init(&perfWritePending,false);atomic_init(&diagnosticPending,0);perfLock=(os_unfair_lock)OS_UNFAIR_LOCK_INIT;_diagnosticFD=-1;_diagnosticLock=[NSLock new];_diagnosticQueue=dispatch_queue_create("app.ready.hosted.diagnostics",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_UTILITY,0));_acquireQueue=dispatch_queue_create("app.ready.hosted.acquire",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_USER_INTERACTIVE,0));_slots=[NSMutableArray new];_pipelineDepth=RHG_MAX_FRAMES_IN_FLIGHT;_configurationGeneration=1;_pointerObservers=[NSMutableArray new];_virtualAssociated=YES;_virtualX=_virtualY=.5;_began=CACurrentMediaTime();_inputTraceEnabled=RHGInputTraceEnabled();_remoteTraceEnabled=RHGRemoteTraceEnabled();}return self;}
 -(void)dealloc{[_pointerTimer invalidate];for(NSArray*pair in _pointerObservers)[pair[0]removeObserver:pair[1]];if(_diagnosticFD>=0)close(_diagnosticFD);if(_port)mach_port_destroy(mach_task_self(),_port);}
 -(void)record:(NSString*)phase reason:(NSString*)reason{
  if(self.diagnosticFD<0)return;
  if(atomic_fetch_add(&diagnosticPending,1)>=64){atomic_fetch_sub(&diagnosticPending,1);return;}
  NSMutableDictionary*v=[@{@"schema":@1,@"phase":phase,@"elapsedMilliseconds":@((CACurrentMediaTime()-self.began)*1000),@"hostPID":@(getpid()),@"guestPID":@(self.guestPID),@"window":@(self.window.windowNumber),@"frames":@(self.frames),@"acquires":@(self.acquires),@"requests":@(self.requests),@"hostCommandQueues":@0,@"hostCommandBuffers":@0,@"hostEncoders":@0,@"applicationSurfaceCopies":@0,@"pixelReadbacks":@0,@"metalHUDRequested":@(self.metalHUD),@"presentsWithTransaction":@(self.metal.presentsWithTransaction)}mutableCopy];
  if(reason)v[@"reason"]=reason;
+ if(self.inputTraceEnabled){v[@"inputTraceEnabled"]=@YES;v[@"scrollReceived"]=@(self.scrollReceived);v[@"scrollPreciseReceived"]=@(self.scrollPreciseReceived);v[@"scrollEligibilityDropped"]=@(self.scrollEligibilityDropped);v[@"scrollQueued"]=@(self.scrollQueued);v[@"scrollDelivered"]=@(self.scrollDelivered);}
  v[@"outstandingFrames"]=@(self.slots.count);v[@"maximumFramesInFlight"]=@(self.pipelineDepth);
+ v[@"pendingAcquire"]=@(self.acquirePending);v[@"remoteLayerTransport"]=@(self.remoteMode);
+ if(self.remoteContextID&&![phase isEqualToString:@"remote-startup-trace"])v[@"remoteContextID"]=@(self.remoteContextID);
+ if([phase isEqualToString:@"remote-startup-trace"]&&self.remoteStartupSnapshot)v[@"startup"]=self.remoteStartupSnapshot;
  if(self.surfaceID)v[@"surfaceID"]=@(self.surfaceID);
  v[@"pointerEnabled"]=@(self.pointerEnabled);v[@"pointerCaptured"]=@(self->pointer.captured);v[@"pointerCleanupPending"]=@(self->pointer.detached||self->pointer.hidden);
  v[@"pointerError"]=@(self->pointer.error);
@@ -208,6 +249,24 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
   @try{NSData*d=[NSJSONSerialization dataWithJSONObject:snapshot options:NSJSONWritingSortedKeys error:nil];if(d){NSMutableData*line=[d mutableCopy];[line appendBytes:"\n" length:1];[host writeDiagnostic:line];}}
   @finally{atomic_fetch_sub(&host->diagnosticPending,1);}
  }});
+}
+// Opt-in bounded startup diagnostics only. All AppKit/layer reads stay on Main;
+// serialization and writes use the existing bounded asynchronous journal.
+-(void)traceRemoteStartup:(NSString*)stage{
+ if(!self.remoteMode||!self.remoteTraceEnabled||self.diagnosticFD<0||self.firstFrameAnnounced||!self.remoteContextID||atomic_load(&stopped)||self.remoteTraceRows>=8)return;
+ double now=CACurrentMediaTime();if(self.remoteTraceRows&&now-self.remoteTraceLastAt<.1)return;
+ self.remoteTraceLastAt=now;self.remoteTraceRows++;
+ @try{
+  NSMutableArray*ancestors=[NSMutableArray new];CALayer*node=self.remoteLayer;
+  for(unsigned depth=0;node&&depth<6;depth++,node=node.superlayer)[ancestors addObject:RHGTraceLayer(node)];
+  NSMutableArray*subviews=[NSMutableArray new];NSArray<NSView*>*children=self.view.subviews;
+  for(NSUInteger i=0;i<MIN((NSUInteger)8,children.count);i++){
+   NSView*child=children[i];[subviews addObject:@{@"alphaValue":RHGTraceNumber(child.alphaValue),@"hidden":@(child.hidden),@"hiddenByAncestor":@(child.isHiddenOrHasHiddenAncestor),@"frame":RHGTraceRect(child.frame),@"hasLayer":@(child.layer!=nil),@"layer":child.layer?RHGTraceLayer(child.layer):@{}}];
+  }
+  pid_t foreground=NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
+  self.remoteStartupSnapshot=@{@"row":@(self.remoteTraceRows),@"stage":stage,@"viewWindowMatches":@(self.view.window==self.window),@"windowContentIsView":@(self.window.contentView==self.view),@"viewLayerIsRemoteLayer":@(self.view.layer==self.remoteLayer),@"viewLayerIsCALayerHost":@([self.view.layer isKindOfClass:NSClassFromString(@"CALayerHost")]),@"remoteContextMatches":@(self.remoteLayer.contextId==self.remoteContextID),@"viewAlphaValue":RHGTraceNumber(self.view.alphaValue),@"viewHidden":@(self.view.hidden),@"viewHiddenByAncestor":@(self.view.isHiddenOrHasHiddenAncestor),@"viewFrame":RHGTraceRect(self.view.frame),@"viewBounds":RHGTraceRect(self.view.bounds),@"remoteLayerAncestors":ancestors,@"ancestorChainTruncated":@(node!=nil),@"directSubviews":subviews,@"subviewsTruncated":@(children.count>8),@"windowVisible":@(self.window.visible),@"windowKey":@(self.window.isKeyWindow),@"windowOnActiveSpace":@(self.window.isOnActiveSpace),@"windowOcclusionVisible":@((self.window.occlusionState&NSWindowOcclusionStateVisible)!=0),@"applicationActive":@(NSApp.isActive),@"frontmostIsHost":@(foreground==getpid()),@"frontmostIsAttestedGuest":@(self.guestPID>0&&foreground==self.guestPID)};
+  [self record:@"remote-startup-trace" reason:nil];self.remoteStartupSnapshot=nil;
+ }@catch(NSException*exception){self.remoteStartupSnapshot=@{@"row":@(self.remoteTraceRows),@"stage":stage,@"exceptionName":exception.name};[self record:@"remote-startup-trace" reason:@"diagnostic-unavailable"];self.remoteStartupSnapshot=nil;}
 }
 -(void)writeDiagnostic:(NSData*)line{
  [self.diagnosticLock lock];const uint8_t*b=line.bytes;size_t offset=0;
@@ -230,8 +289,8 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
  dispatch_async(writer,^{@autoreleasepool{
   NSMutableDictionary *operations=[NSMutableDictionary new];
   for(unsigned op=0;op<RHG_PERF_OPERATIONS;op++)if(snapshot.service[op].count){operations[RHGPerfOperationName(op)]=@{@"mainDispatchWait":RHGPerfStatsJSON(&snapshot.mainDispatch[op]),@"service":RHGPerfStatsJSON(&snapshot.service[op])};}
-  NSDictionary *value=@{@"type":@"hosted-host-performance",@"schema":@1,@"presentCalls":@(frameCount),@"elapsedMilliseconds":@(elapsedMilliseconds),@"hostPID":@(getpid()),@"guestPID":@(guestPID),@"unit":@"nanoseconds",@"clock":@"mach_continuous_time",@"quantiles":@"log2-bucket-upper-bounds",@"maximumOutstandingFrames":@(self.pipelineDepth),@"hostLayerDisplaySyncEnabled":@(displaySync),@"operations":operations,
-   @"nextDrawable":RHGPerfStatsJSON(&snapshot.nextDrawable),@"presentCall":RHGPerfStatsJSON(&snapshot.presentCall),@"foregroundEligibility":RHGPerfStatsJSON(&snapshot.eligibility),@"displayPresentation":RHGPerfPresentationJSON(&snapshot.presentation),@"hostGPUCommandBuffers":@0,@"applicationSurfaceCopies":@0,@"hostCommandQueues":@0,@"hostCommandBuffers":@0,@"hostEncoders":@0,@"pixelReadbacks":@0,@"presentsWithTransaction":@(usesTransaction)};
+  NSDictionary *value=@{@"type":@"hosted-host-performance",@"schema":@1,@"presentCalls":@(frameCount),@"elapsedMilliseconds":@(elapsedMilliseconds),@"hostPID":@(getpid()),@"guestPID":@(guestPID),@"unit":@"nanoseconds",@"clock":@"mach_continuous_time",@"quantiles":@"log2-bucket-upper-bounds",@"maximumOutstandingFrames":@(self.pipelineDepth),@"hostLayerDisplaySyncEnabled":@(displaySync),@"nextDrawableOffMain":@YES,@"operations":operations,
+   @"nextDrawable":RHGPerfStatsJSON(&snapshot.nextDrawable),@"presentCall":RHGPerfStatsJSON(&snapshot.presentCall),@"foregroundEligibility":RHGPerfStatsJSON(&snapshot.eligibility),@"displayPresentation":RHGPerfPresentationJSON(&snapshot.presentation),@"presentModeCounts":@{@"normal":@(snapshot.presentModes[RHG_PRESENT_NORMAL]),@"atTime":@(snapshot.presentModes[RHG_PRESENT_AT_TIME]),@"minimumDuration":@(snapshot.presentModes[RHG_PRESENT_MIN_DURATION])},@"requestedMinimumDuration":RHGPerfStatsJSON(&snapshot.requestedMinimumDuration),@"hostGPUCommandBuffers":@0,@"applicationSurfaceCopies":@0,@"hostCommandQueues":@0,@"hostCommandBuffers":@0,@"hostEncoders":@0,@"pixelReadbacks":@0,@"presentsWithTransaction":@(usesTransaction)};
   NSData *json=[NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingSortedKeys error:nil];
   if(json&&json.length<=65536){NSMutableData *line=[json mutableCopy];[line appendBytes:"\n" length:1];[self writeDiagnostic:line];}
   atomic_store(&self->perfWritePending,false);
@@ -293,10 +352,19 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
  }else if(!was&&self->pointer.error){self.pointerRetryBlocked=YES;[self record:@"pointer-capture-failed" reason:nil];}
 }
 -(void)input:(NSEvent*)e type:(uint32_t)type{
+ BOOL traceWheel=self.inputTraceEnabled&&type==RHG_SCROLL;
+ if(traceWheel){self.scrollReceived++;if(e.hasPreciseScrollingDeltas)self.scrollPreciseReceived++;}
  BOOL eligible=[self foregroundEligible];[self reconcilePointerWithEligibility:eligible];
- if(!self.firstFrameAnnounced||!eligible)return;RHGInput input={0};input.type=type;input.modifiers=e.modifierFlags;input.timestamp=e.timestamp;
+ if(!self.firstFrameAnnounced||!eligible){if(traceWheel){self.scrollEligibilityDropped++;if(self.scrollReceived==1||self.scrollReceived%32==0)[self record:@"input-scroll" reason:@"eligibility-dropped"];}return;}RHGInput input={0};input.type=type;input.modifiers=e.modifierFlags;input.timestamp=e.timestamp;
  if(type==RHG_KEY_DOWN||type==RHG_KEY_UP||type==RHG_FLAGS){input.keyCode=e.keyCode;input.repeat=type==RHG_KEY_DOWN&&e.isARepeat;NSData*text=[((type==RHG_FLAGS?@"":e.charactersIgnoringModifiers)?:@"")dataUsingEncoding:NSUTF8StringEncoding];input.charactersLength=(uint32_t)MIN(sizeof input.characters,text.length);if(input.charactersLength)memcpy(input.characters,text.bytes,input.charactersLength);}
- else{NSPoint p=[self.view convertPoint:e.locationInWindow fromView:nil];input.x=self.view.bounds.size.width>0?p.x/self.view.bounds.size.width:0;input.y=self.view.bounds.size.height>0?p.y/self.view.bounds.size.height:0;input.button=(uint32_t)e.buttonNumber;input.clickCount=(uint32_t)MAX(0,e.clickCount);input.deltaX=e.deltaX;input.deltaY=e.deltaY;
+ else{NSPoint p=[self.view convertPoint:e.locationInWindow fromView:nil];input.x=self.view.bounds.size.width>0?p.x/self.view.bounds.size.width:0;input.y=self.view.bounds.size.height>0?p.y/self.view.bounds.size.height:0;
+  // AppKit raises for clickCount on a genuine NSScrollWheel event. Read only
+  // fields applicable to this event kind; scroll deltas are captured below.
+  if(type==RHG_MOUSE_DOWN||type==RHG_MOUSE_UP){input.button=(uint32_t)e.buttonNumber;input.clickCount=(uint32_t)MAX(0,e.clickCount);}
+  else if(type==RHG_MOUSE_MOVE){input.deltaX=e.deltaX;input.deltaY=e.deltaY;
+   if(e.type==NSEventTypeRightMouseDragged)input.button=1;
+   else if(e.type==NSEventTypeOtherMouseDragged){CGEventRef raw=e.CGEvent;input.button=raw?(uint32_t)CGEventGetIntegerValueField(raw,kCGMouseEventButtonNumber):2;}
+  }
   if(self->pointer.captured){if(type==RHG_MOUSE_MOVE){
    RHGVirtualPointer virtual={self.virtualAssociated,self.virtualInitialized,self.virtualHiddenUntilMove,self.virtualHideCount,self.virtualX,self.virtualY};
    if(!RHGInputPointerMove(&virtual,input.deltaX,input.deltaY,self.view.bounds.size.width,self.view.bounds.size.height))return;
@@ -306,12 +374,15 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
  if(!RHGInputQueuePush(&self->inputQueue,input)){
   // A bounded queue must not silently lose a release and leave held controls.
   [self record:@"input-rejected" reason:@"input-control-queue-overflow"];[self shutdown];
+ }else if(traceWheel){self.scrollQueued++;if(self.scrollReceived==1||self.scrollReceived%32==0)[self record:@"input-scroll" reason:@"queued"];
  }
  // Capture was reconciled before delivery. A post-scroll show/hide repair
  // itself exposes the cursor and accumulates run-loop work during a gesture.
 }
 -(void)shutdown{
  if(atomic_exchange(&stopped,true))return;
+ RHGCancelPendingAcquire(self);
+ if(self.remoteMode){self.remoteLayer.contextId=0;self.remoteContextID=0;}
  self.pointerEnabled=NO;[self releasePointer];
  for(id pair in self.pointerObservers){[[pair objectAtIndex:0]removeObserver:[pair objectAtIndex:1]];}[self.pointerObservers removeAllObjects];
  self.firstFrameCallback=NULL;self.firstFrameContext=NULL;
@@ -329,20 +400,23 @@ static void RHGFill(RHGHost*host,RHGReply*reply){
  if(reply->op==RHG_POLL){focus=[host foregroundEligible];[host reconcilePointerWithEligibility:focus];}
  reply->framesInFlight=host.pipelineDepth;reply->configurationGeneration=host.configurationGeneration;
  reply->magic=RHG_MAGIC;reply->version=RHG_VERSION;reply->window=(uint32_t)host.window.windowNumber;
- reply->width=(uint32_t)host.metal.drawableSize.width;reply->height=(uint32_t)host.metal.drawableSize.height;reply->pixelFormat=(uint32_t)host.metal.pixelFormat;reply->deviceRegistryID=host.device.registryID;reply->backingScale=host.window.backingScaleFactor;
+ if(host.remoteMode){reply->width=host.remoteWidth;reply->height=host.remoteHeight;reply->pixelFormat=host.remotePixelFormat;reply->deviceRegistryID=host.remoteDeviceRegistryID;}
+ else{reply->width=(uint32_t)host.metal.drawableSize.width;reply->height=(uint32_t)host.metal.drawableSize.height;reply->pixelFormat=(uint32_t)host.metal.pixelFormat;reply->deviceRegistryID=host.device.registryID;}reply->backingScale=host.window.backingScaleFactor;
  reply->pointerCaptured=host->pointer.captured;reply->pointerAssociated=host.virtualAssociated;reply->pointerHideCount=host.virtualHideCount;reply->pointerHiddenUntilMove=host.virtualHiddenUntilMove;reply->pointerError=host->pointer.error;
  reply->logicalWidth=host.view.bounds.size.width;reply->logicalHeight=host.view.bounds.size.height;
  reply->pointerX=host.virtualX;reply->pointerY=host.virtualY;
  NSRect screenRect=[host.window convertRectToScreen:[host.view convertRect:host.view.bounds toView:nil]];
  reply->quartzOriginX=screenRect.origin.x;reply->quartzOriginY=NSMaxY(NSScreen.screens.firstObject.frame)-NSMaxY(screenRect);reply->cocoaOriginX=screenRect.origin.x;reply->cocoaOriginY=screenRect.origin.y;
+ if(reply->op==RHG_POLL)[host traceRemoteStartup:@"poll"];
  if(reply->op!=RHG_POLL||reply->eventCount)return;
  if(focus!=host.lastFocus){RHGInput change={0};change.type=RHG_FOCUS;change.keyCode=focus?1:0;change.timestamp=CACurrentMediaTime();if(!focus)RHGInputQueueClear(&host->inputQueue);
   if(!RHGInputQueuePush(&host->inputQueue,change)){[host record:@"input-rejected" reason:@"input-control-queue-overflow"];[host shutdown];}host.lastFocus=focus;}
  reply->eventCount=RHGInputQueuePop(&host->inputQueue,reply->events,RHG_MAX_EVENTS);
+ if(host.inputTraceEnabled){uint64_t previous=host.scrollDelivered;for(unsigned i=0;i<reply->eventCount;i++)if(reply->events[i].type==RHG_SCROLL)host.scrollDelivered++;if(host.scrollDelivered!=previous&&(previous==0||previous/32!=host.scrollDelivered/32))[host record:@"input-scroll" reason:@"poll-delivered"];}
 }
 static void RHGConfigureLayer(RHGHost*host,const RHGRequest*q,RHGReply*reply){
  uint64_t pixels=(uint64_t)q->width*q->height;
- if(host.slots.count||host.drawable){reply->status=RHG_BUSY;return;}
+ if(host.slots.count||host.drawable||host.acquirePending){reply->status=RHG_BUSY;return;}
  if(q->configurationGeneration!=host.configurationGeneration){reply->status=RHG_REJECTED;return;}
  if(!q->width||!q->height||q->width>8192||q->height>8192||pixels>33554432||!RHGFormat(q->pixelFormat)||q->deviceRegistryID!=host.device.registryID||q->displaySyncEnabled>1){reply->status=RHG_UNSUPPORTED;return;}
  BOOL sync=q->displaySyncEnabled!=0;
@@ -351,20 +425,105 @@ static void RHGConfigureLayer(RHGHost*host,const RHGRequest*q,RHGReply*reply){
  host.metal.pixelFormat=(MTLPixelFormat)q->pixelFormat;host.metal.drawableSize=CGSizeMake(q->width,q->height);host.metal.displaySyncEnabled=sync;host.configured=YES;
  RHGFill(host,reply);reply->displaySyncEnabled=host.metal.displaySyncEnabled?1:0;[host record:@"configured" reason:nil];
 }
+/* Remote layer metadata is bounded independently of native CA buffering. The
+ * context ID is accepted only after this server's nonce/executable/UID/PID-birth
+ * attestation; it is not treated as authority to create arbitrary host windows. */
+static BOOL RHGRemoteMetadataValid(RHGHost*host,const RHGRequest*q){
+ if((q->width==0)!=(q->height==0))return NO;
+ if(q->width&&(q->width>8192||q->height>8192||(uint64_t)q->width*q->height>33554432))return NO;
+ if(q->pixelFormat&&!RHGFormat(q->pixelFormat))return NO;
+ if(q->deviceRegistryID&&q->deviceRegistryID!=host.remoteDeviceRegistryID)return NO;
+ return YES;
+}
+static void RHGAdoptRemoteMetadata(RHGHost*host,const RHGRequest*q){
+ if(q->width){host.remoteWidth=q->width;host.remoteHeight=q->height;}
+ if(q->pixelFormat)host.remotePixelFormat=q->pixelFormat;
+}
+static BOOL RHGRemoteGeometry(RHGHost*host,BOOL initial){
+ CGFloat scale=host.window.backingScaleFactor;NSSize logical=initial?host.window.screen.frame.size:host.view.bounds.size;
+ double width=ceil(logical.width*scale),height=ceil(logical.height*scale);
+ if(!isfinite(width)||!isfinite(height)||!isfinite(scale)||scale<=0||width<1||height<1||width>8192||height>8192||width*height>33554432)return NO;
+ host.remoteWidth=(uint32_t)width;host.remoteHeight=(uint32_t)height;
+ host.remoteLayer.frame=host.view.bounds;host.remoteLayer.contentsScale=scale;return YES;
+}
+static void RHGSendReply(RHGHost*host,RHGReply*reply){
+ if(!reply->h.msgh_remote_port)return;
+ kern_return_t sent=mach_msg(&reply->h,MACH_SEND_MSG|MACH_SEND_TIMEOUT,reply->h.msgh_size,0,MACH_PORT_NULL,2000,MACH_PORT_NULL);
+ if(sent!=KERN_SUCCESS){
+  // The failed message still owns its destination send-once right and any
+  // exported surface descriptor. Destroy both, including non-complex replies.
+  mach_msg_destroy(&reply->h);
+  dispatch_async(dispatch_get_main_queue(),^{[host record:@"peer-lost" reason:nil];[host shutdown];});
+ }
+ reply->h.msgh_remote_port=MACH_PORT_NULL;
+}
+static void RHGCancelPendingAcquire(RHGHost*host){
+ RHGAcquireOperation*operation=host.pendingAcquire;if(!operation||!operation->response.h.msgh_remote_port)return;
+ RHGReply stopped=operation->response;operation->response.h.msgh_remote_port=MACH_PORT_NULL;stopped.status=RHG_STOPPED;
+ // Cancellation must not sit behind the blocked acquisition worker.
+ dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE,0),^{RHGReply reply=stopped;RHGSendReply(host,&reply);});
+}
+static BOOL RHGAcquireAsync(RHGHost*host,const RHGRequest*q,RHGReply*reply,uint64_t serviceBegan){
+ if(!host.configured){reply->status=RHG_UNSUPPORTED;return NO;}
+ if(q->configurationGeneration!=host.configurationGeneration){reply->status=RHG_REJECTED;return NO;}
+ if(host.acquirePending||host.slots.count>=host.pipelineDepth){reply->status=RHG_BUSY;return NO;}
+ if(host.frameID==UINT64_MAX){reply->status=RHG_UNSUPPORTED;return NO;}
+ if(!reply->h.msgh_remote_port){reply->status=RHG_REJECTED;return NO;}
+ RHGAcquireOperation*operation=[RHGAcquireOperation new];operation.layer=host.metal;operation.generation=host.configurationGeneration;operation.frameID=host.frameID;
+ operation->response=*reply;operation->serviceBegan=serviceBegan;reply->h.msgh_remote_port=MACH_PORT_NULL;
+ host.pendingAcquire=operation;host.acquirePending=YES;RHGPendingAcquisitionCount++;
+ dispatch_async(host.acquireQueue,^{@autoreleasepool{
+  id<CAMetalDrawable>drawable=nil;mach_port_t surfacePort=MACH_PORT_NULL;uint32_t surfaceID=0,status=RHG_OK;
+  uint64_t began=RHGPerfNow();
+  @try{
+   drawable=[operation.layer nextDrawable];
+   IOSurfaceRef surface=drawable.texture.iosurface;
+   if(!surface)status=RHG_UNSUPPORTED;
+   else{surfaceID=IOSurfaceGetID(surface);if(!surfaceID)status=RHG_REJECTED;
+    else{surfacePort=IOSurfaceCreateMachPort(surface);if(!surfacePort)status=RHG_UNSUPPORTED;}}
+  }@catch(NSException*exception){(void)exception;status=RHG_UNSUPPORTED;}
+  [host perfInterval:&host->performance.nextDrawable begin:began end:RHGPerfNow()];
+  __block RHGReply completed={0};__block mach_port_t ownedSurface=surfacePort;
+  RHGMainSync(^{
+   BOOL current=host.pendingAcquire==operation;
+   if(current){host.pendingAcquire=nil;host.acquirePending=NO;}
+   if(RHGPendingAcquisitionCount)RHGPendingAcquisitionCount--;
+   completed=operation->response;operation->response.h.msgh_remote_port=MACH_PORT_NULL;
+   if(!completed.h.msgh_remote_port)return; // Stop already consumed the one reply right.
+   if(atomic_load(&host->stopped)){completed.status=RHG_STOPPED;return;}
+   if(!current||host.configurationGeneration!=operation.generation||host.metal!=operation.layer||host.frameID!=operation.frameID){completed.status=RHG_REJECTED;return;}
+   if(status!=RHG_OK){completed.status=status;[host record:@"rejected" reason:@"drawable-acquisition-unavailable"];return;}
+   if(host.slots.count>=host.pipelineDepth){completed.status=RHG_BUSY;return;}
+   for(RHGRenderSlot*held in host.slots)if(held.surfaceID==surfaceID){completed.status=RHG_REJECTED;return;}
+   RHGRenderSlot*slot=[RHGRenderSlot new];slot.drawable=drawable;slot.layer=operation.layer;slot.surfaceID=surfaceID;slot.frameID=host.frameID++;slot.generation=operation.generation;
+   [host.slots addObject:slot];host.surfaceID=slot.surfaceID;host.acquires++;
+   RHGFill(host,&completed);completed.frameID=slot.frameID;completed.surfaceID=slot.surfaceID;completed.configurationGeneration=slot.generation;
+   completed.h.msgh_bits|=MACH_MSGH_BITS_COMPLEX;completed.body.msgh_descriptor_count=1;
+   completed.port=(mach_msg_port_descriptor_t){.name=ownedSurface,.disposition=MACH_MSG_TYPE_MOVE_SEND,.type=MACH_MSG_PORT_DESCRIPTOR};ownedSurface=MACH_PORT_NULL;
+  });
+  if(ownedSurface)mach_port_deallocate(mach_task_self(),ownedSurface);
+  [host perfInterval:&host->performance.service[RHG_ACQUIRE] begin:operation->serviceBegan end:RHGPerfNow()];
+  RHGSendReply(host,&completed);
+ }});
+ return YES;
+}
 static void RHGServe(RHGHost*host){
  while(!atomic_load(&host->stopped)){@autoreleasepool{
   RHGRequestReceive incoming={0};mach_port_t port=host.port;if(!port)break;
   mach_msg_option_t options=MACH_RCV_MSG|MACH_RCV_TIMEOUT|MACH_RCV_TRAILER_TYPE(MACH_MSG_TRAILER_FORMAT_0)|MACH_RCV_TRAILER_ELEMENTS(MACH_RCV_TRAILER_AUDIT);
   kern_return_t result=mach_msg(&incoming.message.h,options,0,sizeof incoming,port,50,MACH_PORT_NULL);
   if(result==MACH_RCV_TIMED_OUT)continue;if(result!=KERN_SUCCESS)break;
-  RHGRequest*q=&incoming.message;__block RHGReply reply={0};
+  RHGRequest*q=&incoming.message;__block RHGReply reply={0};__block BOOL deferred=NO;
   reply.h.msgh_remote_port=q->h.msgh_remote_port;reply.h.msgh_bits=MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND_ONCE,0);reply.h.msgh_size=sizeof reply;reply.op=q->op;reply.requestID=q->requestID;
   if(q->h.msgh_size!=sizeof(RHGRequest)||(q->h.msgh_bits&MACH_MSGH_BITS_COMPLEX)){mach_msg_destroy(&q->h);continue;}
   mach_msg_audit_trailer_t*t=(void*)((uint8_t*)q+round_msg(q->h.msgh_size));
   BOOL valid=q->magic==RHG_MAGIC&&q->version==RHG_VERSION&&t->msgh_trailer_type==MACH_MSG_TRAILER_FORMAT_0&&t->msgh_trailer_size>=sizeof(*t)&&audit_token_to_euid(t->msgh_audit)==geteuid()&&timingsafe_bcmp(q->nonce,host->nonce,RHG_NONCE_BYTES)==0;
   pid_t pid=valid?audit_token_to_pid(t->msgh_audit):0;
-  if(valid&&host.guestPID==0){char path[PROC_PIDPATHINFO_MAXSIZE]={0};valid=q->op==RHG_HELLO&&proc_pidpath(pid,path,sizeof path)>0&&host.expectedExecutable.length&&strcmp(path,host.expectedExecutable.fileSystemRepresentation)==0;if(valid){uint64_t seconds=0,microseconds=0;valid=RHGReadPeerBirth(pid,&seconds,&microseconds);if(valid){host.guestBirthSeconds=seconds;host.guestBirthMicroseconds=microseconds;host.guestPID=pid;}}}
+  if(valid&&host.guestPID==0){char path[PROC_PIDPATHINFO_MAXSIZE]={0};valid=q->op==RHG_HELLO&&q->reserved==(host.remoteMode?RHG_TRANSPORT_REMOTE_LAYER:RHG_TRANSPORT_SURFACE)&&(host.remoteMode?q->framesInFlight==0:(q->framesInFlight>=1&&q->framesInFlight<=RHG_MAX_FRAMES_IN_FLIGHT))&&proc_pidpath(pid,path,sizeof path)>0&&host.expectedExecutable.length&&strcmp(path,host.expectedExecutable.fileSystemRepresentation)==0;if(valid){uint64_t seconds=0,microseconds=0;valid=RHGReadPeerBirth(pid,&seconds,&microseconds);if(valid){host.guestBirthSeconds=seconds;host.guestBirthMicroseconds=microseconds;host.guestPID=pid;}}}
   valid=valid&&pid>0&&host.guestPID==pid;
+  if(valid&&(q->op==RHG_REMOTE_ATTACH||q->op==RHG_REMOTE_FIRST_FRAME)){
+   char path[PROC_PIDPATHINFO_MAXSIZE]={0};valid=host.remoteMode&&RHGPeerLifeState(pid,host.guestBirthSeconds,host.guestBirthMicroseconds)==RHGPeerSame&&proc_pidpath(pid,path,sizeof path)>0&&strcmp(path,host.expectedExecutable.fileSystemRepresentation)==0;
+  }
   if(!valid){reply.status=RHG_REJECTED;reply.magic=RHG_MAGIC;reply.version=RHG_VERSION;}
   else {uint64_t dispatchBegan=RHGPerfNow();RHGMainSync(^{
    uint64_t serviceBegan=RHGPerfNow();unsigned perfOp=q->op<RHG_PERF_OPERATIONS?q->op:0;
@@ -373,34 +532,39 @@ static void RHGServe(RHGHost*host){
    host.requests++;RHGFill(host,&reply);
    if(atomic_load(&host->stopped)){reply.status=RHG_STOPPED;return;}
    if(q->op==RHG_HELLO){
+    if(q->reserved!=(host.remoteMode?RHG_TRANSPORT_REMOTE_LAYER:RHG_TRANSPORT_SURFACE)){reply.status=RHG_REJECTED;return;}
+    if(host.remoteMode){if(q->framesInFlight!=0){reply.status=RHG_REJECTED;return;}host.pipelineDepth=0;host.renderNegotiated=YES;reply.framesInFlight=0;[host record:@"guest-connected" reason:@"remote-layer"];return;}
     if(q->framesInFlight<1||q->framesInFlight>RHG_MAX_FRAMES_IN_FLIGHT||(host.renderNegotiated&&q->framesInFlight!=host.pipelineDepth)){reply.status=RHG_REJECTED;return;}
     host.pipelineDepth=q->framesInFlight;host.renderNegotiated=YES;reply.framesInFlight=host.pipelineDepth;[host record:@"guest-connected" reason:nil];
    }else if(!host.renderNegotiated){reply.status=RHG_REJECTED;return;}
    else if(q->op==RHG_POLL){}
-   else if(q->op==RHG_CONFIGURE){
+   else if(host.remoteMode&&(q->op==RHG_CONFIGURE||q->op==RHG_ACQUIRE||q->op==RHG_PRESENT)){reply.status=RHG_UNSUPPORTED;return;}
+   else if(q->op==RHG_REMOTE_ATTACH){
+    if(!host.remoteMode||!host.remoteLayer||!q->surfaceID||host.remoteContextID||!RHGRemoteMetadataValid(host,q)){reply.status=RHG_REJECTED;return;}
+    host.remoteLayer.contextId=q->surfaceID;host.remoteContextID=q->surfaceID;RHGAdoptRemoteMetadata(host,q);RHGFill(host,&reply);reply.surfaceID=host.remoteContextID;[host record:@"remote-layer-attached" reason:nil];[host traceRemoteStartup:@"attach"];
+   }else if(q->op==RHG_REMOTE_FIRST_FRAME){
+    if(!host.remoteMode||!host.remoteContextID||q->surfaceID!=host.remoteContextID||host.firstFrameAnnounced||!RHGRemoteMetadataValid(host,q)){reply.status=RHG_REJECTED;return;}
+    RHGAdoptRemoteMetadata(host,q);host.firstFrameAnnounced=YES;
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    if(host.firstFrameCallback)host.firstFrameCallback(host.firstFrameContext);
+    [CATransaction commit];
+    if(atomic_load(&host->stopped)){reply.status=RHG_STOPPED;return;}
+    RHGFill(host,&reply);reply.surfaceID=host.remoteContextID;[host record:@"remote-first-frame-transition" reason:@"native-drawable-handler-accepted"];
+   }else if(q->op==RHG_CONFIGURE){
     RHGConfigureLayer(host,q,&reply);
    }else if(q->op==RHG_ACQUIRE){
-    if(!host.configured){reply.status=RHG_UNSUPPORTED;return;}
-    if(q->configurationGeneration!=host.configurationGeneration){reply.status=RHG_REJECTED;return;}
-    if(host.slots.count>=host.pipelineDepth){reply.status=RHG_BUSY;return;}
-    if(host.frameID==UINT64_MAX){reply.status=RHG_UNSUPPORTED;return;}
-    uint64_t drawableBegan=RHGPerfNow();id<CAMetalDrawable>drawable=[host.metal nextDrawable];
-    [host perfInterval:&host->performance.nextDrawable begin:drawableBegan end:RHGPerfNow()];
-    IOSurfaceRef surface=drawable.texture.iosurface;
-    if(!surface){reply.status=RHG_UNSUPPORTED;[host record:@"rejected" reason:@"drawable-has-no-exportable-surface"];return;}
-    if(atomic_load(&host->stopped)){reply.status=RHG_STOPPED;return;}
-    uint32_t surfaceID=IOSurfaceGetID(surface);if(!surfaceID){reply.status=RHG_REJECTED;return;}
-    for(RHGRenderSlot*held in host.slots)if(held.surfaceID==surfaceID){reply.status=RHG_REJECTED;return;}
-    mach_port_t surfacePort=IOSurfaceCreateMachPort(surface);if(!surfacePort){reply.status=RHG_REJECTED;return;}
-    RHGRenderSlot*slot=[RHGRenderSlot new];slot.drawable=drawable;slot.layer=host.metal;slot.surfaceID=surfaceID;slot.frameID=host.frameID++;slot.generation=host.configurationGeneration;
-    [host.slots addObject:slot];host.surfaceID=slot.surfaceID;host.acquires++;reply.frameID=slot.frameID;reply.surfaceID=slot.surfaceID;reply.configurationGeneration=slot.generation;
-    reply.h.msgh_bits|=MACH_MSGH_BITS_COMPLEX;reply.body.msgh_descriptor_count=1;reply.port=(mach_msg_port_descriptor_t){.name=surfacePort,.disposition=MACH_MSG_TYPE_MOVE_SEND,.type=MACH_MSG_PORT_DESCRIPTOR};
+    deferred=RHGAcquireAsync(host,q,&reply,serviceBegan);
    }else if(q->op==RHG_PRESENT){
     RHGRenderSlot*slot=host.slots.firstObject;
     if(!slot||q->frameID!=slot.frameID||q->surfaceID!=slot.surfaceID||q->configurationGeneration!=slot.generation||slot.generation!=host.configurationGeneration||!isfinite(q->presentTime)||!isfinite(q->gpuSeconds)||q->gpuSeconds<0||q->gpuSeconds>600){reply.status=RHG_REJECTED;return;}
     host.drawable=slot.drawable;host.surfaceID=slot.surfaceID;
     if(q->presentMode>RHG_PRESENT_MIN_DURATION){reply.status=RHG_UNSUPPORTED;return;}
     if(RHGPerfProfileEnabled()){
+      os_unfair_lock_lock(&host->perfLock);
+      host->performance.presentModes[q->presentMode]++;
+      if(q->presentMode==RHG_PRESENT_MIN_DURATION&&q->presentTime>=0&&q->presentTime<=600)
+        RHGPerfAddNanoseconds(&host->performance.requestedMinimumDuration,(uint64_t)(q->presentTime*1e9));
+      os_unfair_lock_unlock(&host->perfLock);
       __weak RHGHost *weak=host;
       [host.drawable addPresentedHandler:^(id<MTLDrawable>displayed){[weak observePresentedTime:displayed.presentedTime];}];
     }
@@ -442,25 +606,27 @@ static void RHGServe(RHGHost*host){
     if(q->op==RHG_POINTER_WARP||host.virtualAssociated!=virtual.associated)RHGInputQueueBarrier(&host->inputQueue);
     host.virtualAssociated=virtual.associated;host.virtualInitialized=virtual.initialized;host.virtualHiddenUntilMove=virtual.hiddenUntilMove;host.virtualHideCount=virtual.hideCount;host.virtualX=virtual.x;host.virtualY=virtual.y;
     [host reconcilePointer];RHGFill(host,&reply);reply.pointerError=0;if(policyChanged)[host record:@"pointer-virtual-policy" reason:host.firstFrameAnnounced&&host.pointerEnabled?@"physical-owner-independent":@"physical-capture-deferred"];
-   }else if(q->op==RHG_DONE){if(host.slots.count){reply.status=RHG_BUSY;return;}host.pointerEnabled=NO;[host releasePointer];[host record:@"guest-done" reason:nil];host.drawable=nil;}
+   }else if(q->op==RHG_DONE){if(host.slots.count||host.acquirePending){reply.status=RHG_BUSY;return;}host.pointerEnabled=NO;[host releasePointer];[host record:@"guest-done" reason:nil];host.drawable=nil;}
    else reply.status=RHG_UNSUPPORTED;
    }@finally{
-    [host perfInterval:&host->performance.service[perfOp] begin:serviceBegan end:RHGPerfNow()];
+    if(!deferred)[host perfInterval:&host->performance.service[perfOp] begin:serviceBegan end:RHGPerfNow()];
     if(q->op==RHG_PRESENT&&reply.status==RHG_OK&&host.frames>0&&host.frames%120==0)[host profileSnapshot];
    }
   });}
-  if(reply.h.msgh_remote_port){kern_return_t sent=mach_msg(&reply.h,MACH_SEND_MSG|MACH_SEND_TIMEOUT,reply.h.msgh_size,0,MACH_PORT_NULL,2000,MACH_PORT_NULL);if(sent!=KERN_SUCCESS){if(reply.body.msgh_descriptor_count)mach_msg_destroy(&reply.h);RHGMainSync(^{[host record:@"peer-lost" reason:nil];});}}
+  if(!deferred)RHGSendReply(host,&reply);
  }}
 }
-RHGHostRef RHGHostCreate(void*windowPointer,bool hud,const char*expectedExecutable,const char*diagnosticPath){
- if(!NSThread.isMainThread||!windowPointer||!expectedExecutable||!diagnosticPath||RHGHasRetiredPool())return NULL;
- NSWindow*window=(__bridge NSWindow*)windowPointer;RHGHost*host=[RHGHost new];host.window=window;host.expectedExecutable=[NSString stringWithUTF8String:expectedExecutable];host.metalHUD=hud;
+static RHGHostRef RHGHostCreateCommon(void*windowPointer,bool hud,bool remote,uint64_t existingDeviceRegistryID,const char*expectedExecutable,const char*diagnosticPath){
+ if(!NSThread.isMainThread||!windowPointer||!expectedExecutable||!diagnosticPath||RHGHasRetiredPool()||(remote&&(!existingDeviceRegistryID||![NSClassFromString(@"CALayerHost") instancesRespondToSelector:@selector(setContextId:)])))return NULL;
+ NSWindow*window=(__bridge NSWindow*)windowPointer;RHGHost*host=[RHGHost new];host.window=window;host.expectedExecutable=[NSString stringWithUTF8String:expectedExecutable];host.metalHUD=hud;host.remoteMode=remote;host.remoteDeviceRegistryID=existingDeviceRegistryID;host.remotePixelFormat=MTLPixelFormatBGRA8Unorm;if(remote)host.pipelineDepth=0;
  host.diagnosticFD=open(diagnosticPath,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);if(host.diagnosticFD<0)return NULL;
- host.device=MTLCreateSystemDefaultDevice();if(!host.device)return NULL;
+ if(!remote){host.device=MTLCreateSystemDefaultDevice();if(!host.device)return NULL;}
  host.service=[@RHG_SERVICE_PREFIX stringByAppendingString:NSUUID.UUID.UUIDString.lowercaseString];arc4random_buf(host->nonce,sizeof host->nonce);NSMutableString*hex=[NSMutableString new];for(unsigned i=0;i<RHG_NONCE_BYTES;i++)[hex appendFormat:@"%02x",host->nonce[i]];host.nonceString=hex;
  RHGView*view=[[RHGView alloc]initWithFrame:window.contentView.bounds];view.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;view.owner=host;view.wantsLayer=YES;host.view=view;
- CAMetalLayer*layer=[CAMetalLayer layer];layer.device=host.device;layer.pixelFormat=MTLPixelFormatBGRA8Unorm;layer.framebufferOnly=YES;layer.opaque=YES;layer.backgroundColor=NSColor.blackColor.CGColor;layer.contentsScale=window.backingScaleFactor;layer.drawableSize=CGSizeMake(MAX(1,view.bounds.size.width*window.backingScaleFactor),MAX(1,view.bounds.size.height*window.backingScaleFactor));layer.maximumDrawableCount=3;view.layer=layer;layer.presentsWithTransaction=NO;host.metal=layer;
+ if(remote){host.remoteLayer=(CALayer<RHGRemoteLayerHosting>*)view.layer;host.remoteLayer.opaque=YES;if(!RHGRemoteGeometry(host,YES))return NULL;}else{
+ CAMetalLayer*layer=[CAMetalLayer layer];layer.device=host.device;layer.pixelFormat=MTLPixelFormatBGRA8Unorm;layer.framebufferOnly=YES;layer.opaque=YES;layer.backgroundColor=NSColor.blackColor.CGColor;layer.contentsScale=window.backingScaleFactor;layer.drawableSize=CGSizeMake(MAX(1,view.bounds.size.width*window.backingScaleFactor),MAX(1,view.bounds.size.height*window.backingScaleFactor));layer.maximumDrawableCount=3;layer.allowsNextDrawableTimeout=YES;view.layer=layer;layer.presentsWithTransaction=NO;host.metal=layer;
  if(hud)layer.developerHUDProperties=@{@"mode":@"main",@"MTL_HUD_ENABLED":@1,@"MTL_HUD_DISABLE_MENU_BAR":@1,@"MTL_HUD_ALIGNMENT":@"topleft",@"MTL_HUD_ELEMENTS":@"device,layersize,fps,framenumber,frameinterval,frameintervalgraph,presentdelay"};
+ }
  __weak RHGHost *weak=host;
  [host refreshConsoleSession];
  host.pointerTimer=[NSTimer timerWithTimeInterval:.1 repeats:YES block:^(NSTimer*t){(void)t;[weak refreshConsoleSession];[weak reconcilePointer];}];
@@ -477,8 +643,10 @@ RHGHostRef RHGHostCreate(void*windowPointer,bool hud,const char*expectedExecutab
  }
  mach_port_t port=MACH_PORT_NULL;if(mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&port)!=KERN_SUCCESS)return NULL;host.port=port;
  if(mach_port_insert_right(mach_task_self(),host.port,host.port,MACH_MSG_TYPE_MAKE_SEND)!=KERN_SUCCESS||bootstrap_register(bootstrap_port,(char*)host.service.UTF8String,host.port)!=KERN_SUCCESS)return NULL;
- [host record:@"host-ready" reason:nil];dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE,0),^{RHGServe(host);dispatch_async(dispatch_get_main_queue(),^{host.view.owner=nil;host.view=nil;host.metal=nil;});});return (__bridge_retained RHGHostRef)host;
+ [host record:@"host-ready" reason:nil];dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE,0),^{RHGServe(host);dispatch_async(dispatch_get_main_queue(),^{[host shutdown];host.view.owner=nil;host.view=nil;host.metal=nil;host.remoteLayer=nil;});});return (__bridge_retained RHGHostRef)host;
 }
+RHGHostRef RHGHostCreate(void*window,bool hud,const char*expectedExecutable,const char*diagnosticPath){return RHGHostCreateCommon(window,hud,false,0,expectedExecutable,diagnosticPath);}
+RHGHostRef RHGHostCreateRemote(void*window,uint64_t existingDeviceRegistryID,const char*expectedExecutable,const char*diagnosticPath){return RHGHostCreateCommon(window,false,true,existingDeviceRegistryID,expectedExecutable,diagnosticPath);}
 void*RHGHostGetView(RHGHostRef ref){return ref?(__bridge void*)((__bridge RHGHost*)ref).view:NULL;}
 const char*RHGHostService(RHGHostRef ref){return ref?((__bridge RHGHost*)ref).service.UTF8String:NULL;}
 const char*RHGHostNonce(RHGHostRef ref){return ref?((__bridge RHGHost*)ref).nonceString.UTF8String:NULL;}
@@ -488,6 +656,6 @@ void RHGHostSetOverlayVisible(RHGHostRef ref,bool visible){if(ref)RHGMainSync(^{
 bool RHGHostPointerCaptured(RHGHostRef ref){return ref&&NSThread.isMainThread?((__bridge RHGHost*)ref)->pointer.captured:false;}
 void RHGHostStop(RHGHostRef ref){if(ref)RHGMainSync(^{[((__bridge RHGHost*)ref)shutdown];});}
 void RHGHostDestroy(RHGHostRef ref){if(ref){RHGHostStop(ref);CFRelease((CFTypeRef)ref);}}
-void RHGHostResize(RHGHostRef ref){if(ref)RHGMainSync(^{RHGHost*host=(__bridge RHGHost*)ref;host.metal.contentsScale=host.window.backingScaleFactor;if(!host.configured)host.metal.drawableSize=CGSizeMake(MAX(1,host.view.bounds.size.width*host.window.backingScaleFactor),MAX(1,host.view.bounds.size.height*host.window.backingScaleFactor));});}
+void RHGHostResize(RHGHostRef ref){if(ref)RHGMainSync(^{RHGHost*host=(__bridge RHGHost*)ref;if(host.remoteMode){RHGRemoteGeometry(host,NO);return;}host.metal.contentsScale=host.window.backingScaleFactor;if(!host.configured)host.metal.drawableSize=CGSizeMake(MAX(1,host.view.bounds.size.width*host.window.backingScaleFactor),MAX(1,host.view.bounds.size.height*host.window.backingScaleFactor));});}
 uint32_t RHGHostWindowNumber(RHGHostRef ref){return ref?(uint32_t)((__bridge RHGHost*)ref).window.windowNumber:0;}
 int32_t RHGHostGuestPID(RHGHostRef ref){return ref?((__bridge RHGHost*)ref).guestPID:0;}

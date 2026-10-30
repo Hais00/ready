@@ -175,6 +175,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     if args.contains("--fullscreen") { window.toggleFullScreen(nil) }
     refreshLocal()
     MainActor.assumeIsolated { configureSteamNetwork();bootstrapGameStorage() }
+    if let index=args.firstIndex(of:"--launch-installed-game") {
+      // Explicit local launch request, through the same profile, license and
+      // session path as Gioca. Never starts an installation or selects a fallback.
+      DispatchQueue.main.async { [weak self] in
+        guard let self else{return}
+        guard let stored=self.state.games.first(where:{$0.id==args[index+1]}),
+          stored.profileIDs == nil || stored.profileIDs!.contains(self.state.activeProfile) else{
+          self.showError(LauncherError.unavailable("Il gioco richiesto non è nella libreria del profilo."));return
+        }
+        let game=self.state.configured(stored)
+        guard let variant=game.currentVariant,variant.installed else{
+          self.showError(LauncherError.unavailable("La versione selezionata non è installata."));return
+        }
+        self.launchGame(game,variant:variant)
+      }
+    }
   }
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     !CommandLine.arguments.contains("--graphics-self-test") && !session.running
@@ -1177,9 +1193,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 }
 
 let args = CommandLine.arguments
-// Read before NSApplication/device construction. Only the user experiment
-// enables the Ready process HUD; hosted guests explicitly receive HUD=0.
-if args.contains("--metal-hud"){setenv("MTL_HUD_ENABLED","1",1)}
+if let index=args.firstIndex(of:"--launch-installed-game") {
+  guard args.filter({$0=="--launch-installed-game"}).count==1,args.indices.contains(index+1),
+    !args[index+1].isEmpty,!args[index+1].hasPrefix("--"),args[index+1].utf8.count<=1024,
+    !args[index+1].unicodeScalars.contains(where:CharacterSet.controlCharacters.contains) else{
+    FileHandle.standardError.write(Data("--launch-installed-game requires one explicit library game ID.\n".utf8));exit(64)
+  }
+}
+if let index=args.firstIndex(of:"--host-game-transport") {
+  guard args.filter({$0=="--host-game-transport"}).count==1,args.indices.contains(index+1),
+    ["surface","remote-layer"].contains(args[index+1]),args.contains("--host-game-view") else{
+    FileHandle.standardError.write(Data("--host-game-transport requires surface or remote-layer and --host-game-view.\n".utf8));exit(64)
+  }
+}
+// The native remote layer owns the HUD; the surface transport uses Ready's.
+let remoteLayerHUD=args.firstIndex(of:"--host-game-transport").map{args[$0+1]=="remote-layer"} ?? false
+if args.contains("--metal-hud"){setenv("MTL_HUD_ENABLED",remoteLayerHUD ? "0":"1",1)}
 if let index=args.firstIndex(of:"--host-game-view") {
   guard args.filter({$0=="--host-game-view"}).count==1,args.indices.contains(index+1),
     !args[index+1].isEmpty,!args[index+1].hasPrefix("--"),args[index+1].utf8.count<=256,

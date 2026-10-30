@@ -471,8 +471,10 @@ final class SessionManager {
     try checkCancellation(ctx)
     if let presentation {
       gameEnvironment.merge(presentation.environment){_,trusted in trusted}
-      gameEnvironment["MTL_HUD_ENABLED"]="0"
-      gameEnvironment.removeValue(forKey:"MTL_HUD_LOG_ENABLED")
+      if presentation.environment["READY_HOSTED_GAME_TRANSPORT"] != "remote-layer" {
+        gameEnvironment["MTL_HUD_ENABLED"]="0"
+        gameEnvironment.removeValue(forKey:"MTL_HUD_LOG_ENABLED")
+      }
       gameEnvironment.removeValue(forKey:"READY_OVERLAY_LIBRARY")
       gameEnvironment.removeValue(forKey:"DYLD_INSERT_LIBRARIES")
     }
@@ -554,8 +556,12 @@ final class SessionManager {
         guard shim.isFileURL,shim.path.hasPrefix("/"),shim.standardizedFileURL.path==shim.path,shim.resolvingSymlinksInPath().path==shim.path,
           lstat(shim.path,&info)==0,info.st_mode&S_IFMT==S_IFREG,info.st_uid==getuid(),info.st_mode&0o022==0,
           presentation.shimSHA256.utf8.count==64,presentation.shimSHA256.utf8.allSatisfy({(48...57).contains($0)||(97...102).contains($0)}) else{throw LauncherError.invalid("Componente di presentazione non valido.")}
-        let keys:Set<String>=["READY_HOSTED_GAME_SERVICE","READY_HOSTED_GAME_NONCE","MTL_HUD_ENABLED"]
+        let keys:Set<String>=["READY_HOSTED_GAME_SERVICE","READY_HOSTED_GAME_NONCE","MTL_HUD_ENABLED","READY_HOSTED_GAME_TRANSPORT","MTL_HUD_LOG_ENABLED","MTL_HUD_DISABLE_MENU_BAR"]
         guard Set(presentation.environment.keys).isSubset(of:keys),
+          presentation.environment["READY_HOSTED_GAME_TRANSPORT"].map{$0=="remote-layer"} ?? true,
+          presentation.environment["MTL_HUD_ENABLED"].map{["0","1"].contains($0)} ?? true,
+          presentation.environment["MTL_HUD_LOG_ENABLED"].map{$0=="0"} ?? true,
+          presentation.environment["MTL_HUD_DISABLE_MENU_BAR"].map{$0=="1"} ?? true,
           presentation.environment["READY_HOSTED_GAME_SERVICE"].map({!$0.isEmpty && $0.utf8.count<=256 && !$0.utf8.contains(0)})==true,
           presentation.environment["READY_HOSTED_GAME_NONCE"].map({!$0.isEmpty && $0.utf8.count<=256 && !$0.utf8.contains(0)})==true else{throw LauncherError.invalid("Metadati di presentazione non validi.")}
       } catch {onMain{presentation.stop()};throw error}

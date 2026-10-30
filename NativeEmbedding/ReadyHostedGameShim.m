@@ -4,6 +4,8 @@
 #import <Cocoa/Cocoa.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <QuartzCore/CAMetalDisplayLink.h>
+#import <QuartzCore/CATransaction.h>
 #import <IOSurface/IOSurface.h>
 #import <objc/runtime.h>
 #import <os/lock.h>
@@ -15,6 +17,9 @@
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
 #import <stdatomic.h>
+#import <fcntl.h>
+#import <errno.h>
+#import <sys/stat.h>
 #import "ReadyHostedGameProtocol.h"
 #import "RHGScrollEvent.h"
 #import "RHGPerformance.h"
@@ -26,8 +31,14 @@ typedef struct {
     double logicalWidth,logicalHeight,quartzX,quartzY,cocoaX,cocoaY;
 } RHGWindowMetadata;
 static RHGWindowMetadata rhgMetadata;
+static os_unfair_lock rhgMetadataLock=OS_UNFAIR_LOCK_INIT;
+static uint64_t rhgMetadataRequestID;
+static RHGWindowMetadata rhgMetadataSnapshot(void){os_unfair_lock_lock(&rhgMetadataLock);RHGWindowMetadata value=rhgMetadata;os_unfair_lock_unlock(&rhgMetadataLock);return value;}
 static void rhgConnect(void);
 static void rhgInstallMetal(void);
+static BOOL rhgRemoteLayerMode(void);
+static BOOL rhgRemoteTraceEnabled(void);
+static void rhgInstallRemoteLayer(void);
 static void rhgStopRenderActivity(void);
 static IMP rhgOriginal(id object,SEL selector);
 static void rhgHook(Class type,SEL selector,IMP hook);
@@ -89,6 +100,23 @@ static void rhgFail(NSString *reason) {
     if(data){fwrite(data.bytes,1,data.length,stderr);fputc('\n',stderr);fflush(stderr);}
     _exit(77);
 }
+
+static BOOL rhgRemoteLayerMode(void){
+    static BOOL enabled;static dispatch_once_t once;
+    dispatch_once(&once,^{const char *value=getenv("READY_HOSTED_GAME_TRANSPORT");enabled=value&&strcmp(value,"remote-layer")==0;});return enabled;
+}
+static BOOL rhgRemoteTraceEnabled(void){
+    static BOOL enabled;static dispatch_once_t once;
+    dispatch_once(&once,^{const char *value=getenv("RHG_REMOTE_TRACE");enabled=value&&strcmp(value,"1")==0;});return enabled;
+}
+// These declarations describe system runtime selectors; no Apple implementation
+// or proprietary framework binary is bundled with this GPL shim.
+@interface RHGRemoteContext:NSObject
++(void)setAllowsCGSConnections:(BOOL)allowed;
++(instancetype)remoteContextWithOptions:(NSDictionary*)options;
+@property(nonatomic,strong)CALayer *layer;
+@property(nonatomic,readonly)uint32_t contextId;
+@end
 
 @interface RHGWeakWindow:NSObject
 @property(weak)id window;
@@ -163,9 +191,9 @@ static void rhgStopRenderActivity(void){
 static NSApplicationPresentationOptions rhgLogicalPresentationOptions;
 static NSMenu *rhgLogicalMainMenu;
 static NSRect rhgContentRect(void) {
-    double scale=rhgMetadata.scale;
+    RHGWindowMetadata metadata=rhgMetadataSnapshot();double scale=metadata.scale;
     if(!isfinite(scale)||scale<=0)rhgFail(@"invalid-host-scale");
-    return NSMakeRect(0,0,rhgMetadata.logicalWidth,rhgMetadata.logicalHeight);
+    return NSMakeRect(0,0,metadata.logicalWidth,metadata.logicalHeight);
 }
 @implementation RHGLogicalWindow
 -(instancetype)initWithContentRect:(NSRect)rect styleMask:(NSWindowStyleMask)style backing:(NSBackingStoreType)backing defer:(BOOL)defer {
@@ -180,18 +208,18 @@ static NSRect rhgContentRect(void) {
 -(BOOL)isKindOfClass:(Class)type {
     return type==NSWindow.class || (self.requestedClass&&[self.requestedClass isSubclassOfClass:type]) || [super isKindOfClass:type];
 }
--(NSInteger)windowNumber{return rhgMetadata.window;}
+-(NSInteger)windowNumber{return rhgMetadataSnapshot().window;}
 -(NSScreen*)screen{return NSScreen.mainScreen;}
--(CGFloat)backingScaleFactor{return rhgMetadata.scale;}
+-(CGFloat)backingScaleFactor{return rhgMetadataSnapshot().scale;}
 -(NSRect)contentLayoutRect{return rhgContentRect();}
 -(NSRect)contentRectForFrameRect:(NSRect)rect{(void)rect;return rhgContentRect();}
 -(NSRect)frameRectForContentRect:(NSRect)rect{return rect;}
 -(NSRect)convertRectToBacking:(NSRect)rect {CGFloat s=self.backingScaleFactor;return NSMakeRect(rect.origin.x*s,rect.origin.y*s,rect.size.width*s,rect.size.height*s);}
 -(NSRect)convertRectFromBacking:(NSRect)rect {CGFloat s=self.backingScaleFactor;return NSMakeRect(rect.origin.x/s,rect.origin.y/s,rect.size.width/s,rect.size.height/s);}
--(NSPoint)convertPointToScreen:(NSPoint)point {return NSMakePoint(point.x+rhgMetadata.cocoaX,point.y+rhgMetadata.cocoaY);}
--(NSPoint)convertPointFromScreen:(NSPoint)point {return NSMakePoint(point.x-rhgMetadata.cocoaX,point.y-rhgMetadata.cocoaY);}
--(NSRect)convertRectToScreen:(NSRect)rect {return NSOffsetRect(rect,rhgMetadata.cocoaX,rhgMetadata.cocoaY);}
--(NSRect)convertRectFromScreen:(NSRect)rect {return NSOffsetRect(rect,-rhgMetadata.cocoaX,-rhgMetadata.cocoaY);}
+-(NSPoint)convertPointToScreen:(NSPoint)point {RHGWindowMetadata m=rhgMetadataSnapshot();return NSMakePoint(point.x+m.cocoaX,point.y+m.cocoaY);}
+-(NSPoint)convertPointFromScreen:(NSPoint)point {RHGWindowMetadata m=rhgMetadataSnapshot();return NSMakePoint(point.x-m.cocoaX,point.y-m.cocoaY);}
+-(NSRect)convertRectToScreen:(NSRect)rect {RHGWindowMetadata m=rhgMetadataSnapshot();return NSOffsetRect(rect,m.cocoaX,m.cocoaY);}
+-(NSRect)convertRectFromScreen:(NSRect)rect {RHGWindowMetadata m=rhgMetadataSnapshot();return NSOffsetRect(rect,-m.cocoaX,-m.cocoaY);}
 -(void)setContentView:(NSView*)view {
     if(_contentView)objc_setAssociatedObject(_contentView,&rhgViewWindowKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     _contentView=view;
@@ -315,7 +343,7 @@ static id rhgNoTouchBar(id object,SEL selector){(void)object;(void)selector;retu
 static void rhgNoTouchBarSetter(id object,SEL selector,id value){(void)object;(void)selector;(void)value;}
 static BOOL rhgTouchBarMenuDisabled(id object,SEL selector){(void)object;(void)selector;return NO;}
 static void rhgDisableTouchBarMenu(id object,SEL selector,BOOL value){(void)object;(void)selector;(void)value;}
-static id rhgWindowByNumber(id app,SEL selector,NSInteger number){if(!RHG_MAIN_CALLER())return ((id(*)(id,SEL,NSInteger))rhgOriginal(app,selector))(app,selector,number);return number==(NSInteger)rhgMetadata.window?rhgWindow:nil;}
+static id rhgWindowByNumber(id app,SEL selector,NSInteger number){if(!RHG_MAIN_CALLER())return ((id(*)(id,SEL,NSInteger))rhgOriginal(app,selector))(app,selector,number);return number==(NSInteger)rhgMetadataSnapshot().window?rhgWindow:nil;}
 static id rhgViewWindow(NSView *view,SEL selector) {
     for(NSView *v=view;v;v=v.superview){RHGWeakWindow *link=objc_getAssociatedObject(v,&rhgViewWindowKey);if(link.window)return link.window;}
     return ((id(*)(id,SEL))rhgOriginalViewWindow)(view,selector);
@@ -364,12 +392,13 @@ static void rhgInstallWindows(void) {
     if(NSApp)rhgBackgroundActivationPolicy(NSApp,@selector(setActivationPolicy:),NSApplicationActivationPolicyAccessory);
 }
 
-// Every transaction has its own send-once reply right. A single receive queue
-// and mutex bound the initial single-outstanding-frame implementation.
-static mach_port_t rhgPeer,rhgReceive;
+// ACQUIRE has an independent serialized receive lane: a drawable-pool wait
+// must not hold the PRESENT/control/POLL transaction or consume its reply.
+static mach_port_t rhgPeer,rhgReceive,rhgAcquireReceive;
 static uint8_t rhgNonce[RHG_NONCE_BYTES];
-static uint64_t rhgRequestID;
+static _Atomic uint64_t rhgRequestID;
 static pthread_mutex_t rhgRPCLock=PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t rhgAcquireRPCLock=PTHREAD_MUTEX_INITIALIZER;
 static dispatch_semaphore_t rhgFrameAvailable;
 @class RHGDrawable;
 static pthread_mutex_t rhgAcquisitionLock=PTHREAD_MUTEX_INITIALIZER;
@@ -383,23 +412,57 @@ static NSMutableDictionary *rhgOriginals;
 static __weak CAMetalLayer *rhgGameLayer;
 static uint64_t rhgFrames;
 typedef struct {
+    uint64_t requests,lookups,hits,misses,imports,fallbacks,clears;
+    uint32_t entries,maximumEntries;
+    bool enabled;
+} RHGTextureCacheStats;
+typedef struct {
     RHGPerfStats rpcLock[RHG_PERF_OPERATIONS],rpcTotal[RHG_PERF_OPERATIONS];
     RHGPerfStats rpcSend[RHG_PERF_OPERATIONS],rpcReceive[RHG_PERF_OPERATIONS];
-    RHGPerfStats frameCredit,importSurface,residency,completionToWorker,workerQueue,completionBody;
+    RHGPerfStats frameCredit,importSurface,surfaceLookup,textureWrapper,residency,completionToWorker,workerQueue,completionBody;
     bool guestLayerDisplaySyncEnabled;
+    RHGTextureCacheStats textureCache;
 } RHGGuestPerformance;
 static RHGGuestPerformance rhgPerformance;
 static pthread_mutex_t rhgPerfLock=PTHREAD_MUTEX_INITIALIZER;
 static _Atomic bool rhgPerfWritePending;
+static _Atomic int rhgPerfOutputFD=-1;
+static void rhgPerfPrepareOutput(void){
+    if(!RHGPerfProfileEnabled()&&!rhgRemoteTraceEnabled())return;
+    static dispatch_once_t once;
+    dispatch_once(&once,^{
+        // Capture the inherited diagnostic stream before guest startup can
+        // freopen(stderr). No path or additional IPC endpoint is accepted.
+        int fd=fcntl(STDERR_FILENO,F_DUPFD_CLOEXEC,3);
+        if(fd>=0){(void)fcntl(fd,F_SETNOSIGPIPE,1);atomic_store(&rhgPerfOutputFD,fd);}
+    });
+}
+static void rhgPerfWriteLine(int fd,NSData *line){
+    const uint8_t *bytes=line.bytes;size_t offset=0;
+    while(offset<line.length){
+        ssize_t count=write(fd,bytes+offset,line.length-offset);
+        if(count<0&&errno==EINTR)continue;
+        if(count<=0)return;
+        offset+=(size_t)count;
+    }
+}
 static dispatch_queue_t rhgPresentationWorker(void){
     static dispatch_queue_t queue;static dispatch_once_t once;
     dispatch_once(&once,^{queue=dispatch_queue_create("app.ready.hosted.present",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_USER_INTERACTIVE,0));});return queue;
+}
+static dispatch_queue_t rhgGPUCompletionWorker(void){
+    static dispatch_queue_t queue;static dispatch_once_t once;
+    // A short GPU fence notification must not wait behind a synchronous host
+    // PRESENT/ACK. This is a CPU dispatch queue, not another Metal command queue.
+    dispatch_once(&once,^{queue=dispatch_queue_create("app.ready.hosted.gpu-completion",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_USER_INTERACTIVE,0));});return queue;
 }
 static void rhgPerfAdd(RHGPerfStats *metric,uint64_t begin,uint64_t end){
     if(!begin)return;pthread_mutex_lock(&rhgPerfLock);RHGPerfInterval(metric,begin,end);pthread_mutex_unlock(&rhgPerfLock);
 }
 static void rhgPerfReport(uint64_t frames){
-    if(!RHGPerfProfileEnabled()||atomic_exchange(&rhgPerfWritePending,true))return;
+    if(!RHGPerfProfileEnabled())return;
+    int output=atomic_load(&rhgPerfOutputFD);
+    if(output<0||atomic_exchange(&rhgPerfWritePending,true))return;
     pthread_mutex_lock(&rhgPerfLock);RHGGuestPerformance snapshot=rhgPerformance;pthread_mutex_unlock(&rhgPerfLock);
     static dispatch_queue_t writer;static dispatch_once_t once;
     dispatch_once(&once,^{writer=dispatch_queue_create("app.ready.hosted.perf-writer",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_UTILITY,0));});
@@ -409,9 +472,10 @@ static void rhgPerfReport(uint64_t frames){
             operations[RHGPerfOperationName(op)]=@{@"lockWait":RHGPerfStatsJSON(&snapshot.rpcLock[op]),@"total":RHGPerfStatsJSON(&snapshot.rpcTotal[op]),@"send":RHGPerfStatsJSON(&snapshot.rpcSend[op]),@"receive":RHGPerfStatsJSON(&snapshot.rpcReceive[op])};
         }
         NSDictionary *value=@{@"type":@"hosted-guest-performance",@"schema":@1,@"framesAcknowledged":@(frames),@"unit":@"nanoseconds",@"clock":@"mach_continuous_time",@"quantiles":@"log2-bucket-upper-bounds",@"maximumOutstandingFrames":@(rhgFrameDepth),@"guestLayerDisplaySyncEnabled":@(snapshot.guestLayerDisplaySyncEnabled),@"rpc":operations,
-            @"frameCredit":RHGPerfStatsJSON(&snapshot.frameCredit),@"surfaceImport":RHGPerfStatsJSON(&snapshot.importSurface),@"residencySetup":RHGPerfStatsJSON(&snapshot.residency),@"gpuCallbackToWorker":RHGPerfStatsJSON(&snapshot.completionToWorker),@"workerQueueWait":RHGPerfStatsJSON(&snapshot.workerQueue),@"gpuCallbackBody":RHGPerfStatsJSON(&snapshot.completionBody),@"hostGPUCommandBuffers":@0,@"applicationSurfaceCopies":@0};
+            @"frameCredit":RHGPerfStatsJSON(&snapshot.frameCredit),@"surfaceImport":RHGPerfStatsJSON(&snapshot.importSurface),@"surfaceLookup":RHGPerfStatsJSON(&snapshot.surfaceLookup),@"textureWrapper":RHGPerfStatsJSON(&snapshot.textureWrapper),@"residencySetup":RHGPerfStatsJSON(&snapshot.residency),@"gpuCallbackToWorker":RHGPerfStatsJSON(&snapshot.completionToWorker),@"workerQueueWait":RHGPerfStatsJSON(&snapshot.workerQueue),@"gpuCallbackBody":RHGPerfStatsJSON(&snapshot.completionBody),@"hostGPUCommandBuffers":@0,@"applicationSurfaceCopies":@0,
+            @"textureCache":@{@"enabled":@(snapshot.textureCache.enabled),@"requests":@(snapshot.textureCache.requests),@"lookups":@(snapshot.textureCache.lookups),@"hits":@(snapshot.textureCache.hits),@"misses":@(snapshot.textureCache.misses),@"imports":@(snapshot.textureCache.imports),@"fallbacks":@(snapshot.textureCache.fallbacks),@"clears":@(snapshot.textureCache.clears),@"entries":@(snapshot.textureCache.entries),@"maximumEntries":@(snapshot.textureCache.maximumEntries)}};
         NSData *json=[NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingSortedKeys error:nil];
-        if(json&&json.length<=65536){NSMutableData *line=[json mutableCopy];[line appendBytes:"\n" length:1];flockfile(stderr);fwrite(line.bytes,1,line.length,stderr);fflush(stderr);funlockfile(stderr);}
+        if(json&&json.length<=65536){NSMutableData *line=[json mutableCopy];[line appendBytes:"\n" length:1];rhgPerfWriteLine(output,line);}
         atomic_store(&rhgPerfWritePending,false);
     }});
 }
@@ -443,20 +507,29 @@ static void rhgMetadataFromReply(RHGReply reply) {
        !isfinite(reply.backingScale) || reply.backingScale<=0 || reply.backingScale>8 ||
        !isfinite(reply.logicalWidth)||!isfinite(reply.logicalHeight)||reply.logicalWidth<=0||reply.logicalHeight<=0||reply.logicalWidth>16384||reply.logicalHeight>16384||
        !isfinite(reply.quartzOriginX)||!isfinite(reply.quartzOriginY)||!isfinite(reply.cocoaOriginX)||!isfinite(reply.cocoaOriginY))rhgFail(@"invalid-host-metadata");
-    if(rhgMetadata.window && (reply.window!=rhgMetadata.window || reply.deviceRegistryID!=rhgMetadata.deviceRegistryID))rhgFail(@"host-identity-changed");
-    rhgMetadata=(RHGWindowMetadata){reply.window,reply.width,reply.height,reply.pixelFormat,reply.deviceRegistryID,reply.backingScale,reply.logicalWidth,reply.logicalHeight,reply.quartzOriginX,reply.quartzOriginY,reply.cocoaOriginX,reply.cocoaOriginY};
+    os_unfair_lock_lock(&rhgMetadataLock);
+    if(rhgMetadata.window && (reply.window!=rhgMetadata.window || reply.deviceRegistryID!=rhgMetadata.deviceRegistryID)){os_unfair_lock_unlock(&rhgMetadataLock);rhgFail(@"host-identity-changed");}
+    if(reply.requestID>=rhgMetadataRequestID){
+        rhgMetadata=(RHGWindowMetadata){reply.window,reply.width,reply.height,reply.pixelFormat,reply.deviceRegistryID,reply.backingScale,reply.logicalWidth,reply.logicalHeight,reply.quartzOriginX,reply.quartzOriginY,reply.cocoaOriginX,reply.cocoaOriginY};
+        rhgMetadataRequestID=reply.requestID;
+    }
+    os_unfair_lock_unlock(&rhgMetadataLock);
 }
-static RHGReply rhgExchangeLocked(uint32_t operation,RHGRequest fields,uint64_t began,uint64_t locked) {
+static uint64_t rhgNextRequestID(void){
+    uint64_t value=atomic_load_explicit(&rhgRequestID,memory_order_relaxed);
+    for(;;){if(value==UINT64_MAX)rhgFail(@"request-sequence-exhausted");if(atomic_compare_exchange_weak_explicit(&rhgRequestID,&value,value+1,memory_order_relaxed,memory_order_relaxed))return value+1;}
+}
+static RHGReply rhgExchangeLocked(uint32_t operation,RHGRequest fields,uint64_t began,uint64_t locked,pthread_mutex_t *lock,mach_port_t receive) {
     RHGRequest request=fields;
     request.h=(mach_msg_header_t){.msgh_bits=MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND,MACH_MSG_TYPE_MAKE_SEND_ONCE),
-        .msgh_size=sizeof request,.msgh_remote_port=rhgPeer,.msgh_local_port=rhgReceive};
-    request.magic=RHG_MAGIC;request.version=RHG_VERSION;request.op=operation;request.requestID=++rhgRequestID;
+        .msgh_size=sizeof request,.msgh_remote_port=rhgPeer,.msgh_local_port=receive};
+    request.magic=RHG_MAGIC;request.version=RHG_VERSION;request.op=operation;request.requestID=rhgNextRequestID();
     memcpy(request.nonce,rhgNonce,sizeof rhgNonce);
     kern_return_t result=mach_msg(&request.h,MACH_SEND_MSG|MACH_SEND_TIMEOUT,sizeof request,0,MACH_PORT_NULL,3000,MACH_PORT_NULL);
     uint64_t sent=RHGPerfNow();
     if(result)rhgFail(@"host-send-failed");
     RHGReplyReceive received={0};
-    result=mach_msg(&received.message.h,MACH_RCV_MSG|MACH_RCV_TIMEOUT,0,sizeof received,rhgReceive,3000,MACH_PORT_NULL);
+    result=mach_msg(&received.message.h,MACH_RCV_MSG|MACH_RCV_TIMEOUT,0,sizeof received,receive,3000,MACH_PORT_NULL);
     uint64_t receivedAt=RHGPerfNow();
     if(result)rhgFail(@"host-reply-deadline");
     RHGReply reply=received.message;
@@ -474,34 +547,42 @@ static RHGReply rhgExchangeLocked(uint32_t operation,RHGRequest fields,uint64_t 
         }
     } else if(complex) {mach_msg_destroy(&received.message.h);rhgFail(@"unexpected-host-descriptor");}
     if(reply.status==RHG_OK){
-        if(reply.framesInFlight<1||reply.framesInFlight>RHG_MAX_FRAMES_IN_FLIGHT||!reply.configurationGeneration||(operation!=RHG_HELLO&&reply.framesInFlight!=rhgFrameDepth))rhgFail(@"invalid-render-capability-ack");
+        if(rhgRemoteLayerMode()&&reply.framesInFlight!=0)rhgFail(@"invalid-remote-frame-depth-ack");
+        if(!rhgRemoteLayerMode()&&(reply.framesInFlight<1||reply.framesInFlight>RHG_MAX_FRAMES_IN_FLIGHT||!reply.configurationGeneration||(operation!=RHG_HELLO&&reply.framesInFlight!=rhgFrameDepth)))rhgFail(@"invalid-render-capability-ack");
         if(reply.pointerHideCount>1024||reply.pointerAssociated>1||reply.pointerCaptured>1||reply.pointerHiddenUntilMove>1)rhgFail(@"invalid-virtual-pointer-reply");
         if(!isfinite(reply.pointerX)||!isfinite(reply.pointerY)||reply.pointerX<0||reply.pointerX>1||reply.pointerY<0||reply.pointerY>1||
            !isfinite(reply.logicalWidth)||!isfinite(reply.logicalHeight)||reply.logicalWidth<=0||reply.logicalHeight<=0||reply.logicalWidth>16384||reply.logicalHeight>16384||
            !isfinite(reply.cocoaOriginX)||!isfinite(reply.cocoaOriginY))rhgFail(@"invalid-virtual-pointer-position");
+        rhgMetadataFromReply(reply);
+        // An asynchronous ACQUIRE may return after newer control/POLL state.
+        // Its surface metadata is useful, but it must not rewind the pointer.
+        if(operation!=RHG_ACQUIRE){
         // Same coordinate space as logicalWindow.convertPointToScreen:. Host
         // normalized y is top-down; NSEvent.mouseLocation is Cocoa bottom-up.
         NSPoint point=NSMakePoint(reply.cocoaOriginX+reply.pointerX*reply.logicalWidth,
             reply.cocoaOriginY+(1-reply.pointerY)*reply.logicalHeight);
         os_unfair_lock_lock(&rhgPointerLocationLock);rhgPointerScreenLocation=point;os_unfair_lock_unlock(&rhgPointerLocationLock);
         atomic_store(&rhgVirtualHideCount,reply.pointerHideCount);atomic_store(&rhgVirtualHiddenUntilMove,reply.pointerHiddenUntilMove!=0);
+        }
     }
-    pthread_mutex_unlock(&rhgRPCLock);
+    pthread_mutex_unlock(lock);
     if(began){unsigned op=operation<RHG_PERF_OPERATIONS?operation:0;
         rhgPerfAdd(&rhgPerformance.rpcLock[op],began,locked);rhgPerfAdd(&rhgPerformance.rpcSend[op],locked,sent);
         rhgPerfAdd(&rhgPerformance.rpcReceive[op],sent,receivedAt);rhgPerfAdd(&rhgPerformance.rpcTotal[op],began,RHGPerfNow());}
     return reply;
 }
 static RHGReply rhgExchange(uint32_t operation,RHGRequest fields) {
-    uint64_t began=RHGPerfNow();pthread_mutex_lock(&rhgRPCLock);
-    return rhgExchangeLocked(operation,fields,began,RHGPerfNow());
+    uint64_t began=RHGPerfNow();BOOL acquire=operation==RHG_ACQUIRE;
+    pthread_mutex_t *lock=acquire?&rhgAcquireRPCLock:&rhgRPCLock;mach_port_t receive=acquire?rhgAcquireReceive:rhgReceive;
+    pthread_mutex_lock(lock);return rhgExchangeLocked(operation,fields,began,RHGPerfNow(),lock,receive);
 }
 static BOOL rhgTryPoll(RHGReply *reply) {
     uint64_t began=RHGPerfNow();
     // A timer-driven input poll must not queue ahead of pending rendering RPCs.
-    // The shared reply port and strict single-transaction ownership stay intact.
+    // PRESENT/control/POLL share one strictly serialized reply port; ACQUIRE
+    // owns its independent receive lane.
     if(pthread_mutex_trylock(&rhgRPCLock)!=0)return NO;
-    *reply=rhgExchangeLocked(RHG_POLL,(RHGRequest){0},began,RHGPerfNow());return YES;
+    *reply=rhgExchangeLocked(RHG_POLL,(RHGRequest){0},began,RHGPerfNow(),&rhgRPCLock,rhgReceive);return YES;
 }
 static int rhgHex(unsigned char value) {
     if(value>='0'&&value<='9')return value-'0';if(value>='a'&&value<='f')return value-'a'+10;return -1;
@@ -559,7 +640,7 @@ static NSResponder *rhgScrollResponder(RHGLogicalWindow *window,RHGInput input){
 
 static NSPoint rhgEventLocation(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input))return NSMakePoint(input.x,input.y);return ((NSPoint(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
 static id rhgEventWindow(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input))return rhgWindow;return ((id(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
-static NSInteger rhgEventWindowNumber(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input))return rhgMetadata.window;return ((NSInteger(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
+static NSInteger rhgEventWindowNumber(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input))return rhgMetadataSnapshot().window;return ((NSInteger(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
 static void rhgDeliverInput(RHGInput input) {
     RHGLogicalWindow *window=rhgWindow;if(!window)return;
     if(input.type==RHG_FOCUS){
@@ -628,14 +709,16 @@ static void rhgConnect(void) {
         const char *name=getenv("READY_HOSTED_GAME_SERVICE"),*nonce=getenv("READY_HOSTED_GAME_NONCE");
         if(!name || strncmp(name,RHG_SERVICE_PREFIX,strlen(RHG_SERVICE_PREFIX)) || !nonce || strlen(nonce)!=RHG_NONCE_BYTES*2)rhgFail(@"missing-owned-host-configuration");
         for(unsigned i=0;i<RHG_NONCE_BYTES;i++){int a=rhgHex(nonce[i*2]),b=rhgHex(nonce[i*2+1]);if(a<0||b<0)rhgFail(@"invalid-host-capability");rhgNonce[i]=(uint8_t)((a<<4)|b);}
-        if(bootstrap_look_up(bootstrap_port,name,&rhgPeer) || mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&rhgReceive))rhgFail(@"host-lookup-failed");
+        if(bootstrap_look_up(bootstrap_port,name,&rhgPeer) || mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&rhgReceive) || (!rhgRemoteLayerMode()&&mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&rhgAcquireReceive)))rhgFail(@"host-lookup-failed");
         uint32_t wanted=RHG_MAX_FRAMES_IN_FLIGHT;const char *depth=getenv("READY_HOSTED_FRAMES_IN_FLIGHT");
         if(depth){if(!strcmp(depth,"1"))wanted=1;else if(!strcmp(depth,"2"))wanted=2;else rhgFail(@"invalid-frame-depth-policy");}
-        (void)rhgPresentationWorker();rhgRenderLock=[NSLock new];rhgOutstandingFrames=[NSMutableArray new];
-        RHGReply hello=rhgExchange(RHG_HELLO,(RHGRequest){.framesInFlight=wanted});
-        if(hello.framesInFlight!=wanted)rhgFail(@"frame-depth-not-adopted");
-        rhgFrameDepth=hello.framesInFlight;rhgConfigurationGeneration=hello.configurationGeneration;
-        rhgFrameAvailable=dispatch_semaphore_create(rhgFrameDepth);rhgMetadataFromReply(hello);
+        if(!rhgRemoteLayerMode()){(void)rhgPresentationWorker();rhgRenderLock=[NSLock new];rhgOutstandingFrames=[NSMutableArray new];}
+        RHGReply hello=rhgExchange(RHG_HELLO,(RHGRequest){.reserved=rhgRemoteLayerMode()?RHG_TRANSPORT_REMOTE_LAYER:RHG_TRANSPORT_SURFACE,.framesInFlight=rhgRemoteLayerMode()?0:wanted});
+        if(!rhgRemoteLayerMode()){
+            if(hello.framesInFlight!=wanted)rhgFail(@"frame-depth-not-adopted");
+            rhgFrameDepth=hello.framesInFlight;rhgConfigurationGeneration=hello.configurationGeneration;
+            rhgFrameAvailable=dispatch_semaphore_create(rhgFrameDepth);
+        }
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE,0),^{
             for(;;){@autoreleasepool{
                 RHGReply reply={0};if(!rhgTryPoll(&reply)){usleep(8000);continue;}
@@ -865,7 +948,7 @@ static RHGMetal4FenceState *rhgMetal4FenceState(id<MTL4CommandQueue>queue) {
         if(!state){
             state=[RHGMetal4FenceState new];state.deviceID=queue.device.registryID;state.pendingValues=[NSMutableSet new];
             state.event=[queue.device newSharedEvent];if(!state.event)rhgFail(@"metal4-shared-event-unavailable");
-            state.listener=[[MTLSharedEventListener alloc]initWithDispatchQueue:rhgPresentationWorker()];
+            state.listener=[[MTLSharedEventListener alloc]initWithDispatchQueue:rhgGPUCompletionWorker()];
             if(!state.listener)rhgFail(@"metal4-event-listener-unavailable");
             objc_setAssociatedObject(queue,&rhgMetal4FenceStateKey,state,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
@@ -931,9 +1014,9 @@ static id rhgInstallDevice(id<MTLDevice>device) {
     return device;
 }
 static id<MTLDevice>rhgDefaultDevice(void) __attribute__((ns_returns_retained));
-static id<MTLDevice>rhgDefaultDevice(void){return rhgInstallDevice(MTLCreateSystemDefaultDevice());}
+static id<MTLDevice>rhgDefaultDevice(void){id<MTLDevice>device=MTLCreateSystemDefaultDevice();return rhgRemoteLayerMode()?device:rhgInstallDevice(device);}
 static NSArray<id<MTLDevice>>*rhgAllDevices(void) __attribute__((ns_returns_retained));
-static NSArray<id<MTLDevice>>*rhgAllDevices(void){NSArray *devices=MTLCopyAllDevices();for(id device in devices)rhgInstallDevice(device);return devices;}
+static NSArray<id<MTLDevice>>*rhgAllDevices(void){NSArray *devices=MTLCopyAllDevices();if(!rhgRemoteLayerMode())for(id device in devices)rhgInstallDevice(device);return devices;}
 #define RHG_INTERPOSE(replacement,original) __attribute__((used))static struct{const void *replace,*original;}rhg_interpose_##original __attribute__((section("__DATA,__interpose")))={(const void *)&replacement,(const void *)&original}
 #import "RHGSessionScratch.h"
 RHG_INTERPOSE(rhgDefaultDevice,MTLCreateSystemDefaultDevice);
@@ -942,12 +1025,11 @@ static CGError rhgPointerRequest(uint32_t operation,uint32_t action,double x,dou
     rhgConnect();RHGRequest request={0};request.pointerAction=action;request.pointerX=x;request.pointerY=y;
     RHGReply reply=rhgExchange(operation,request);
     if(reply.status!=RHG_OK)return reply.pointerError?(CGError)reply.pointerError:kCGErrorInvalidOperation;
-    rhgMetadataFromReply(reply);rhgVirtualHideCount=reply.pointerHideCount;rhgVirtualHiddenUntilMove=reply.pointerHiddenUntilMove!=0;
     return kCGErrorSuccess; // Authenticated virtual policy ACK; host owns physical capture.
 }
 static CGError rhgAssociateMouse(boolean_t connected){return rhgPointerRequest(RHG_POINTER_ASSOCIATE,connected?1:0,0,0);}
 static CGError rhgWarpMouse(CGPoint point){
-    rhgConnect();double x=(point.x-rhgMetadata.quartzX)/rhgMetadata.logicalWidth,y=(point.y-rhgMetadata.quartzY)/rhgMetadata.logicalHeight;
+    rhgConnect();RHGWindowMetadata metadata=rhgMetadataSnapshot();double x=(point.x-metadata.quartzX)/metadata.logicalWidth,y=(point.y-metadata.quartzY)/metadata.logicalHeight;
     if(!isfinite(x)||!isfinite(y)||x<0||x>1||y<0||y>1)return kCGErrorIllegalArgument;
     return rhgPointerRequest(RHG_POINTER_WARP,0,x,y); // Never move a physical cursor here.
 }
@@ -974,7 +1056,7 @@ static RHGRequest rhgAdoptConfiguration(RHGRequest configure){
     configure.configurationGeneration=rhgConfigurationGeneration;
     if(!rhgConfigured || rhgConfiguredWidth!=configure.width || rhgConfiguredHeight!=configure.height ||
        rhgConfiguredFormat!=configure.pixelFormat || rhgConfiguredDevice!=configure.deviceRegistryID || rhgConfiguredDisplaySync!=configure.displaySyncEnabled) {
-        RHGReply configuration=rhgExchange(RHG_CONFIGURE,configure);rhgMetadataFromReply(configuration);
+        RHGReply configuration=rhgExchange(RHG_CONFIGURE,configure);
         if(configuration.width!=configure.width||configuration.height!=configure.height||configuration.pixelFormat!=configure.pixelFormat||configuration.deviceRegistryID!=configure.deviceRegistryID||configuration.displaySyncEnabled>1||configuration.displaySyncEnabled!=configure.displaySyncEnabled||configuration.configurationGeneration!=rhgConfigurationGeneration+1)rhgFail(@"host-did-not-adopt-layer-configuration");
         rhgConfigurationGeneration=configuration.configurationGeneration;
         rhgConfiguredWidth=configure.width;rhgConfiguredHeight=configure.height;
@@ -983,6 +1065,75 @@ static RHGRequest rhgAdoptConfiguration(RHGRequest configure){
     configure.configurationGeneration=rhgConfigurationGeneration;return configure;
 }
 static RHGRequest rhgAdoptLayerConfiguration(CAMetalLayer*layer){return rhgAdoptConfiguration(rhgReadLayerConfiguration(layer));}
+// Owned only while rhgAcquisitionLock is held. A cached wrapper aliases the
+// existing host surface; it does not retain a CAMetalDrawable or copy pixels.
+@interface RHGImportedTextureEntry:NSObject
+@property IOSurfaceRef surface;
+@property(strong)id<MTLTexture> texture;
+@property(strong)id<MTLDevice> device;
+@property uint64_t generation,deviceID;
+@property uint32_t surfaceID,width,height,pixelFormat;
+@property MTLTextureUsage usage;
+@property MTLStorageMode storageMode;
+@property NSUInteger plane;
+@end
+@implementation RHGImportedTextureEntry
+-(void)dealloc{if(_surface)CFRelease(_surface);}
+@end
+static NSMutableArray<RHGImportedTextureEntry*> *rhgImportedTextures;
+static BOOL rhgTextureCacheEnabled(void){
+    static BOOL enabled;static dispatch_once_t once;
+    dispatch_once(&once,^{const char *value=getenv("RHG_TEXTURE_CACHE");enabled=value&&strcmp(value,"1")==0;});return enabled;
+}
+static void rhgTextureCacheRecord(BOOL enabled,BOOL hit,BOOL imported,BOOL fallback){
+    if(!RHGPerfProfileEnabled())return;
+    pthread_mutex_lock(&rhgPerfLock);RHGTextureCacheStats *stats=&rhgPerformance.textureCache;
+    stats->enabled=enabled;stats->requests++;if(enabled){stats->lookups++;if(hit)stats->hits++;else stats->misses++;}
+    if(imported)stats->imports++;if(fallback)stats->fallbacks++;stats->entries=(uint32_t)rhgImportedTextures.count;
+    if(stats->entries>stats->maximumEntries)stats->maximumEntries=stats->entries;pthread_mutex_unlock(&rhgPerfLock);
+}
+static void rhgClearImportedTextures(void){
+    // Never take the acquisition lock from the presentation worker: CONFIGURE
+    // drains credits before reaching this acquisition-owned cleanup.
+    [rhgRenderLock lock];BOOL outstanding=rhgOutstandingFrames.count!=0;[rhgRenderLock unlock];
+    if(outstanding)rhgFail(@"texture-cache-clear-with-outstanding-frames");
+    [rhgImportedTextures removeAllObjects];
+    if(RHGPerfProfileEnabled()){pthread_mutex_lock(&rhgPerfLock);rhgPerformance.textureCache.clears++;rhgPerformance.textureCache.entries=0;pthread_mutex_unlock(&rhgPerfLock);}
+}
+static id<MTLTexture> rhgTextureForSurface(id<MTLDevice>device,IOSurfaceRef surface,uint64_t generation,uint32_t width,uint32_t height,MTLPixelFormat format,MTLTextureUsage usage){
+    BOOL enabled=rhgTextureCacheEnabled();uint32_t surfaceID=IOSurfaceGetID(surface);uint64_t deviceID=device.registryID;
+    if(enabled){
+        if(!rhgImportedTextures)rhgImportedTextures=[NSMutableArray new];
+        for(NSUInteger i=0;i<rhgImportedTextures.count;i++){
+            RHGImportedTextureEntry *entry=rhgImportedTextures[i];
+            if(entry.surfaceID==surfaceID&&entry.generation==generation&&entry.device==device&&entry.deviceID==deviceID&&entry.width==width&&entry.height==height&&entry.pixelFormat==format&&entry.usage==usage&&entry.storageMode==MTLStorageModeShared&&entry.plane==0){
+                [rhgImportedTextures removeObjectAtIndex:i];[rhgImportedTextures addObject:entry];rhgTextureCacheRecord(YES,YES,NO,NO);return entry.texture;
+            }
+        }
+    }
+    MTLTextureDescriptor *descriptor=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format width:width height:height mipmapped:NO];descriptor.storageMode=MTLStorageModeShared;descriptor.usage=usage;
+    id<MTLTexture> texture=[device newTextureWithDescriptor:descriptor iosurface:surface plane:0];
+    if(!texture||!texture.iosurface||IOSurfaceGetID(texture.iosurface)!=surfaceID)rhgFail(@"same-surface-metal-import-failed");
+    BOOL fallback=NO;
+    if(enabled){
+        if(rhgImportedTextures.count>=3){
+            NSUInteger victim=NSNotFound;[rhgRenderLock lock];
+            for(NSUInteger i=0;i<rhgImportedTextures.count;i++){
+                BOOL active=NO;id<MTLTexture> cached=rhgImportedTextures[i].texture;
+                for(RHGDrawable *frame in rhgOutstandingFrames)if(frame.texture==cached){active=YES;break;}
+                if(!active){victim=i;break;}
+            }
+            [rhgRenderLock unlock];if(victim!=NSNotFound)[rhgImportedTextures removeObjectAtIndex:victim];else fallback=YES;
+        }
+        if(!fallback){RHGImportedTextureEntry *entry=[RHGImportedTextureEntry new];entry.surface=(IOSurfaceRef)CFRetain(surface);entry.texture=texture;entry.device=device;entry.surfaceID=surfaceID;entry.generation=generation;entry.deviceID=deviceID;entry.width=width;entry.height=height;entry.pixelFormat=format;entry.usage=usage;entry.storageMode=MTLStorageModeShared;entry.plane=0;[rhgImportedTextures addObject:entry];}
+    }
+    rhgTextureCacheRecord(enabled,NO,YES,fallback);return texture;
+}
+static IOSurfaceRef rhgValidatedAcquireSurface(CAMetalLayer *layer,RHGReply reply,RHGRequest configure){
+    IOSurfaceRef surface=IOSurfaceLookupFromMachPort(reply.port.name);mach_port_deallocate(mach_task_self(),reply.port.name);
+    if(!surface||IOSurfaceGetID(surface)!=reply.surfaceID||reply.window!=rhgMetadataSnapshot().window||reply.pixelFormat!=layer.pixelFormat||reply.width!=configure.width||reply.height!=configure.height||reply.deviceRegistryID!=layer.device.registryID||IOSurfaceGetWidth(surface)!=reply.width||IOSurfaceGetHeight(surface)!=reply.height)rhgFail(@"host-surface-metadata-mismatch");
+    return surface;
+}
 static id rhgNextDrawable(CAMetalLayer *layer,SEL selector) {
     (void)selector;rhgConnect();
     if(!layer.device || !rhgFormat(layer.pixelFormat))rhgFail(@"unsupported-layer-device-or-format");
@@ -995,22 +1146,20 @@ static id rhgNextDrawable(CAMetalLayer *layer,SEL selector) {
     unsigned needed=changed?rhgFrameDepth:1;
     for(unsigned i=0;i<needed;i++)if(dispatch_semaphore_wait(rhgFrameAvailable,deadline))rhgFail(@"outstanding-frame-deadline");
     rhgPerfAdd(&rhgPerformance.frameCredit,creditBegan,RHGPerfNow());
+    if(changed)rhgClearImportedTextures();
     RHGRequest configure=rhgAdoptConfiguration(wanted);
     for(unsigned i=1;i<needed;i++)dispatch_semaphore_signal(rhgFrameAvailable);
     RHGReply reply=rhgExchange(RHG_ACQUIRE,(RHGRequest){.configurationGeneration=rhgConfigurationGeneration});
     if(reply.configurationGeneration!=rhgConfigurationGeneration)rhgFail(@"acquire-generation-changed");
     uint64_t importBegan=RHGPerfNow();
-    IOSurfaceRef surface=IOSurfaceLookupFromMachPort(reply.port.name);mach_port_deallocate(mach_task_self(),reply.port.name);
-    if(!surface||IOSurfaceGetID(surface)!=reply.surfaceID||reply.window!=rhgMetadata.window||reply.pixelFormat!=layer.pixelFormat||
-       reply.width!=configure.width||reply.height!=configure.height||reply.deviceRegistryID!=layer.device.registryID||
-       IOSurfaceGetWidth(surface)!=reply.width||IOSurfaceGetHeight(surface)!=reply.height)rhgFail(@"host-surface-metadata-mismatch");
-    rhgMetadataFromReply(reply); // Refresh scale without another configuration RPC.
-    MTLTextureDescriptor *descriptor=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:layer.pixelFormat width:reply.width height:reply.height mipmapped:NO];
-    descriptor.storageMode=MTLStorageModeShared;descriptor.usage=MTLTextureUsageRenderTarget;
-    if(!layer.framebufferOnly)descriptor.usage|=MTLTextureUsageShaderRead|MTLTextureUsageShaderWrite;
-    id<MTLTexture>texture=[layer.device newTextureWithDescriptor:descriptor iosurface:surface plane:0];
-    if(!texture||!texture.iosurface||IOSurfaceGetID(texture.iosurface)!=reply.surfaceID)rhgFail(@"same-surface-metal-import-failed");
-    rhgPerfAdd(&rhgPerformance.importSurface,importBegan,RHGPerfNow());
+    IOSurfaceRef surface=rhgValidatedAcquireSurface(layer,reply,configure);
+    rhgPerfAdd(&rhgPerformance.surfaceLookup,importBegan,RHGPerfNow());
+    // The validated exchange already published the coherent host metadata.
+    MTLTextureUsage usage=MTLTextureUsageRenderTarget;if(!layer.framebufferOnly)usage|=MTLTextureUsageShaderRead|MTLTextureUsageShaderWrite;
+    uint64_t wrapperBegan=RHGPerfNow();
+    id<MTLTexture>texture=rhgTextureForSurface(layer.device,surface,reply.configurationGeneration,reply.width,reply.height,layer.pixelFormat,usage);
+    uint64_t wrapperEnded=RHGPerfNow();rhgPerfAdd(&rhgPerformance.textureWrapper,wrapperBegan,wrapperEnded);
+    rhgPerfAdd(&rhgPerformance.importSurface,importBegan,wrapperEnded);
     RHGDrawable *drawable=[RHGDrawable new];drawable.texture=texture;drawable.layer=layer;drawable.importedSurface=surface;
     if(@available(macOS 15.0,*)) {
         uint64_t residencyBegan=RHGPerfNow();
@@ -1023,9 +1172,141 @@ static id rhgNextDrawable(CAMetalLayer *layer,SEL selector) {
     }
     drawable.frameID=reply.frameID;drawable.surfaceID=reply.surfaceID;drawable.generation=reply.configurationGeneration;rhgRegisterDrawable(drawable);rhgFrames++;pthread_mutex_unlock(&rhgAcquisitionLock);return drawable;
 }
+// Opt-in remote-layer transport. CoreAnimation owns the native drawable pool
+// and presentation timeline; this module never imports or substitutes textures.
+static RHGRemoteContext *rhgRemoteContext;
+static NSRecursiveLock *rhgRemoteLock;
+static IMP rhgRemoteOriginalNext,rhgRemoteOriginalUpdate,rhgRemoteOriginalInit;
+static _Atomic bool rhgRemoteFirstArmed,rhgRemoteFirstSent;
+static _Atomic unsigned rhgRemoteObserved,rhgRemoteCallbacks;
+static char rhgRemoteDrawableMarker;
+static id rhgRemoteNextDrawable(CAMetalLayer *layer,SEL selector);
+static id rhgRemoteUpdateDrawable(CAMetalDisplayLinkUpdate *update,SEL selector);
+static id rhgRemoteDisplayLinkInit(id self __attribute__((ns_consumed)),SEL selector,CAMetalLayer *layer) __attribute__((ns_returns_retained));
+static void rhgRemoteRestore(Method method,IMP ours,IMP original){
+    if(method&&original&&method_getImplementation(method)==ours)method_setImplementation(method,original);
+}
+static void rhgRemoteRestoreObservers(void){
+    rhgRemoteRestore(class_getInstanceMethod(CAMetalLayer.class,@selector(nextDrawable)),(IMP)rhgRemoteNextDrawable,rhgRemoteOriginalNext);
+    rhgRemoteRestore(class_getInstanceMethod(CAMetalDisplayLinkUpdate.class,@selector(drawable)),(IMP)rhgRemoteUpdateDrawable,rhgRemoteOriginalUpdate);
+    rhgRemoteRestore(class_getInstanceMethod(CAMetalDisplayLink.class,@selector(initWithMetalLayer:)),(IMP)rhgRemoteDisplayLinkInit,rhgRemoteOriginalInit);
+}
+static void rhgRemoteAttach(CAMetalLayer *layer){
+    if(!layer)rhgFail(@"remote-layer-missing-native-layer");
+    [rhgRemoteLock lock];
+    if(rhgGameLayer&&rhgGameLayer!=layer){[rhgRemoteLock unlock];rhgFail(@"multiple-swapchain-layers");}
+    rhgGameLayer=layer;
+    // Retain the existing game-owned tree, preserving its Metal sublayers and
+    // native presentation objects. Never remove the layer from its superlayer.
+    CALayer *root=layer;while(root.superlayer)root=root.superlayer;
+    if(!rhgRemoteContext){
+        rhgConnect();Class cls=NSClassFromString(@"CAContext");
+        if(!cls||![cls respondsToSelector:@selector(remoteContextWithOptions:)]||![cls respondsToSelector:@selector(setAllowsCGSConnections:)])rhgFail(@"remote-layer-system-api-unavailable");
+        [(id)cls setAllowsCGSConnections:NO];
+        NSString * __unsafe_unretained const *option=(NSString * __unsafe_unretained const*)dlsym(RTLD_DEFAULT,"kCAContextCIFilterBehavior");
+        rhgRemoteContext=[(id)cls remoteContextWithOptions:option?@{*option:@"ignore"}:@{}];
+        if(!rhgRemoteContext||!rhgRemoteContext.contextId)rhgFail(@"remote-layer-context-unavailable");
+        rhgRemoteContext.layer=root;[CATransaction flush];
+        RHGReply attached=rhgExchange(RHG_REMOTE_ATTACH,(RHGRequest){.surfaceID=rhgRemoteContext.contextId});
+        if(attached.surfaceID!=rhgRemoteContext.contextId)rhgFail(@"remote-layer-context-ack-mismatch");
+    }else if(rhgRemoteContext.layer!=root){rhgRemoteContext.layer=root;[CATransaction flush];}
+    [rhgRemoteLock unlock];
+}
+static id rhgRemoteNumber(double value){return isfinite(value)?@(value):NSNull.null;}
+static NSDictionary *rhgRemoteGeometry(unsigned count){
+    if(!rhgRemoteTraceEnabled())return nil;
+    NSMutableArray *chain=[NSMutableArray new];
+    for(CALayer *layer=rhgGameLayer;layer&&chain.count<8;layer=layer.superlayer){
+        CGRect bounds=layer.bounds,frame=layer.frame;CGPoint position=layer.position,anchor=layer.anchorPoint;
+        [chain addObject:@{@"class":rhgSafeMetadata(class_getName(object_getClass(layer)))?:@"unavailable",
+            @"bounds":@[rhgRemoteNumber(bounds.origin.x),rhgRemoteNumber(bounds.origin.y),rhgRemoteNumber(bounds.size.width),rhgRemoteNumber(bounds.size.height)],
+            @"frame":@[rhgRemoteNumber(frame.origin.x),rhgRemoteNumber(frame.origin.y),rhgRemoteNumber(frame.size.width),rhgRemoteNumber(frame.size.height)],
+            @"position":@[rhgRemoteNumber(position.x),rhgRemoteNumber(position.y)],@"anchor":@[rhgRemoteNumber(anchor.x),rhgRemoteNumber(anchor.y)],
+            @"opacity":rhgRemoteNumber(layer.opacity),@"hidden":@(layer.hidden),@"masksToBounds":@(layer.masksToBounds),@"contentsScale":rhgRemoteNumber(layer.contentsScale),@"geometryFlipped":@(layer.geometryFlipped)}];
+    }
+    CGSize drawableSize=rhgGameLayer.drawableSize;
+    return @{@"type":@"hosted-remote-startup",@"schema":@1,@"observation":@(count+1),@"layerChain":chain,@"drawableSize":@[rhgRemoteNumber(drawableSize.width),rhgRemoteNumber(drawableSize.height)]};
+}
+static void rhgRemoteWriteGeometry(NSDictionary *geometry){
+    if(!geometry)return;int output=atomic_load(&rhgPerfOutputFD);if(output<0)return;
+    // Trace-only startup diagnostics must survive the deliberate refusal path's
+    // _exit. At most eight bounded rows are written before normal gameplay;
+    // no diagnostic write occurs in the native frame loop after handoff.
+    NSData *json=[NSJSONSerialization dataWithJSONObject:geometry options:NSJSONWritingSortedKeys error:nil];
+    if(json&&json.length<=16384){NSMutableData *line=[json mutableCopy];[line appendBytes:"\n" length:1];rhgPerfWriteLine(output,line);}
+}
+static void rhgRemoteTraceConstructor(void){
+    if(!rhgRemoteTraceEnabled())return;
+    int output=atomic_load(&rhgPerfOutputFD);struct stat value={0};BOOL valid=output>=0&&fstat(output,&value)==0;
+    NSDictionary *row=@{@"type":@"hosted-remote-trace-status",@"schema":@1,@"enabled":@YES,@"sinkAvailable":@(valid),@"sinkRegularFile":@(valid&&S_ISREG(value.st_mode)),@"sinkCloseOnExec":@(output>=0&&(fcntl(output,F_GETFD)&FD_CLOEXEC)!=0)};
+    NSData *json=[NSJSONSerialization dataWithJSONObject:row options:NSJSONWritingSortedKeys error:nil];
+    if(json&&json.length<=1024){NSMutableData *line=[json mutableCopy];[line appendBytes:"\n" length:1];rhgPerfWriteLine(output>=0?output:STDERR_FILENO,line);}
+}
+static void rhgRemoteObserveDrawable(id<CAMetalDrawable>drawable){
+    if(!drawable||atomic_load(&rhgRemoteFirstSent))return;
+    // DisplayLink/update getters can return the same native drawable repeatedly.
+    // Count its object+drawableID once, rather than charging each getter read
+    // against the bounded startup-frame budget. No drawable is retained here.
+    @synchronized(drawable){
+        NSNumber *observed=objc_getAssociatedObject(drawable,&rhgRemoteDrawableMarker);
+        uint64_t identity=drawable.drawableID;
+        if(observed&&observed.unsignedLongLongValue==identity)return;
+        objc_setAssociatedObject(drawable,&rhgRemoteDrawableMarker,@(identity),OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    unsigned count=atomic_fetch_add(&rhgRemoteObserved,1);
+    if(count>=8)return;
+    atomic_store(&rhgRemoteFirstArmed,true);
+    if(count==0)dispatch_after(dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC),rhgGPUCompletionWorker(),^{
+        if(!atomic_load(&rhgRemoteFirstSent)){rhgRemoteRestoreObservers();rhgFail(@"remote-layer-presented-startup-timeout");}
+    });
+    id<MTLTexture> texture=drawable.texture;
+    if(!texture||!texture.width||!texture.height||texture.width>8192||texture.height>8192||!rhgFormat(texture.pixelFormat)||!texture.device.registryID)rhgFail(@"remote-layer-invalid-native-drawable");
+    RHGRequest first={.surfaceID=rhgRemoteContext.contextId,.width=(uint32_t)texture.width,.height=(uint32_t)texture.height,.pixelFormat=(uint32_t)texture.pixelFormat,.deviceRegistryID=texture.device.registryID};
+    rhgRemoteWriteGeometry(rhgRemoteGeometry(count));
+    [drawable addPresentedHandler:^(id<MTLDrawable>native){
+        // A zero timestamp denotes a dropped/warmup frame. It must not uncover
+        // Ready or be described as GPU-complete/on-glass presentation.
+        double presented=native.presentedTime;
+        unsigned callbacks=atomic_fetch_add(&rhgRemoteCallbacks,1)+1;
+        if(isfinite(presented)&&presented>0&&!atomic_exchange(&rhgRemoteFirstSent,true)){
+            rhgRemoteRestoreObservers();
+            dispatch_async(rhgGPUCompletionWorker(),^{@autoreleasepool{RHGReply accepted=rhgExchange(RHG_REMOTE_FIRST_FRAME,first);if(accepted.surfaceID!=first.surfaceID)rhgFail(@"remote-layer-context-ack-mismatch");}});
+        }else if(callbacks==8&&!atomic_load(&rhgRemoteFirstSent))rhgFail(@"remote-layer-no-presented-startup-frame");
+    }];
+    // Bound startup observation even if presentation callbacks run later.
+    if(count==7)rhgRemoteRestoreObservers();
+}
+static id rhgRemoteNextDrawable(CAMetalLayer *layer,SEL selector){
+    rhgRemoteAttach(layer);
+    id<CAMetalDrawable>drawable=((id(*)(id,SEL))rhgRemoteOriginalNext)(layer,selector);
+    rhgRemoteObserveDrawable(drawable);return drawable;
+}
+static id rhgRemoteUpdateDrawable(CAMetalDisplayLinkUpdate *update,SEL selector){
+    if(rhgGameLayer)rhgRemoteAttach(rhgGameLayer);
+    id<CAMetalDrawable>drawable=((id(*)(id,SEL))rhgRemoteOriginalUpdate)(update,selector);
+    if(!rhgGameLayer)rhgFail(@"remote-layer-display-link-not-attached");
+    rhgRemoteObserveDrawable(drawable);return drawable;
+}
+typedef id(*RHGRemoteInit)(id __attribute__((ns_consumed)),SEL,CAMetalLayer*) __attribute__((ns_returns_retained));
+static id rhgRemoteDisplayLinkInit(id self __attribute__((ns_consumed)),SEL selector,CAMetalLayer *layer){
+    rhgRemoteAttach(layer);
+    id link=((RHGRemoteInit)rhgRemoteOriginalInit)(self,selector,layer);
+    rhgRemoteRestore(class_getInstanceMethod(CAMetalDisplayLink.class,@selector(initWithMetalLayer:)),(IMP)rhgRemoteDisplayLinkInit,rhgRemoteOriginalInit);
+    return link;
+}
+static void rhgInstallRemoteLayer(void){
+    rhgRemoteLock=[NSRecursiveLock new];
+    Method next=class_getInstanceMethod(CAMetalLayer.class,@selector(nextDrawable));
+    Method update=class_getInstanceMethod(CAMetalDisplayLinkUpdate.class,@selector(drawable));
+    Method init=class_getInstanceMethod(CAMetalDisplayLink.class,@selector(initWithMetalLayer:));
+    if(!next||!update||!init)rhgFail(@"remote-layer-native-observer-api-unavailable");
+    rhgRemoteOriginalNext=method_setImplementation(next,(IMP)rhgRemoteNextDrawable);
+    rhgRemoteOriginalUpdate=method_setImplementation(update,(IMP)rhgRemoteUpdateDrawable);
+    rhgRemoteOriginalInit=method_setImplementation(init,(IMP)rhgRemoteDisplayLinkInit);
+}
 static void rhgInstallMetal(void) {
     rhgPrepareHookStorage();
-    rhgReplace(CAMetalLayer.class,@selector(nextDrawable),(IMP)rhgNextDrawable);
+    if(rhgRemoteLayerMode())rhgInstallRemoteLayer();else rhgReplace(CAMetalLayer.class,@selector(nextDrawable),(IMP)rhgNextDrawable);
     rhgHook(object_getClass(NSEvent.class),@selector(mouseLocation),(IMP)rhgMouseLocation);
     rhgHook(NSEvent.class,@selector(deltaX),(IMP)rhgEventDelta);rhgHook(NSEvent.class,@selector(deltaY),(IMP)rhgEventDelta);
     rhgHook(NSEvent.class,@selector(scrollingDeltaX),(IMP)rhgEventDelta);rhgHook(NSEvent.class,@selector(scrollingDeltaY),(IMP)rhgEventDelta);
@@ -1049,5 +1330,6 @@ static void rhgInstallMetal(void) {
 __attribute__((constructor))static void rhgInstall(void) {@autoreleasepool{
     const char *service=getenv("READY_HOSTED_GAME_SERVICE"),*nonce=getenv("READY_HOSTED_GAME_NONCE");
     if(!service||!nonce)rhgFail(@"explicit-host-capability-required");
+    rhgPerfPrepareOutput();rhgRemoteTraceConstructor();
     rhgInstallSessionScratch();rhgInstallMetal();rhgInstallWindows();
 }}

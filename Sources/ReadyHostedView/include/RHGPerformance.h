@@ -7,7 +7,7 @@
 #include <limits.h>
 #include <math.h>
 #define RHG_PERF_BUCKETS 64
-#define RHG_PERF_OPERATIONS 10
+#define RHG_PERF_OPERATIONS 12
 /* Fixed-size log2 nanosecond histogram. Percentiles are bucket upper bounds,
  * clamped to the observed maximum, never exact per-frame samples. */
 typedef struct {
@@ -71,7 +71,7 @@ static inline void RHGPerfInterval(RHGPerfStats *s,uint64_t begin,uint64_t end){
  dispatch_once(&once,^{mach_timebase_info(&base);});RHGPerfAddTicks(s,begin,end,base.numer,base.denom);
 }
 static inline NSString *RHGPerfOperationName(unsigned op){
- switch(op){case 1:return @"hello";case 2:return @"configure";case 3:return @"acquire";case 4:return @"present";case 5:return @"poll";case 6:return @"done";case 7:return @"pointer_associate";case 8:return @"pointer_warp";case 9:return @"pointer_cursor";default:return @"unknown";}
+ switch(op){case 1:return @"hello";case 2:return @"configure";case 3:return @"acquire";case 4:return @"present";case 5:return @"poll";case 6:return @"done";case 7:return @"pointer_associate";case 8:return @"pointer_warp";case 9:return @"pointer_cursor";case 10:return @"remote_attach";case 11:return @"remote_first_frame";default:return @"unknown";}
 }
 static inline NSDictionary *RHGPerfStatsJSON(const RHGPerfStats *s){
  NSMutableArray *hist=[NSMutableArray arrayWithCapacity:RHG_PERF_BUCKETS];

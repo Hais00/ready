@@ -143,6 +143,10 @@ import QuartzCore
   private var onFirstFrame:(()->Void)?
   private var captureFacts=[String:Any]()
   private var previousCanvasInteraction:Bool?
+  private var previousCanvasAlpha:CGFloat?
+  private var previousCanvasLayerOpacity:Float?
+  private var previousCanvasFrame:NSRect?
+  private var previousCanvasAutoresizing:NSView.AutoresizingMask?
   private var overlay:HostedGameOverlay?
   private var onQuit:()->Void
   var active:Bool { handle != nil }
@@ -151,7 +155,7 @@ import QuartzCore
     self.onQuit=onQuit
   }
 
-  func prepare(executable:URL,shim:URL,diagnostics:URL,metalHUD:Bool,exclusive:Bool=false,
+  func prepare(executable:URL,shim:URL,diagnostics:URL,metalHUD:Bool,exclusive:Bool=false,remoteLayer:Bool=false,
                completion:@escaping(Result<SessionGamePresentation?,Error>)->Void) {
     guard pending==nil,handle==nil,let window else {
       completion(.failure(LauncherError.busy));return
@@ -163,6 +167,7 @@ import QuartzCore
     let digest:String
     do{digest=try Self.hash(shim)}catch{completion(.failure(error));return}
     self.diagnostics=diagnostics;self.exclusiveRequested=exclusive
+    captureFacts["renderTransport"]=remoteLayer ? "remote-layer":"surface"
     if let canvas{previousCanvasInteraction=canvas.interactionEnabled;canvas.interactionEnabled=false}
     pending=completion
     let originalWindowNumber=window.windowNumber
@@ -181,7 +186,10 @@ import QuartzCore
       if let data=try?JSONSerialization.data(withJSONObject:placement,options:[.sortedKeys]) {
         try?AtomicFile.writePrivate(data,to:diagnostics.appendingPathExtension("placement.json"))
       }
-      guard let host=RHGHostCreate(Unmanaged.passUnretained(window).toOpaque(),metalHUD,executable.path,diagnostics.path) else {
+      let host=remoteLayer
+        ? RHGHostCreateRemote(Unmanaged.passUnretained(window).toOpaque(),self.canvas?.device.registryID ?? 0,executable.path,diagnostics.path)
+        : RHGHostCreate(Unmanaged.passUnretained(window).toOpaque(),metalHUD,executable.path,diagnostics.path)
+      guard let host else {
         self.finish(.failure(LauncherError.unavailable("La superficie diretta di Ready non è disponibile.")));return
       }
       guard let rawView=RHGHostGetView(host),let service=RHGHostService(host),let nonce=RHGHostNonce(host) else{
@@ -205,13 +213,32 @@ import QuartzCore
       // Keep the existing rendered launcher above the host layer until the
       // first validated, GPU-complete PRESENT can replace it atomically.
       if let canvas=self.canvas {
+        // Keep the remote layer eligible for its first native display-link
+        // update while the loading artwork remains visually opaque. Removed
+        // at handoff; no translucent launcher layer survives during gameplay.
+        if remoteLayer {
+          self.previousCanvasAlpha=canvas.alphaValue
+          self.previousCanvasLayerOpacity=canvas.layer?.opacity
+          canvas.alphaValue=0.999;canvas.layer?.opacity=0.999
+        }
         canvas.frame=view.bounds;canvas.autoresizingMask=[.width,.height]
+        if remoteLayer&&CommandLine.arguments.contains("--host-remote-loading-gap") {
+          self.previousCanvasFrame=canvas.frame;self.previousCanvasAutoresizing=canvas.autoresizingMask
+          canvas.autoresizingMask=[.width]
+          canvas.setFrameSize(NSSize(width:canvas.frame.width,height:max(1,canvas.frame.height-1)))
+          self.captureFacts["startupLoadingGapPoints"]=1
+        }
         view.addSubview(canvas)
       }
       window.makeKeyAndOrderFront(nil)
       view.layoutSubtreeIfNeeded();window.displayIfNeeded();CATransaction.flush()
-      let environment=["READY_HOSTED_GAME_SERVICE":String(cString:service),
-        "READY_HOSTED_GAME_NONCE":String(cString:nonce),"MTL_HUD_ENABLED":"0"]
+      var environment=["READY_HOSTED_GAME_SERVICE":String(cString:service),
+        "READY_HOSTED_GAME_NONCE":String(cString:nonce),"MTL_HUD_ENABLED":remoteLayer&&metalHUD ? "1":"0"]
+      if remoteLayer {
+        environment["READY_HOSTED_GAME_TRANSPORT"]="remote-layer"
+        environment["MTL_HUD_LOG_ENABLED"]="0"
+        environment["MTL_HUD_DISABLE_MENU_BAR"]="1"
+      }
       let lease=SessionGamePresentation(environment:environment,shim:shim,shimSHA256:digest,
         keepLauncherWindow:true,stop:{[weak self]in MainActor.assumeIsolated{self?.stop()}},
         overlay:SessionPresentationOverlay(
@@ -241,6 +268,9 @@ import QuartzCore
     isLoading=false
     onFirstFrame?();onFirstFrame=nil
     if let canvas,canvas.superview === hostView{canvas.removeFromSuperview()}
+    if let previousCanvasAlpha{canvas?.alphaValue=previousCanvasAlpha;self.previousCanvasAlpha=nil}
+    if let previousCanvasLayerOpacity{canvas?.layer?.opacity=previousCanvasLayerOpacity;self.previousCanvasLayerOpacity=nil}
+    restoreCanvasLayout()
     if let hostView{window?.makeFirstResponder(hostView)}
     if let window,let hostView {
       overlay=HostedGameOverlay(window:window,container:hostView,gameResponder:hostView,
@@ -337,6 +367,13 @@ import QuartzCore
   }
   private func restoreCanvasInteraction(){
     if let previousCanvasInteraction{canvas?.interactionEnabled=previousCanvasInteraction;self.previousCanvasInteraction=nil}
+    if let previousCanvasAlpha{canvas?.alphaValue=previousCanvasAlpha;self.previousCanvasAlpha=nil}
+    if let previousCanvasLayerOpacity{canvas?.layer?.opacity=previousCanvasLayerOpacity;self.previousCanvasLayerOpacity=nil}
+    restoreCanvasLayout()
+  }
+  private func restoreCanvasLayout(){
+    if let previousCanvasFrame{canvas?.frame=previousCanvasFrame;self.previousCanvasFrame=nil}
+    if let previousCanvasAutoresizing{canvas?.autoresizingMask=previousCanvasAutoresizing;self.previousCanvasAutoresizing=nil}
   }
   private func recordCapture(phase:String){
     guard let diagnostics else{return}
@@ -389,7 +426,8 @@ extension AppDelegate {
       }else{shim=project.appendingPathComponent("Build/libReadyHostedGame.dylib")}
       controller.prepare(executable:executable,shim:shim,
         diagnostics:paths.logs.appendingPathComponent("hosted-game-"+sessionID.uuidString.lowercased()+".jsonl"),
-        metalHUD:args.contains("--metal-hud"),exclusive:args.contains("--exclusive-hosted-view"),completion:completion)
+        metalHUD:args.contains("--metal-hud"),exclusive:args.contains("--exclusive-hosted-view"),
+        remoteLayer:args.firstIndex(of:"--host-game-transport").map{args[$0+1]=="remote-layer"} ?? false,completion:completion)
     }catch{completion(.failure(error))}
   }
 }

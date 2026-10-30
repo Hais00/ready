@@ -16,6 +16,7 @@
 @property(strong)NSMutableArray *slots;
 @property uint64_t configurationGeneration;
 @property BOOL configured;
+@property BOOL acquirePending;
 @property unsigned changes;
 @end
 @implementation RHGHost

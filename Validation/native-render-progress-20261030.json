@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "date": "2026-10-30",
+  "scope": "Progress checkpoint, not completed native performance parity",
+  "method": "CLI-only launch and monitoring; Metal HUD on, HUD logging off, no screen capture",
+  "runs": {
+    "native-vsync60": {
+      "averageFPS": 36.9237174987793,
+      "durationSeconds": 64.21347045898438,
+      "frameCount": 2371,
+      "engineFrameMilliseconds": {
+        "mean": 27.08301982285955,
+        "p50": 33.23,
+        "p95": 33.68,
+        "p99": 49.83,
+        "maximum": 83.47,
+        "over50ms": 20,
+        "over100ms": 0
+      },
+      "sourceHashes": {
+        "summary.json": "5719de61ec40758f8bab79d6d52e9602246711ba829fdbdb0fe16495d7b8b585",
+        "frames.csv": "a67d51ee894e705dd91b92bfcb4ba584379bbf34a0e632390138ab49fc4fd4cb"
+      }
+    },
+    "hosted-vsync60-profile": {
+      "averageFPS": 29.87809944152832,
+      "durationSeconds": 64.22764587402344,
+      "frameCount": 1919,
+      "engineFrameMilliseconds": {
+        "mean": 33.46979155810318,
+        "p50": 33.33,
+        "p95": 33.78,
+        "p99": 36.71,
+        "maximum": 98.35,
+        "over50ms": 6,
+        "over100ms": 0
+      },
+      "sourceHashes": {
+        "summary.json": "347e0ce5b9b9811df0f42883e56fc88b90f0b2f055d844291503d947ef28cc46",
+        "frames.csv": "3d6ef12152369a72dcb30861360d062ee280235ffd314d4c4f6e7e3ca776326e"
+      }
+    },
+    "hosted-vsync60-reset": {
+      "averageFPS": 29.916393280029297,
+      "durationSeconds": 64.24571228027344,
+      "frameCount": 1922,
+      "engineFrameMilliseconds": {
+        "mean": 33.42665972944849,
+        "p50": 33.33,
+        "p95": 33.97,
+        "p99": 49.67,
+        "maximum": 82.94,
+        "over50ms": 11,
+        "over100ms": 0
+      },
+      "sourceHashes": {
+        "summary.json": "f45d9dfb82992d7e91c2d17bb7ca24d2a1e29238991d48702e3bfe6d34ee2de3",
+        "frames.csv": "ac5c7ccd55bf05db601d04e288b53927f4a6c7a1bac910b8ce0baca786561dce"
+      }
+    },
+    "hosted-vsync60-async-profile": {
+      "averageFPS": 34.88744354248047,
+      "durationSeconds": 64.26380920410156,
+      "frameCount": 2242,
+      "engineFrameMilliseconds": {
+        "mean": 28.670892060660126,
+        "p50": 33.25,
+        "p95": 49.61,
+        "p99": 50.98,
+        "maximum": 99.74,
+        "over50ms": 91,
+        "over100ms": 0
+      },
+      "sourceHashes": {
+        "summary.json": "044d778c4f573e68ed1fb7f3c521386519ed89cc9354fc69b7396eba18a31247",
+        "frames.csv": "4d156eb94cf4d4469763eede75eff171cca2c5fd1654e2f78064e5aec8f97f74"
+      }
+    },
+    "hosted-vsync60-cache-profile": {
+      "averageFPS": 34.974586486816406,
+      "durationSeconds": 64.24665069580078,
+      "frameCount": 2247,
+      "engineFrameMilliseconds": {
+        "mean": 28.591748998664887,
+        "p50": 33.25,
+        "p95": 49.19,
+        "p99": 51.41,
+        "maximum": 101.64,
+        "over50ms": 96,
+        "over100ms": 2
+      },
+      "sourceHashes": {
+        "summary.json": "78363a5f5f38bd2d77dc36e5dadc391cf0d4e5dae5d512f521f41692da1cdd7c",
+        "frames.csv": "794811a9e8ce708e95084502a911530a827c8ef2d3c0f2ba29c63c060d42defe"
+      }
+    }
+  },
+  "sourceHashes": {
+    "NativeEmbedding/ReadyHostedGameShim.m": "48d5e1d83f9ff8d804e1fe0b8c37b9874c280894b893603e19527d9c9a6706bc",
+    "Sources/ReadyHostedView/ReadyHostedView.m": "09788473c75a0eb406d73371060362550a6fa04268b983da705fa619d0103839",
+    "Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h": "3c978dcbc748e62a58035a98052d64546d95b6e5ff535dfef99dc81566bf6acd",
+    "Sources/M1Launcher/HostedGamePresentation.swift": "b35bfbb40b59e795c497d535c7c215b543bd821bcd9590760dbb14df66deae4d",
+    "Sources/M1Launcher/SessionManager.swift": "7bd2b492d76c0aff9e9c7538fff127e06ca9c225b0763d3b10605c42b6b582f6"
+  },
+  "remoteLayer": {
+    "default": false,
+    "realCyberpunkBenchmarkCompleted": false,
+    "startupFailure": "remote-layer-no-presented-startup-frame",
+    "hostAndGuestGeometryValid": true,
+    "nativeStartupWarmupUnderInvestigation": true
+  },
+  "interpretation": "Async acquisition removes PRESENT lock contention and the fixed 30 FPS plateau. Texture wrapper cache lowers import CPU cost but not the remaining FPS gap. No zero-cost/direct-display claim."
+}

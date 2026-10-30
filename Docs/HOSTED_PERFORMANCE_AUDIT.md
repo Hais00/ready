@@ -1,6 +1,85 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 # Audit della pipeline hosted — 29 ottobre 2026
 
+## Prove CLI del 30 ottobre: VSync e attese concorrenti
+
+L'utente ha autorizzato nuove prove automatiche del gioco, avviate e seguite
+esclusivamente da CLI, con Metal HUD acceso, logging HUD disattivato e senza
+acquisizione dello schermo. Questo supera il precedente vincolo delle prove
+manuali riportato nelle sezioni storiche. Il benchmark interno `-benchmark`
+esporta `summary.json` e `frames.csv`; gli argomenti temporanei del profilo
+vengono ripristinati dopo le prove. Il comando esplicito
+`ready --launch-installed-game steam:1091500` usa lo stesso percorso di profilo,
+licenza e sessione del pulsante Gioca, e non installa versioni mancanti.
+
+Con VSync 60, 1920×1200 e impostazioni esportate identiche, il nativo ha misurato
+36,9237 FPS. Due controlli hosted hanno misurato 29,8781 e 29,9164 FPS. Il secondo
+usa gli stessi binari dopo il rilascio del precedente contesto di controllo UI.
+Il valore 60 è un limite richiesto, non una garanzia che la GPU renda questa
+scena a 60 FPS; il difetto riprodotto è l'ulteriore gradino hosted a circa 30.
+
+La traccia mostra `displaySyncEnabled=true` e richieste
+`presentAfterMinimumDuration` da 16,666667 ms: non una richiesta del gioco di
+limitarsi a 30. Nella sessione osservata ACQUIRE attende circa 22 ms medi dentro
+`nextDrawable`; la lane RPC condivisa trattiene PRESENT per circa 6,18 ms medi.
+Le medie della traccia comprendono l'intera sessione, mentre gli FPS derivano
+dall'esportazione del solo benchmark.
+
+La candidata separa la receive-port/mutex ACQUIRE dalla lane controllo/PRESENT.
+L'host riserva l'acquisizione su Main, attende `nextDrawable` su un worker CPU,
+poi pubblica la superficie su Main e risponde usando il diritto send-once
+originale. Main, il server e PRESENT restano disponibili durante l'attesa.
+Generazioni, arresto, riconfigurazione e rilascio dei diritti Mach hanno prove
+con il server reale. Protocollo V6, due crediti, ordine FIFO e restituzione del
+credito dopo fence GPU e ACK restano invariati. Non vengono aggiunti buffer
+d'immagine, code GPU, copie o readback nel percorso di produzione.
+
+La prima misura della candidata è 34,8874 FPS, con attesa media del lock PRESENT
+di circa 0,00446 ms. È un recupero parziale: il nativo rimane più veloce e i picchi
+del frametime richiedono altre verifiche. Non è una prova di costo zero o di
+eliminazione dello stutter.
+
+Una cache opt-in di tre wrapper texture importati (`RHG_TEXTURE_CACHE=1`)
+conserva le stesse IOSurface del pool e invalida dopo il drain della
+configurazione. La prova reale di riciclo presenta 48 frame con tre importazioni
+e 45 riutilizzi; quella nel gioco registra 1316 hit e quattro importazioni su
+1320 richieste, massimo tre entry. Il costo combinato lookup/wrapper scende
+da circa 0,41 a 0,024 ms medi, ma il benchmark resta a 34,9746 FPS. Il risparmio
+CPU non dimostra un recupero equivalente degli FPS. La cache resta disattivata
+per default durante la validazione.
+
+Un percorso separato, `--host-game-transport remote-layer`, lascia al guest
+layer, drawable e code Metal originali e presenta il suo albero tramite
+`CAContext`/`CALayerHost`. Non scambia superfici o PRESENT applicative per ogni
+frame. Gli hook temporanei di avvio si rimuovono al primo timestamp positivo;
+le correzioni input/sessione restano condivise. I probe fra due processi con
+Metal 3 e Metal 4 (`present`) confermano GPU e presentazione visibile senza
+finestre guest. Le primitive sono SPI private del sistema, non codice Apple
+redistribuito; [WebKit](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/Platform/cocoa/LayerHostingContext.mm)
+documenta un impiego del medesimo modello di hosting.
+
+Questo percorso non è ancora accettato in Cyberpunk: l'avvio incontra otto
+drawable distinti con timestamp zero e termina conservando la schermata di
+caricamento. Geometria, collegamento del contesto, finestra/Space e focus sono
+validi nelle tracce. Le prove Metal 4 con durata minima falliscono anche nel
+controllo locale, mentre `present` funziona: non è una prova di un difetto
+specifico del contesto remoto né una giustificazione per cambiare l'API del
+gioco. Si verifica prima il riscaldamento iniziale della run nativa.
+
+Le esportazioni misurano tempi del motore. Non certificano direct scanout,
+assenza di compositing interno del sistema, latenza input o costo letteralmente
+nullo. Nessuna cattura dello schermo viene usata per le misure correnti.
+
+La diagnostica opt-in duplica il descrittore stderr ereditato prima che il gioco
+lo sostituisca; il duplicato è CLOEXEC. Le scritture restano asincrone e limitate.
+Con profilazione disattivata non viene aperto il descrittore. Controlli con
+`freopen`, exec, pipe piena e consumatore chiuso verificano questo confine.
+
+Il consumer nativo usa `CAMetalDisplayLink`, con preferenza 60 nell'intervallo
+30–60 e latenza preferita 2. Non è `CADisplayLink`. Questi valori non vengono
+alterati dalla candidata. Le modifiche alla cadenza o all'anticipo della
+presentazione non devono essere dedotte dai soli test sintetici.
+
 ## Aggiornamento del 30 ottobre: stutter, input e ritorno
 
 Il percorso attuale conserva la pipeline GPU con crediti limitati e ACK dopo
