@@ -188,7 +188,7 @@ final class SteamClientSession {
       var bytes = try? JSONSerialization.data(withJSONObject: payload), bytes.count <= 64 * 1024 else {
       event(["type":"error", "code":"invalid_request"]); return id
     }
-    let timeout:TimeInterval=["authenticate","library"].contains(operation) ? 240:operation=="authorize_game" ? 90:30
+    let timeout:TimeInterval=["authenticate","library"].contains(operation) ? 240:operation=="authorize_game" ? 90:["connect","reconnect"].contains(operation) ? 45:30
     bytes.append(10); pending[id] = Pending(operation: operation,deadline:Date().addingTimeInterval(timeout), callback: event)
     let handle = writer, epoch = generation
     ioWrite(bytes, to: handle, epoch: epoch)
@@ -212,7 +212,20 @@ final class SteamClientSession {
     request("guard_code", options: ["challengeID":challengeID, "code":code]) { [weak self] event in self?.onAuthentication?(event) }
   }
   func setPresence(_ presence: String) { request("set_presence", options: ["presence":presence]) { _ in } }
-  func reconnect() { manualStop = false; automaticRestartSuppressed = false; if process == nil { launch() } else { request("reconnect") { _ in } } }
+  func reconnect() {
+    manualStop=false;automaticRestartSuppressed=false
+    guard process != nil else{launch();return}
+    let epoch=generation
+    // An initial transport cleanup can fail before the service has selected
+    // any account. Restore from the saved profile rather than assuming it has
+    // an in-memory credential and unnecessarily requesting another QR.
+    refreshCredentialSnapshot{[weak self]data in
+      guard let self,self.generation==epoch,!self.manualStop,!self.automaticRestartSuppressed,self.authenticationID==nil else{return}
+      if CredentialVault.steamStatus(data) == .available,let data,let account=try?JSONSerialization.jsonObject(with:data)as?[String:Any]{
+        self.credentialAtStart=data;self.request("connect",options:["credentials":account]){_ in}
+      }else{self.request("reconnect"){_ in}}
+    }
+  }
   func goOffline() { automaticRestartSuppressed = true; request("offline") { _ in } }
   func logout() {
     manualStop = true
@@ -289,7 +302,7 @@ final class SteamClientSession {
     if type == "state" || (type == "result" && value["state"] != nil) {
       let results:Set<String> = ["OK","Fail","Unknown","Expired","Revoked","InvalidPassword","AccessDenied","AccountDisabled","AccountLockedDown","AccountLogonDenied","AccountLoginDeniedNeedTwoFactor","NoConnection","Timeout","ConnectFailed","ServiceUnavailable","RateLimitExceeded","TryAnotherCM","RemoteDisconnect","LoggedInElsewhere","LogonSessionReplaced","NotLoggedOn"]
       state.steamResult = (value["steamResult"] as? String).flatMap { results.contains($0) ? $0 : nil }
-      state.connectionResultContext = (value["connectionResultContext"] as? String).flatMap { ["logged_off","logon_response"].contains($0) ? $0 : nil }
+      state.connectionResultContext = (value["connectionResultContext"] as? String).flatMap { ["logged_off","logon_response","transport_cleanup","transport_connect","logon_start"].contains($0) ? $0 : nil }
     }
     if type == "state" {
       let connection = value["state"] as? String ?? "offline"

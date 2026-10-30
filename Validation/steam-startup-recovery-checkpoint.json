@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "date": "2026-10-30",
+  "observedProblem": {
+    "state": "offline",
+    "reason": "login_incomplete",
+    "recentSteamCredentialRejectionObserved": false,
+    "savedCredentialWasPresent": true
+  },
+  "sourceHashes": {
+    "Scripts/test_steam_client_session.py": "a78a2f4235ab6d73affcd23748c8266937c6bbfb9f48f48a9aeb2046d822d9ca",
+    "Sources/M1Launcher/SteamAccountView.swift": "b48caa3df36b83e08d4482c17f7023791a37d2fed6f3fb4d2118d40b38a00157",
+    "Sources/M1Launcher/SteamClientSession.swift": "70c3e9ee6685ebcfb84da0304776f6d3ac43d7b72258b6d7735fcc5271b66020",
+    "Sources/M1Launcher/SteamClientUI.swift": "7cb5bfeee36927d9f09f43d0b1aac04af505c7af55bf68122eba35a385b750d8",
+    "StoreBridge/SteamBridge/PersistentSteamService.cs": "3287b9d7d7e4e0b40b55c9d17a07f1e1fa09a774fbc5f8f66f51368ae0ad9e95",
+    "Synthetic/PersistentSteamServiceChecks.cs": "232d82b3a3cd827b064c240c8802af6fe588b8b2154fe7708da7755fcc8ce687",
+    "Synthetic/ReadySteamSessionProbe.swift": "782c856e01a785272b562503e6a8f6db48dfe3d81b4c175eaf88c2303f932fa5"
+  },
+  "changes": [
+    "Select saved credential before transport cleanup.",
+    "Retry explicitly transient saved-login startup failures with the existing six finite delays.",
+    "Respect explicit cancel/offline/logout, rejected credentials and remote kicks.",
+    "Guard cleanup against newer epochs and bind retry tasks to their own cancellation source.",
+    "Cap backend initial connection at30seconds and allow45seconds in the frontend.",
+    "Manual Reconnect reloads the saved profile even if service memory is empty.",
+    "Expose transport stage diagnostics and distinguish offline startup failure from lost authorization."
+  ],
+  "checks": {
+    "backendPassed": true,
+    "catalogChecks": 90,
+    "serviceChecks": 211,
+    "backendReportSHA256": "2305f331966f75cd97f38b30471b90f2988d0bbd05f00e1685b4bff9fcd1bb30",
+    "credentialConsumersPassed": true,
+    "credentialConsumerCases": {
+      "storeClient": {
+        "count": 16,
+        "reportSHA256": "6f4174c3727e5464d8ea07b35204b204c0f056d6e0e061e900a2cf5279528700"
+      },
+      "accountCoordinator": {
+        "count": 13,
+        "reportSHA256": "e11b2a38c15dc27b1c5de31e250e71628c2be0822a951700038b7c4fd24906ab"
+      },
+      "session": {
+        "count": 22,
+        "reportSHA256": "4c8e887f1eca80bfe47d2d6a745068840573a91f8a968a954f7c578271a78295"
+      },
+      "gameAuthorization": {
+        "count": 103,
+        "reportSHA256": "71437d91748e83302ab193019b09daeaa67e619f43ee5aaed50881fe49dc7f2d"
+      }
+    },
+    "credentialReportSHA256": "5257194301fed497ac7693efee789a093aae15f5374e598416160a1db09158a2",
+    "relocationPassed": true,
+    "relocationChecks": 14,
+    "packageReportSHA256": "e04a77deaab12cab2f03bc433defaaa3ad09c8fde0a68a34c587ffb5f06247bf"
+  },
+  "live": {
+    "steamConnected": true,
+    "steamResult": "OK",
+    "savedCredentialBytesUnchanged": true,
+    "newQRRequestedByAgent": false,
+    "passwordRequestedByAgent": false,
+    "privateEvidenceSHA256": "3e80a3774e9b6cc8ec8dd58907f3eb531fb4aab325b90922164afed095a13e5b"
+  },
+  "build": {
+    "frontendSHA256": "000f617e0462f4049ef80f3a057e9f77baabafca0f879edb96f7873896457971",
+    "component": "steambridge-128af56ad141f389589a35d5",
+    "helperSHA256": "466dfb90d68bcf65ce15c1b1fa9e0ba1d0b548da48aa4fc1570dafd1c352a982"
+  },
+  "limits": [
+    "The exact original exception was not retained by the older service; login_incomplete alone does not identify a unique underlying network/cleanup cause.",
+    "Finite recovery cannot guarantee service availability or override Steam account/token refusal.",
+    "The observed live restoration succeeded on its initial connection; injected failures/races are covered by controlled tests."
+  ]
+}

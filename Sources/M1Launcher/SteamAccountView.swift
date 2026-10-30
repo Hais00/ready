@@ -152,11 +152,13 @@ final class SteamAccountView: NSView, ReadyDialogContentSizing {
     friendPicker.removeAllItems();friendPicker.addItems(withTitles:state.friends.map{$0.displayName.isEmpty ? $0.id:$0.displayName})
     if let index=state.friends.firstIndex(where:{$0.id==selectedID}){friendPicker.selectItem(at:index)}
     identity.stringValue = state.displayName.isEmpty ? "Steam" : state.displayName
-    let names = ["online":"Connesso", "connecting":"Connessione a Steam…", "authenticating":"Attesa autorizzazione Steam…", "reconnecting":"Riconnessione dopo perdita della rete…", "offline":"Offline", "authorization_required":"Accesso Steam richiesto", "logged_out":"Account disconnesso"]
+    let names = ["online":"Connesso", "connecting":"Connessione a Steam…", "authenticating":"Attesa autorizzazione Steam…", "reconnecting":"Riconnessione a Steam…", "offline":"Offline", "authorization_required":"Accesso Steam richiesto", "logged_out":"Account disconnesso"]
     var detail = names[state.connection] ?? "Steam"
     if !state.accountName.isEmpty { detail += " · Account: " + state.accountName }
     if ["logged_in_elsewhere","session_replaced","remote_logout"].contains(state.reason) { detail += "\nLa sessione è stata chiusa da Steam o da un altro accesso. Premi Riconnetti per riprovare." }
     if ["session_expired","server_session_revoked","server_session_rejected","server_logoff"].contains(state.reason) { detail += "\nSteam ha chiuso la connessione. Premi Riconnetti per provare l’accesso già salvato." }
+    if state.reason=="login_incomplete"{detail += "\nConnessione iniziale non completata. Riconnetti riprova l’accesso salvato, senza richiedere subito un nuovo QR."}
+    if state.reason=="reconnect_exhausted"{detail += "\nTentativi di riconnessione esauriti. Premi Riconnetti per riprovare l’accesso salvato."}
     if ["revoked","expired","invalid_password"].contains(state.reason) { detail += "\nSteam richiede una nuova autorizzazione." }
     if !state.warning.isEmpty{detail += "\n"+state.warning}
     if let notice=actionNotice,Date().timeIntervalSince(notice.1)<15{detail += "\n"+notice.0}

@@ -39,6 +39,10 @@ import LauncherCore
     checks["manualOfflinePreservesAccount"]=vault[profile]==initial
     stage="reconnect";session.reconnect();try spin{session.state.online}
     checks["explicitReconnectRestoresOnline"]=true
+    stage="restore_missing_service_account";session.request("fixture_missing_server_account"){_ in};try spin{session.state.connection=="offline"&&session.state.reason=="login_incomplete"}
+    checks["incompleteStartupPreservesFileAndReportsTransportStage"] = vault[profile]==initial && session.state.connectionResultContext=="transport_cleanup"
+    session.reconnect();try spin{session.state.online&&session.accountReadyForGame()}
+    checks["manualReconnectReloadsSavedProfileWhenServiceHasNoCredential"] = vault[profile]==initial && session.state.accountName=="fixture_account"
     stage="network_loss";session.request("fixture_network_loss"){_ in}
     try spin{session.state.connection=="reconnecting"}
     checks["networkLossDoesNotForgetCredential"]=vault[profile]==initial

@@ -195,7 +195,9 @@ sealed class PersistentSteamService:IAsyncDisposable
             if(profile!=incomingProfile||generation!=incomingGeneration)throw new InvalidDataException();
             if(seen.Count>=MaximumRequests||!seen.Add(id))throw new InvalidDataException();
             if(pending.Count>=MaximumPending){Error(id,"busy");return;}
-            var cancel=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);cancel.CancelAfter(requestBudget);pending[id]=cancel;
+            var cancel=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+            var budget=(operation is "connect" or "reconnect")&&requestBudget>TimeSpan.FromSeconds(30)?TimeSpan.FromSeconds(30):requestBudget;
+            cancel.CancelAfter(budget);pending[id]=cancel;
             var request=root.Clone();
             work.RemoveAll(t=>t.IsCompleted);
             work.Add(Task.Run(()=>Handle(id,operation,request,cancel)));
@@ -288,6 +290,8 @@ sealed class PersistentSteamService:IAsyncDisposable
             Emit("error",id,fields);
         }
         catch(AuthenticationException failure){Error(id,"authentication_failed",failure.Result);}
+        catch(IOException){Error(id,"network_error");}
+        catch(TimeoutException){Error(id,"timeout");}
         catch(OperationCanceledException){Error(id,cancel.IsCancellationRequested&&!lifetime.IsCancellationRequested?"cancelled":"disconnected");}
         catch(ArgumentException){Error(id,"invalid_request");}
         catch(JsonException){Error(id,"invalid_request");}
@@ -404,12 +408,13 @@ sealed class PersistentSteamService:IAsyncDisposable
         }
         try
         {
-            await transport.StopAsync();cancel.ThrowIfCancellationRequested();
             SteamServiceCredentials? selected;
             lock(sync)selected=operation=="reconnect"?credentials:null;
             if(operation=="connect")selected=ReadCredentials(root);
             if(operation=="reconnect"&&selected is null)throw new ServiceFailure("authentication_required");
-            lock(sync){if(selected is not null)credentials=selected;}
+            lock(sync){if(epoch!=current)throw new ServiceFailure("disconnected");if(selected is not null)credentials=selected;lastConnectionResult=null;connectionResultContext="transport_cleanup";}
+            await transport.StopAsync();cancel.ThrowIfCancellationRequested();
+            lock(sync){if(epoch!=current)throw new ServiceFailure("disconnected");connectionResultContext="transport_connect";}
             State("connecting","explicit_connect");await transport.ConnectAsync(cancel);
             if(operation=="authenticate")
             {
@@ -441,6 +446,7 @@ sealed class PersistentSteamService:IAsyncDisposable
                 // transient network failure does not require another QR.
                 if(operation=="authenticate")Emit("credentials",id,new(){["credentials"]=new{username=selected.Username,refresh_token=selected.RefreshToken}});
             }
+            lock(sync){if(epoch!=current)throw new ServiceFailure("disconnected");connectionResultContext="logon_start";}
             State("authenticating","logon");EResult login=await transport.LogOnAsync(selected,cancel);
             lock(sync)
             {
@@ -458,13 +464,34 @@ sealed class PersistentSteamService:IAsyncDisposable
                 Result(id,new(){["account"]=transport.Account(selected.Username)});
             }
         }
-        catch
+        catch(Exception failure)
         {
-            bool stop;lock(sync){stop=epoch==current;if(stop){blocked=true;++epoch;guardAnswer?.TrySetCanceled();guardAnswer=null;guardChallenge=null;}}
-            if(stop){try{await transport.StopAsync();}finally{lock(sync){if(state is not ("authorization_required" or "logged_out"))State("offline","login_incomplete");}}}
+            bool stop;long cleanupEpoch=0;
+            lock(sync){stop=epoch==current;if(stop){blocked=true;cleanupEpoch=++epoch;guardAnswer?.TrySetCanceled();guardAnswer=null;guardChallenge=null;}}
+            if(stop){try{await transport.StopAsync();}finally{lock(sync){
+                if(epoch==cleanupEpoch&&!disposed&&!lifetime.IsCancellationRequested&&state is not ("authorization_required" or "logged_out")){
+                    bool recover=(operation is "connect" or "reconnect")&&credentials is not null&&!explicitlyCancelled.Contains(id)&&StartupTransient(failure);
+                    if(recover){blocked=false;State("reconnecting","startup_retry");StartReconnectLocked();}
+                    else State("offline","login_incomplete");
+                }
+            }}}
             throw;
         }
         finally{lifecycle.Release();}
+    }
+    static bool StartupTransient(Exception failure)=>failure is IOException or TimeoutException or OperationCanceledException
+        ||failure is ServiceFailure{Result:EResult.NoConnection or EResult.Timeout or EResult.ConnectFailed or EResult.ServiceUnavailable or EResult.TryAnotherCM or EResult.IOFailure or EResult.RemoteDisconnect};
+    // Called under sync. A queued loop owns its exact cancellation token even
+    // when a later manual request starts a replacement connection attempt.
+    void StartReconnectLocked()
+    {
+        var previous=reconnectCancel;var previousTask=reconnect;previous?.Cancel();
+        var next=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);reconnectCancel=next;
+        reconnect=Task.Run(()=>Reconnect(next.Token));work.Add(reconnect);
+        if(previous is not null){
+            if(previousTask is null)previous.Dispose();
+            else _=previousTask.ContinueWith(_=>previous.Dispose(),CancellationToken.None,TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
+        }
     }
     async Task Stop(string nextState,string why,bool forget,string? except=null)
     {
@@ -539,10 +566,9 @@ sealed class PersistentSteamService:IAsyncDisposable
             // A delayed server LoggedOff callback still overrides this retry via
             // epoch/blocked. A kicked or revoked session never silently relogs.
             foreach(var request in pending.Values)request.Cancel();
-            if(reconnect is null||reconnect.IsCompleted)
+            if(reconnect is null||reconnect.IsCompleted||reconnectCancel?.IsCancellationRequested==true)
             {
-                reconnectCancel?.Dispose();reconnectCancel=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-                reconnect=Task.Run(()=>Reconnect(reconnectCancel.Token));
+                StartReconnectLocked();
             }
         }
     }
@@ -563,7 +589,11 @@ sealed class PersistentSteamService:IAsyncDisposable
                 {
                     lock(sync){if(blocked||epoch!=current)return;}
                     using var budget=CancellationTokenSource.CreateLinkedTokenSource(cancel);budget.CancelAfter(TimeSpan.FromSeconds(30));
-                    await transport.StopAsync();await transport.ConnectAsync(budget.Token);
+                    lock(sync){connectionResultContext="transport_cleanup";}
+                    await transport.StopAsync();
+                    lock(sync){if(blocked||epoch!=current)return;connectionResultContext="transport_connect";}
+                    await transport.ConnectAsync(budget.Token);
+                    lock(sync){if(blocked||epoch!=current)return;connectionResultContext="logon_start";}
                     var result=await transport.LogOnAsync(selected,budget.Token);
                     lock(sync)
                     {

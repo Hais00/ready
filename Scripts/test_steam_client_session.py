@@ -7,7 +7,7 @@ ROOT=pathlib.Path(__file__).resolve().parents[1]
 WORK=pathlib.Path('/Volumes/Dati APFS/Codex-ready-01a17e79')
 FAKE=r'''
 import json,sys,os,time
-sequence=0;profile=None;generation=None;auth=None;current_state='offline';current_friends=[]
+sequence=0;profile=None;generation=None;auth=None;current_state='offline';current_friends=[];memory_present=False
 def send(kind,id=None,**values):
  global sequence,current_state,current_friends
  if kind=='state':current_state=values['state']
@@ -23,6 +23,7 @@ for line in sys.stdin:
  request=json.loads(line);profile=request['profileID'];generation=request['profileGeneration'];id=request['id'];op=request['operation']
  if op=='connect':
   assert request['credentials']=={'username':'fixture_account','refresh_token':'fixture_only_secret'}
+  memory_present=True
   online(id)
  elif op=='fixture_stale':
   current=generation;generation='00000000-0000-0000-0000-000000000000'
@@ -36,14 +37,19 @@ for line in sys.stdin:
  elif op=='fixture_new_persona':
   send('persona',account={'accountName':'fixture_other','displayName':'Fixture B','steamID':'76561198000000003','presence':'online'});send('result',id)
  elif op=='offline':send('state',state='offline',reason='manual_offline');send('result',id)
- elif op in ['reconnect','fixture_recovered']:online(id)
+ elif op=='reconnect':
+  if memory_present:online(id)
+  else:send('error',id,code='authentication_required')
+ elif op=='fixture_recovered':online(id)
+ elif op=='fixture_missing_server_account':memory_present=False;send('state',state='offline',reason='login_incomplete',connectionResultContext='transport_cleanup');send('result',id)
  elif op=='fixture_network_loss':send('state',state='reconnecting',reason='network_lost');send('result',id)
  elif op=='fixture_remote_kick':send('state',state='offline',reason='session_replaced');send('result',id)
- elif op=='fixture_revoked':send('state',state='authorization_required',reason='revoked',invalidateCredentials=True);send('result',id)
+ elif op=='fixture_revoked':memory_present=False;send('state',state='authorization_required',reason='revoked',invalidateCredentials=True);send('result',id)
  elif op=='fixture_session_expired':send('state',state='logged_out',reason='session_expired',steamResult='Expired',connectionResultContext='logged_off',invalidateCredentials=False);send('result',id)
  elif op=='fixture_reason_alone':send('state',state='offline',reason='expired');send('result',id)
  elif op=='authenticate':auth=id;send('qr',id,url='https://example.invalid/fixture-only')
  elif op=='fixture_auth_complete':
+  memory_present=True
   send('credentials',auth,credentials={'username':'fixture_account','refresh_token':'dummy_new_secret'})
   send('state',state='online',reason='');send('result',auth);send('result',id)
  elif op=='fixture_late_qr':send('qr',auth,url='https://example.invalid/late-fixture');send('result',id)

@@ -60,7 +60,7 @@ extension AppDelegate {
       let signature = status.connection + ":" + status.reason + ":" + (status.steamResult ?? "") + ":" + (status.connectionResultContext ?? "")
       if signature != self.steamConnectionDiagnosticSignature {
         self.steamConnectionDiagnosticSignature = signature
-        let reasons:Set<String> = ["explicit_connect","explicit_authentication","manual_offline","manual_logout","shutdown","reconnect_budget_exhausted","server_logoff","server_rejected","network_disconnected","network_lost","login_rejected","invalid_password","revoked","expired","credentials_rejected","not_connected","service_pipe","service_unresponsive","service_disconnected","service_unavailable","invalid_service_response","session_replaced","logged_in_elsewhere","remote_logout","session_expired","server_session_revoked","server_session_rejected","account_disabled","account_locked","logon","logon_failed","login_incomplete","logon_success","reconnected","reconnect_exhausted"]
+        let reasons:Set<String> = ["explicit_connect","explicit_authentication","manual_offline","manual_logout","shutdown","reconnect_budget_exhausted","server_logoff","server_rejected","network_disconnected","network_lost","login_rejected","invalid_password","revoked","expired","credentials_rejected","not_connected","service_pipe","service_unresponsive","service_disconnected","service_unavailable","invalid_service_response","session_replaced","logged_in_elsewhere","remote_logout","session_expired","server_session_revoked","server_session_rejected","account_disabled","account_locked","logon","logon_failed","login_incomplete","logon_success","reconnected","reconnect_exhausted","startup_retry"]
         let diagnostic:[String:Any] = ["schema":1,"uptimeMilliseconds":DispatchTime.now().uptimeNanoseconds/1_000_000,"connection":status.connection,
           "reason":reasons.contains(status.reason) ? status.reason : "unspecified",
           "steamResult":status.steamResult as Any? ?? NSNull(),
@@ -68,7 +68,8 @@ extension AppDelegate {
         if let data=try?JSONSerialization.data(withJSONObject:diagnostic,options:[.sortedKeys]) {
           try?FileManager.default.createDirectory(at:self.paths.logs,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
           try?AtomicFile.writePrivate(data,to:self.paths.logs.appendingPathComponent("steam-last-connection-state.json"))
-          if let result=status.steamResult,result != "OK",result != "Unknown",status.connectionResultContext != nil {
+          let transportFailure=["offline","reconnecting"].contains(status.connection)&&["transport_cleanup","transport_connect"].contains(status.connectionResultContext ?? "")
+          if transportFailure || (status.steamResult != nil && status.steamResult != "OK" && status.steamResult != "Unknown" && status.connectionResultContext != nil) {
             // A later idle/successful startup must not erase the last actual
             // server failure needed to diagnose a user-reported interruption.
             try?AtomicFile.writePrivate(data,to:self.paths.logs.appendingPathComponent("steam-last-connection-failure.json"))

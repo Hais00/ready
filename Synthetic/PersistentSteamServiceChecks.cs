@@ -23,6 +23,8 @@ static class PersistentSteamServiceChecks
     {
         public event Action<SteamTransportNotice>? Notice;
         internal int Connects,Auths,Stops,Logons,OwnershipCalls,SizeCalls,SizeOverviewCalls;
+        internal int ConnectFailuresRemaining,StopFailuresRemaining,TransientLogonsRemaining,WaitStopAt;
+        internal Exception? ConnectException;
         internal bool WaitSizePlan;internal TaskCompletionSource<SteamSizePlan> SizeGate=new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool FailConnect,FailStop,WaitAuth,WaitOwnership,IgnoreOwnershipCancellation,WaitLogin,IgnoreLoginCancellation;
         internal EResult LoginResult=EResult.OK;
@@ -39,7 +41,8 @@ static class PersistentSteamServiceChecks
         internal TaskCompletionSource<bool> AuthGate=new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource<bool> OwnershipGate=new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource<bool> LoginGate=new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public Task ConnectAsync(CancellationToken cancel){Interlocked.Increment(ref Connects);cancel.ThrowIfCancellationRequested();return FailConnect?Task.FromException(new IOException(Secret)):Task.CompletedTask;}
+        internal TaskCompletionSource<bool> StopGate=new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task ConnectAsync(CancellationToken cancel){Interlocked.Increment(ref Connects);cancel.ThrowIfCancellationRequested();if(ConnectException is{} exception)return Task.FromException(exception);if(ConnectFailuresRemaining>0){Interlocked.Decrement(ref ConnectFailuresRemaining);return Task.FromException(new IOException(Secret));}return FailConnect?Task.FromException(new IOException(Secret)):Task.CompletedTask;}
         public async Task<SteamServiceCredentials> AuthenticateAsync(string method,string username,string password,Action<string> qr,IAuthenticator guard,CancellationToken cancel)
         {
             Interlocked.Increment(ref Auths);
@@ -52,9 +55,9 @@ static class PersistentSteamServiceChecks
         {
             Interlocked.Increment(ref Logons);LastUsername=credentials.Username;LastToken=credentials.RefreshToken;
             if(WaitLogin){if(IgnoreLoginCancellation)await LoginGate.Task;else await LoginGate.Task.WaitAsync(cancel);}
-            if(!IgnoreLoginCancellation)cancel.ThrowIfCancellationRequested();return LoginResult;
+            if(!IgnoreLoginCancellation)cancel.ThrowIfCancellationRequested();if(TransientLogonsRemaining>0){Interlocked.Decrement(ref TransientLogonsRemaining);return EResult.NoConnection;}return LoginResult;
         }
-        public Task StopAsync(){Interlocked.Increment(ref Stops);return FailStop?Task.FromException(new IOException(Secret)):Task.CompletedTask;}
+        public async Task StopAsync(){int call=Interlocked.Increment(ref Stops);if(WaitStopAt==call)await StopGate.Task;if(StopFailuresRemaining>0){Interlocked.Decrement(ref StopFailuresRemaining);throw new IOException(Secret);}if(FailStop)throw new IOException(Secret);}
         public SteamServiceAccount Account(string username)=>new("76561198000000001",username,DisplayName,Presence);
         public IReadOnlyList<SteamServiceFriend> Friends()=>new[]{
             new SteamServiceFriend("76561198000000002","Friend fixture","Away","480","Fixture game","Friend"),
@@ -197,6 +200,96 @@ static class PersistentSteamServiceChecks
         {
             await s.Connect();s.Transport.Drop();await Until(()=>s.Transport.Connects==2&&s.Output.Events.Any(e=>S(e,"reason")=="reconnected"));
             Check(s.Transport.Auths==0&&s.Transport.Logons==2&&!s.Output.Events.Any(e=>B(e,"invalidateCredentials")),"network-drop-reconnects-without-new-auth-or-vault-invalidation");
+        }
+        await using(var s=new Session((_,cancel)=>Task.Delay(1,cancel)))
+        {
+            s.Transport.ConnectFailuresRemaining=1;string initial=s.Send("connect",credentials:new{username="fixture_account",refresh_token=Secret});await s.Done(initial);
+            await Until(()=>s.Output.Events.Any(e=>S(e,"state")=="online"));
+            Check(s.Transport.Connects==2&&s.Transport.Logons==1&&s.Transport.Auths==0&&s.Transport.LastToken==Secret,"startup-transport-failure-recovers-with-same-saved-token-and-no-QR");
+            Check(!s.Output.Events.Any(e=>B(e,"invalidateCredentials"))&&!s.Output.ToString().Contains(Secret),"startup-transport-recovery-preserves-private-credential-and-redacts-failure");
+        }
+        await using(var s=new Session((_,cancel)=>Task.Delay(1,cancel)))
+        {
+            s.Transport.StopFailuresRemaining=1;string initial=s.Send("connect",credentials:new{username="fixture_account",refresh_token=Secret});await s.Done(initial);
+            await Until(()=>s.Output.Events.Any(e=>S(e,"state")=="online"));
+            Check(s.Transport.Connects==1&&s.Transport.Logons==1&&s.Transport.Auths==0&&s.Transport.LastToken==Secret,"startup-cleanup-failure-still-has-saved-token-before-first-stop");
+        }
+        await using(var s=new Session((_,cancel)=>Task.Delay(1,cancel)))
+        {
+            s.Transport.TransientLogonsRemaining=1;string initial=s.Send("connect",credentials:new{username="fixture_account",refresh_token=Secret});await s.Done(initial);
+            await Until(()=>s.Output.Events.Any(e=>S(e,"state")=="online"));
+            Check(s.Transport.Connects==2&&s.Transport.Logons==2&&s.Transport.Auths==0&&s.Transport.LastToken==Secret&&!s.Output.Events.Any(e=>B(e,"invalidateCredentials")),"startup-NoConnection-logon-recovers-without-authentication-or-token-removal");
+        }
+        var startupAttempts=new List<double>();
+        await using(var s=new Session((duration,cancel)=>{lock(startupAttempts)startupAttempts.Add(duration.TotalSeconds);cancel.ThrowIfCancellationRequested();return Task.CompletedTask;}))
+        {
+            s.Transport.FailConnect=true;string initial=s.Send("connect",credentials:new{username="fixture_account",refresh_token=Secret});await s.Done(initial);await Until(()=>s.Output.Events.Any(e=>S(e,"reason")=="reconnect_exhausted"));
+            Check(startupAttempts.SequenceEqual(new double[]{1,2,4,8,16,30})&&s.Transport.Connects==7&&s.Transport.Auths==0,"startup-network-recovery-is-six-finite-exponential-attempts");
+            Check(!s.Output.Events.Any(e=>B(e,"invalidateCredentials")),"exhausted-startup-network-recovery-does-not-erase-saved-login");
+        }
+        foreach(string manual in new[]{"offline","logout"})
+        {
+            int delayCalls=0;await using var s=new Session((_,cancel)=>{Interlocked.Increment(ref delayCalls);return Task.Delay(1,cancel);});
+            s.Transport.ConnectFailuresRemaining=1;s.Transport.WaitStopAt=2;string initial=s.Send("connect",credentials:new{username="fixture_account",refresh_token=Secret});await Until(()=>s.Transport.Stops==2);
+            string stop=s.Send(manual,new{forgetCredentials=manual=="logout"});string expected=manual=="offline"?"manual_offline":"explicit_logout";
+            await Until(()=>s.Output.Events.Any(e=>S(e,"reason")==expected));s.Transport.StopGate.TrySetResult(true);await s.Done(stop);await s.Done(initial);await Task.Delay(20);
+            string snapshot=s.Send("snapshot");await s.Done(snapshot);
+            Check(S(s.Terminal(snapshot),"reason")==expected&&S(s.Terminal(snapshot),"state")== (manual=="offline"?"offline":"logged_out")&&s.Transport.Connects==1&&delayCalls==0,"manual-"+manual+"-during-startup-cleanup-survives-old-failure-and-blocks-retry");
+            if(manual=="logout"){string again=s.Send("reconnect");await s.Done(again);Check(S(s.Terminal(again),"code")=="authentication_required","startup-cleanup-cannot-restore-token-after-explicit-forget");}
+        }
+        foreach(string manual in new[]{"offline","logout"})
+        {
+            var delayGate=new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);int delayCalls=0;
+            await using var s=new Session((_,cancel)=>{Interlocked.Increment(ref delayCalls);return delayGate.Task.WaitAsync(cancel);});
+            s.Transport.ConnectFailuresRemaining=1;string initial=s.Send("connect",credentials:new{username="fixture_account",refresh_token=Secret});await s.Done(initial);await Until(()=>delayCalls==1);
+            string stop=s.Send(manual,new{forgetCredentials=manual=="logout"});await s.Done(stop);delayGate.TrySetResult(true);await Task.Delay(20);
+            Check(s.Transport.Connects==1&&!s.Output.Events.Any(e=>S(e,"state")=="online"),"manual-"+manual+"-during-startup-retry-delay-prevents-relogin");
+        }
+        {
+            int delayCalls=0;await using var s=new Session((_,cancel)=>{Interlocked.Increment(ref delayCalls);return Task.Delay(1,cancel);});
+            s.Transport.ConnectFailuresRemaining=1;s.Transport.WaitStopAt=2;string initial=s.Send("connect",credentials:new{username="fixture_account",refresh_token=Secret});await Until(()=>s.Transport.Stops==2);
+            string cancel=s.Send("cancel",new{requestID=initial});await s.Done(cancel);s.Transport.StopGate.TrySetResult(true);await s.Done(initial);await Task.Delay(20);
+            Check(s.Transport.Connects==1&&delayCalls==0&&!s.Output.Events.Any(e=>S(e,"state")=="online"),"explicit-cancel-during-startup-cleanup-prevents-automatic-retry");
+        }
+        {
+            int delayCalls=0;await using var s=new Session((_,cancel)=>{Interlocked.Increment(ref delayCalls);return Task.Delay(1,cancel);});
+            s.Transport.WaitLogin=true;string initial=s.Send("connect",credentials:new{username="fixture_account",refresh_token=Secret});await Until(()=>s.Transport.Logons==1);
+            string cancel=s.Send("cancel",new{requestID=initial});await s.Done(cancel);await s.Done(initial);await Task.Delay(20);
+            Check(s.Transport.Connects==1&&delayCalls==0&&S(s.Terminal(initial),"code")=="cancelled","explicit-cancel-of-startup-logon-never-reconnects-behind-user");
+        }
+        foreach(var refusal in new[]{EResult.AccessDenied,EResult.Expired,EResult.Revoked,EResult.InvalidPassword,EResult.AccountDisabled,EResult.AccountLockedDown,EResult.LogonSessionReplaced,EResult.LoggedInElsewhere,EResult.AccountLogonDenied,EResult.AccountLoginDeniedNeedTwoFactor})
+        {
+            int delayCalls=0;await using var s=new Session((_,cancel)=>{Interlocked.Increment(ref delayCalls);return Task.Delay(1,cancel);});
+            s.Transport.LoginResult=refusal;string initial=s.Send("connect",credentials:new{username="fixture_account",refresh_token=Secret});await s.Done(initial);await Task.Delay(20);
+            Check(s.Transport.Connects==1&&s.Transport.Auths==0&&delayCalls==0,"startup-refusal-never-automatically-relogs-"+refusal);
+        }
+        {
+            int delayCalls=0;await using var s=new Session((_,cancel)=>{Interlocked.Increment(ref delayCalls);return Task.Delay(1,cancel);});
+            s.Transport.ConnectException=new InvalidOperationException(Secret);string initial=s.Send("connect",credentials:new{username="fixture_account",refresh_token=Secret});await s.Done(initial);await Task.Delay(20);
+            Check(s.Transport.Connects==1&&delayCalls==0&&!s.Output.ToString().Contains(Secret),"unknown-startup-error-is-not-treated-as-retryable-network-failure");
+        }
+        {
+            int delayCalls=0;await using var s=new Session((_,cancel)=>{Interlocked.Increment(ref delayCalls);return Task.Delay(1,cancel);});
+            s.Transport.LoginResult=EResult.NoConnection;string initial=s.Send("authenticate",new{method="qr"});await s.Done(initial);await Task.Delay(20);
+            Check(s.Transport.Auths==1&&s.Transport.Logons==1&&delayCalls==0&&s.Output.Events.Count(e=>S(e,"type")=="credentials")==1,"explicit-authentication-failure-is-not-restarted-as-saved-login");
+        }
+        {
+            var oldDelay=new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);var newDelay=new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);int delayCalls=0;
+            await using var s=new Session((_,cancel)=>Interlocked.Increment(ref delayCalls)==1?oldDelay.Task:newDelay.Task);
+            try{
+                s.Transport.ConnectFailuresRemaining=2;string first=s.Send("connect",credentials:new{username="fixture_account",refresh_token=Secret});await s.Done(first);await Until(()=>delayCalls==1);
+                string replacement=s.Send("reconnect");await s.Done(replacement);await Until(()=>delayCalls==2);
+                oldDelay.TrySetResult(true);await Task.Delay(20);Check(s.Transport.Connects==2,"cancelled-old-startup-loop-cannot-consume-replacement-retry-token");
+                newDelay.TrySetResult(true);await Until(()=>s.Output.Events.Any(e=>S(e,"state")=="online"));
+                Check(s.Transport.Connects==3&&s.Transport.Logons==1&&s.Transport.Auths==0,"replacement-startup-loop-runs-even-before-cancelled-old-loop-completes");
+            }finally{oldDelay.TrySetResult(true);newDelay.TrySetResult(true);}
+        }
+        {
+            var delayGate=new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);int delayCalls=0;
+            await using var s=new Session((_,cancel)=>{Interlocked.Increment(ref delayCalls);return delayGate.Task.WaitAsync(cancel);},TimeSpan.FromMilliseconds(40));
+            s.Transport.WaitLogin=true;string initial=s.Send("connect",credentials:new{username="fixture_account",refresh_token=Secret});await s.Done(initial);await Until(()=>delayCalls==1);
+            s.Transport.WaitLogin=false;s.Transport.LoginGate.TrySetResult(true);delayGate.TrySetResult(true);await Until(()=>s.Output.Events.Any(e=>S(e,"state")=="online"));
+            Check(s.Transport.Auths==0&&s.Transport.LastToken==Secret&&s.Transport.Logons==2&&!s.Output.Events.Any(e=>B(e,"invalidateCredentials")),"startup-deadline-retries-with-saved-login-without-explicit-cancel");
         }
         await using(var s=new Session())
         {
