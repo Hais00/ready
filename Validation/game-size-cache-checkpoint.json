@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "date": "2026-10-30",
+  "behavior": "First render shows stored per-version bytes; opening a detail refreshes only the selected game/version in the background. No additional full-catalog size discovery.",
+  "sourceHashes": {
+    "Sources/M1Launcher/GameStorageDisplayCache.swift": "bbdec54bafb1ed70f375b3aac55399b5b15d33576b40c962f643438526d0ab7e",
+    "Scripts/test_library_appearance.py": "03a27aa6cd419b8cc1761c93bd4d9c9c13578aa2f701ffc21fcb971c1bbce98e",
+    "Scripts/test_steam_library.py": "8fbaa32c735ff91c571d23d8d06d7fb564f270be69c8f678f3341d3ae900e2d1",
+    "Scripts/test_steam_metadata_repair.py": "d80a1bbccd73ce24c8ef534a367066098666040ba77ace67554a562d6be2020b",
+    "Sources/M1Launcher/GameDetailUI.swift": "2c547df4c3509cf2cee9c8cca2efe17c5d5ded43ef68378cc993d28e47d577a4",
+    "Sources/M1Launcher/GameDetailView.swift": "aaafb50a07a4152dc7f95132602901f034b2444262075c87c9dd63d11c542280",
+    "Sources/M1Launcher/GameStorageUI.swift": "1d99b34bd6cf30857dde89d87d2e5c51b62606a76fa8b6ebce26d739d78416f9",
+    "Sources/M1Launcher/SteamLibraryCoordinator.swift": "46ab9cbc4c13e2f6ef84abb727ed765c5890fc90a3de9fb4141692c01125647e",
+    "StoreBridge/SteamBridge/PersistentSteamService.cs": "b2bdfe67aadca13ac8b6d11fb07cf3364b8d503b3e35237c17143cb383a98e99",
+    "StoreBridge/SteamBridge/SteamInstallSizes.cs": "5dc35ec7d6ca2d0ec5ae58cfe04e6f37ae9d9808234c85cd9f7d1c74ba6ae446",
+    "StoreBridge/SteamBridge/SteamOwnedGamesCatalog.cs": "f2980a52557c8774a539add3fdd75b128c5e727695627cec66dda7b827bf66d5",
+    "Synthetic/PersistentSteamServiceChecks.cs": "e0ad0da659f43712c07f24e91b04c117a44b8d0b0a8e77261577f69836be129f",
+    "Synthetic/ReadyLibraryAppearanceProbe.swift": "7d0b11569ba59b328959cf3e516323f68646e0966f409beb75f22003494d258d",
+    "Synthetic/ReadySteamLibraryProbe.swift": "c34c644e3bf8037d9f008ceb845b43e12438fb5f5dae9a01f5478607049224fb",
+    "Synthetic/SteamCatalogMetadataChecks.cs": "3f14ce587dec537c059bd9be9d19e5a883763fef555deb23df1bdda076dfd4a7"
+  },
+  "checks": {
+    "libraryAndDisplayCache": {
+      "passed": true,
+      "count": 58,
+      "reportSHA256": "f42371a1d3d14c4099f653e2fd17297fc685453f1c7350285d0fddb93ac05b76"
+    },
+    "detailFirstRenderAndNavigation": {
+      "passed": true,
+      "count": 30,
+      "reportSHA256": "aa1853cb51378529b873f437611e3c7bb8c494c57ef4c3ba0838a1c993a61136"
+    },
+    "metadataRepair": {
+      "passed": true,
+      "count": 21,
+      "reportSHA256": "b500e3444f1cbce896c3c144186f98ba2cc652c415bd5ff797e07615844152e9"
+    }
+  },
+  "backend": {
+    "passed": true,
+    "catalogChecks": 85,
+    "serviceChecks": 183,
+    "reportSHA256": "f833a4d2c2bfc62d3d5306e66c9a42cf8d990053d59a8d13007b2ed4082c55ad"
+  },
+  "builtComponentRuntime": {
+    "passed": true,
+    "networkDenied": true,
+    "previewSupportedWithoutStartingLogin": true,
+    "reportSHA256": "b35fcdafe631b58facf6393f1aad4aaa7f80cd2e5251a8c8139f6b69c959bb55"
+  },
+  "frontend": {
+    "releaseBuildPassed": true,
+    "binarySHA256": "2b4a9636f627511d68e4919e59af07625d41bb51f9cccdfabbaf702d424ce366",
+    "relocationChecks": 14,
+    "packageReportSHA256": "e04a77deaab12cab2f03bc433defaaa3ad09c8fde0a68a34c587ffb5f06247bf"
+  },
+  "component": {
+    "version": "steambridge-06e255a2cd483489a65da03e",
+    "helperSHA256": "8b332ba76f3ade8a7051f60f2e1c5080af0ed4af716ea2079c54e9d5f53f8b0e"
+  },
+  "live": {
+    "windowsDetailSizeInFirstCapturedState": true,
+    "sizeVisibleOnReopen": true,
+    "singleSelectedGamePreviewRefreshedSize": true,
+    "previewAuthorizesInstallation": false,
+    "gameDownloadsStarted": false,
+    "gameLaunchesPerformed": false,
+    "privateEvidenceSHA256": "8557ff8908d15b346635ff550662c9fc171216fcb840ab745eb5af25ece5c57c"
+  },
+  "contracts": [
+    "Constructor and version-switch rendering read numeric cache synchronously without AppDelegate or worker completion.",
+    "Display cache survives serialization and incomplete catalog refresh; known new bytes replace it.",
+    "Display cache contains no images, depot list, fingerprint or install authorization.",
+    "Preview requests only selected app and its required shared-depot parent metadata, with bounded work.",
+    "Normal membership synchronization does not start extra shared-parent size discovery.",
+    "Package metadata cache is account/license-snapshot scoped and invalidated on lifecycle/license changes.",
+    "Install uses a fresh verified plan captured before reservation work; later catalog updates cannot substitute display data."
+  ],
+  "limits": [
+    "A title with no known size needs its first Steam/network lookup.",
+    "On a cold account session, display preview can lack the license metadata still loading through normal synchronization; saved display bytes remain visible.",
+    "First captured UI state and controlled constructor tests are not display scan-out timing measurements.",
+    "Read-only size queries do not establish CDN installation or game compatibility."
+  ]
+}

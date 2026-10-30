@@ -70,5 +70,9 @@ extension AppDelegate {
       navigateToLibrary(store:canvas.filter,preservingSelection:true);return
     }
     view.update(game:state.configured(game),jobs:steamDownloads?.snapshot ?? [])
+    if let variant=view.selectedVariant{
+      let info=GameStorageDisplayCache.info(metadata:game.metadata ?? [:],platform:variant.platform)
+      if !variant.installed{view.updateStorage(variantID:variant.id,installedBytes:info.installedBytes,downloadBytes:info.downloadBytes,requiredBytes:info.requiredBytes)}
+    }
   }
 }

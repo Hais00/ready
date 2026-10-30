@@ -29,6 +29,21 @@ private final class LibraryVault {
     var state=LibraryState(profiles:[Profile(id:profile,name:"A"),Profile(id:other,name:"B")],activeProfile:profile,games:[local,remoteOther])
     state.gamePreferences=[GamePreferences.key(profile:profile,gameID:local.id):GamePreferences(engine:.vulkanKosmic,selectedVariant:planned.id,variants:[planned])]
     let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
+    var sizeMetadata:[String:JSONValue]=["platformSizes":.object(["windows":.object(["installedBytes":.unsigned(12345),"downloadBytes":.unsigned(6789),"verified":.bool(true),"status":.string("available"),"fingerprint":.string("never-cache-authority"),"selectedDepots":.array([])])])]
+    GameStorageDisplayCache.remember(in:&sizeMetadata)
+    sizeMetadata["platformSizes"] = .object(["windows":.object(["status":.string("unavailable")])])
+    let sizeStart=ProcessInfo.processInfo.systemUptime
+    let immediateSize=GameStorageDisplayCache.info(metadata:sizeMetadata,platform:.windows)
+    try check(immediateSize.installedBytes==12345 && immediateSize.downloadBytes==6789 && ProcessInfo.processInfo.systemUptime-sizeStart<0.01,"cachedSizeAvailableSynchronouslyWithoutNetworkOrWorker")
+    try check(!immediateSize.verified && immediateSize.status=="display_only" && GameStorageDisplayCache.info(metadata:sizeMetadata,platform:.macOS).installedBytes==nil,"cachedDisplayBytesCannotAuthorizeInstallOrLeakAcrossPlatforms")
+    let restoredMetadata=try JSONDecoder().decode([String:JSONValue].self,from:encoder.encode(sizeMetadata))
+    try check(GameStorageDisplayCache.info(metadata:restoredMetadata,platform:.windows).installedBytes==12345,"displaySizeCachePersistsAcrossSerialization")
+    var sizedLocal=local;sizedLocal.metadata=sizeMetadata
+    var sizedState=LibraryState(profiles:state.profiles,activeProfile:profile,games:[sizedLocal]);var sizedRemote=local;sizedRemote.metadata=["platformSizes":.object(["windows":.object(["status":.string("unavailable")])])]
+    SteamLibraryMerge.apply([sizedRemote],to:&sizedState,profile:profile,account:"fixture")
+    try check(GameStorageDisplayCache.info(metadata:sizedState.games[0].metadata ?? [:],platform:.windows).installedBytes==12345,"catalogRefreshCannotEraseKnownDisplaySize")
+    sizedRemote.metadata=["platformSizes":.object(["windows":.object(["installedBytes":.unsigned(23456)])])];SteamLibraryMerge.apply([sizedRemote],to:&sizedState,profile:profile,account:"fixture")
+    try check(GameStorageDisplayCache.info(metadata:sizedState.games[0].metadata ?? [:],platform:.windows).installedBytes==23456,"newKnownCatalogSizeReplacesSavedDisplayBytes")
     let preferences=try encoder.encode(state.gamePreferences)
     var nativeOnly=local;nativeOnly.id="local700";nativeOnly.storeID="700";nativeOnly.variants=[installed];nativeOnly.selectedVariant=installed.id
     let localWindows=GameVariant(id:"local-windows",platform:.windows,architecture:.x86_64,executable:"/fixture/game.exe",workingDirectory:"/fixture",installationRoot:"/fixture",arguments:["keep"],installed:true)

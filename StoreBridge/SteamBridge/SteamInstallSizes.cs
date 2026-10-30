@@ -14,6 +14,15 @@ sealed record SteamSizeRequest(uint AppID,string Platform,string Branch="public"
     }
 }
 sealed record SteamSelectedDepot(uint DepotID,uint SourceAppID,ulong ManifestID,ulong DownloadBytes,ulong InstalledBytes);
+// Package metadata can be reused within exactly one account/license snapshot.
+// Depot-key authorization remains a fresh server request for each install plan.
+sealed class SteamSizeEntitlementCache
+{
+    readonly object sync=new();object? scope;ulong account;IReadOnlySet<uint>? value;
+    internal IReadOnlySet<uint>? Get(object current,ulong self){lock(sync)return ReferenceEquals(scope,current)&&account==self?value:null;}
+    internal void Store(object current,ulong self,IEnumerable<uint> ids){lock(sync){scope=current;account=self;value=new HashSet<uint>(ids);}}
+    internal void Invalidate(){lock(sync){scope=null;account=0;value=null;}}
+}
 sealed class SteamSizePlan
 {
     internal required SteamSizeRequest Request;

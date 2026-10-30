@@ -158,6 +158,22 @@ static class SteamCatalogMetadataChecks
         var dlcProduct=Product(Depot(10,100,50,extra:"\"dlcappid\" \"123\""));Check(SteamInstallSizes.Build(new(1,"windows"),new Dictionary<uint,KeyValue>{{1,dlcProduct}}).Reason=="dlc_ownership_unknown","size-dlc-ownership-never-guessed");
         var proxy=Product("\"10\" {\"depotfromapp\" \"2\"}");var parent=Product(Depot(10,150,60));var shared=SteamInstallSizes.Build(new(1,"windows"),new Dictionary<uint,KeyValue>{{1,proxy},{2,parent}},new HashSet<uint>{10});
         Check(shared.InstalledBytes==150&&shared.DownloadBytes==60&&shared.Depots[0].SourceAppID==2,"size-shared-depot-parent-resolved");
+        var licenseCache=new SteamSizeEntitlementCache();object licenseScope=new();var mutableIDs=new HashSet<uint>{10};
+        Check(licenseCache.Get(licenseScope,1)is null,"size-license-cache-cold-miss");
+        licenseCache.Store(licenseScope,1,mutableIDs);mutableIDs.Add(11);
+        Check(licenseCache.Get(licenseScope,1)!.SetEquals(new uint[]{10}),"size-license-cache-reuses-copied-complete-snapshot");
+        Check(licenseCache.Get(new object(),1)is null&&licenseCache.Get(licenseScope,2)is null,"size-license-cache-never-crosses-license-snapshot-or-account");
+        licenseCache.Invalidate();Check(licenseCache.Get(licenseScope,1)is null,"size-license-cache-invalidates-on-session-or-license-change");
+        var sharedProducts=new Dictionary<uint,KeyValue>{{1,proxy},{2,parent}};var sharedCalls=new List<uint[]>();
+        Task<Dictionary<uint,KeyValue>> SharedFetch(IReadOnlyCollection<uint> ids,CancellationToken token){sharedCalls.Add(ids.ToArray());return Task.FromResult(ids.Where(sharedProducts.ContainsKey).ToDictionary(id=>id,id=>sharedProducts[id]));}
+        var expanded=await SteamOwnedGamesCatalog.WithSharedAsync(new uint[]{1},SharedFetch,default);
+        Check(sharedCalls.Count==2&&sharedCalls[1].SequenceEqual(new uint[]{2})&&expanded.Count==2,"selected-game-size-fetches-only-its-own-shared-parent-metadata");
+        var preview=JSON(SteamInstallSizes.Build(new(1,"windows"),expanded,new HashSet<uint>{10}).Payload());
+        Check(preview.GetProperty("installedBytes").GetUInt64()==150&&!preview.GetProperty("verified").GetBoolean(),"selected-game-preview-never-authorizes-installation");
+        sharedCalls.Clear();var previewPages=new List<JsonElement>();await SteamOwnedGamesCatalog.CollectAsync(_=>Task.FromResult(SteamOwnedGamesSnapshot.Unavailable()),_=>Task.FromResult(new HashSet<uint>{1}),SharedFetch,items=>previewPages.AddRange(items.Select(JSON)),default);
+        Check(previewPages.Count==1&&sharedCalls.Count==1&&sharedCalls[0].SequenceEqual(new uint[]{1}),"normal-library-sync-does-not-start-extra-size-or-shared-parent-lookups");
+        var keptInfo=await SteamOwnedGamesCatalog.WithSharedAsync(new uint[]{1},(ids,_)=>ids.Contains(1U)?Task.FromResult(new Dictionary<uint,KeyValue>{{1,proxy}}):Task.FromException<Dictionary<uint,KeyValue>>(new IOException()),default);
+        Check(keptInfo.ContainsKey(1)&&keptInfo.Count==1,"catalog-parent-failure-preserves-original-app-metadata");
         Check(SteamInstallSizes.Build(new(1,"windows"),new Dictionary<uint,KeyValue>{{1,proxy}}).InstalledBytes is null,"size-unresolved-shared-is-unavailable");
         var overflowing=Product(Depot(10,ulong.MaxValue,1)+Depot(11,1,1));Check(SteamInstallSizes.Build(new(1,"windows"),new Dictionary<uint,KeyValue>{{1,overflowing}}).Reason=="size_overflow","size-uint64-overflow-rejected");
         Check(SteamInstallSizes.Build(new(1,"windows","beta"),products).InstalledBytes is null,"size-private-branch-does-not-silently-use-public");

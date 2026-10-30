@@ -50,6 +50,34 @@ previous size estimates; it also cannot turn those estimates into an authorized
 installation plan. The interface distinguishes license-list failures, timeout,
 depot access and unsupported platforms from a genuinely missing size.
 
+## Display latency and updates on opening a game
+
+The detail reads stored per-platform bytes during its first render, including
+when switching from macOS to Windows, without waiting for an AppDelegate callback
+or a storage worker. Opening the detail refreshes only that selected game/version
+in the background through `install_size_overview`. This lighter operation reads
+PICS and any of that game's shared-depot parents, with bounded lookup; it neither
+enumerates every package nor requests depot keys. There is no extra all-catalog
+size discovery pass. Normal library/membership synchronization remains separate.
+
+The complete package snapshot already obtained during normal synchronization is
+reused only within the same account/license snapshot and cleared on changed
+licenses, logoff, disconnect and logon. An installation still requests its full
+verified plan and fresh depot access; a display overview never authorizes it.
+
+Known display bytes are also persisted separately in `readyGameSizeDisplayCache`.
+The detail reads them synchronously. An incomplete catalog refresh cannot erase
+them; a newer known size replaces them. This small numeric cache has no images,
+depot descriptors, fingerprints or installation authority. When current metadata
+has no size, the last known bytes can remain visible during a background check.
+Fresh installations use the captured verified plan, so a concurrent public
+catalog update cannot replace it with unverified display data before enqueue.
+The detail labels declared payload bytes as "Dimensione installazione".
+
+A game with no stored size still needs a first Steam/network lookup. The UI does
+not invent a number to claim instant availability. See the [size cache checkpoint](../Validation/game-size-cache-checkpoint.json)
+for first-render, version-switch and single-game request verification.
+
 ## What a size means
 
 - Installation payload: the selected uncompressed depot/manifest files. PICS

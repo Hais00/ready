@@ -45,6 +45,7 @@ interface ISteamServiceTransport:IAsyncDisposable
     Task<SteamServiceOwnership> AuthorizeAsync(uint appID,CancellationToken cancel);
     Task LibraryAsync(Action<object[]> page,CancellationToken cancel);
     Task<SteamSizePlan> InstallSizePlanAsync(SteamSizeRequest request,CancellationToken cancel)=>Task.FromResult(SteamInstallSizes.Unknown(request,"not_supported"));
+    Task<SteamSizePlan> InstallSizeOverviewAsync(SteamSizeRequest request,CancellationToken cancel)=>Task.FromResult(SteamInstallSizes.Unknown(request,"not_supported"));
 }
 
 /// One process serves one immutable (profileID, profileGeneration). It receives
@@ -250,10 +251,11 @@ sealed class PersistentSteamService:IAsyncDisposable
                     var pages=new SteamLibraryPages(paged,(games,index)=>Emit("library_page",id,new(){["games"]=games,["pageIndex"]=index}));
                     await transport.LibraryAsync(page=>{lock(sync){EnsureEpoch(libraryEpoch);cancel.Token.ThrowIfCancellationRequested();pages.Add(page);}},cancel.Token);
                     lock(sync){EnsureEpoch(libraryEpoch);cancel.Token.ThrowIfCancellationRequested();Result(id,pages.Complete());}break;
+                case "install_size_overview":
                 case "install_size_plan":
                     RequireOnline();long sizeEpoch=CurrentEpoch();var sizeOptions=Options(root);
                     var sizeRequest=SteamSizeRequest.Create(AppID(root),Text(sizeOptions,"platform"),Text(sizeOptions,"branch","public"),Text(sizeOptions,"language","english"),Text(sizeOptions,"architecture","64"));
-                    var sizePlan=await transport.InstallSizePlanAsync(sizeRequest,cancel.Token);
+                    var sizePlan=operation=="install_size_overview"?await transport.InstallSizeOverviewAsync(sizeRequest,cancel.Token):await transport.InstallSizePlanAsync(sizeRequest,cancel.Token);
                     lock(sync){EnsureEpoch(sizeEpoch);cancel.Token.ThrowIfCancellationRequested();Result(id,new(){["appID"]=sizeRequest.AppID,["plan"]=sizePlan.Payload()});}break;
                 case "catalog_metadata":
                     uint catalogApp=AppID(root);var catalogOptions=Options(root);string language=SteamPublicCatalog.Language(Text(catalogOptions,"language","english"));bool refresh=false;
@@ -605,7 +607,7 @@ sealed class PersistentSteamService:IAsyncDisposable
             var fields=state=="online"?FriendPage(options):new Dictionary<string,object?>{["friends"]=Array.Empty<object>()};
             fields["state"]=state;fields["reason"]=reason;fields["account"]=state=="online"?transport.Account(credentials?.Username??""):null;
             fields["steamResult"]=SteamSafeFailure.ResultName(lastConnectionResult);fields["connectionResultContext"]=connectionResultContext;
-            fields["capabilities"]=new[]{"connect","authenticate","guard_code","snapshot","friends","set_presence","set_persona_name","add_friend","remove_friend","block_friend","unblock_friend","set_activity","authorize_game","library","catalog_metadata","install_size_plan","offline","reconnect","logout","cancel","shutdown"};
+            fields["capabilities"]=new[]{"connect","authenticate","guard_code","snapshot","friends","set_presence","set_persona_name","add_friend","remove_friend","block_friend","unblock_friend","set_activity","authorize_game","library","catalog_metadata","install_size_plan","install_size_overview","offline","reconnect","logout","cancel","shutdown"};
             fields["protocolVersion"]=1;fields["backendSessionReady"]=false;
             Result(id,fields);
         }
@@ -751,6 +753,7 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
     readonly Task pump;
     readonly SteamSocialConfirmation socialConfirmation=new();
     readonly SemaphoreSlim installPlanGate=new(1,1);
+    readonly SteamSizeEntitlementCache sizeEntitlements=new();
     string? confirmedDisplayName;
     // Downloader uses the disjoint 0xD0000000..0xDfffffff range.
     readonly uint loginID=(BitConverter.ToUInt32(RandomNumberGenerator.GetBytes(4))&0x7fffffffU)|1U;
@@ -765,13 +768,13 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
         callbacks=new(client);user=client.GetHandler<SteamUser>()!;apps=client.GetHandler<SteamApps>()!;friends=client.GetHandler<SteamFriends>()!;
         subscriptions.Add(callbacks.Subscribe<SteamClient.ConnectedCallback>(_=>{lock(sync)connected?.TrySetResult(true);}));
         subscriptions.Add(callbacks.Subscribe<SteamUser.LoggedOnCallback>(value=>{lock(sync)loggedOn?.TrySetResult(value.Result);}));
-        subscriptions.Add(callbacks.Subscribe<SteamApps.LicenseListCallback>(value=>{lock(sync)licenses.TrySetResult(value);}));
+        subscriptions.Add(callbacks.Subscribe<SteamApps.LicenseListCallback>(value=>{lock(sync){sizeEntitlements.Invalidate();if(licenses.Task.IsCompleted)licenses=NewCompletion<SteamApps.LicenseListCallback>();licenses.TrySetResult(value);}}));
         subscriptions.Add(callbacks.Subscribe<SteamClient.DisconnectedCallback>(value=>
         {
-            lock(sync){connected?.TrySetException(new IOException());loggedOn?.TrySetException(new IOException());licenses.TrySetException(new IOException());}
+            lock(sync){sizeEntitlements.Invalidate();connected?.TrySetException(new IOException());loggedOn?.TrySetException(new IOException());licenses.TrySetException(new IOException());}
             Notice?.Invoke(new("disconnected",UserInitiated:value.UserInitiated));
         }));
-        subscriptions.Add(callbacks.Subscribe<SteamUser.LoggedOffCallback>(value=>{lock(sync){if(!stopping)Notice?.Invoke(new("logged_off",value.Result));}}));
+        subscriptions.Add(callbacks.Subscribe<SteamUser.LoggedOffCallback>(value=>{lock(sync){sizeEntitlements.Invalidate();if(!stopping)Notice?.Invoke(new("logged_off",value.Result));}}));
         subscriptions.Add(callbacks.Subscribe<DrainCallback>(value=>value.Completion.TrySetResult(true)));
         subscriptions.Add(callbacks.Subscribe<SteamUser.AccountInfoCallback>(value=>{Volatile.Write(ref confirmedDisplayName,value.PersonaName);Notice?.Invoke(new("persona"));}));
         subscriptions.Add(callbacks.Subscribe<SteamFriends.PersonaChangeCallback>(value=>
@@ -807,7 +810,7 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
     }
     public async Task<EResult> LogOnAsync(SteamServiceCredentials credentials,CancellationToken cancel)
     {
-        Task<EResult> task;lock(sync){loggedOn=NewCompletion<EResult>();licenses=NewCompletion<SteamApps.LicenseListCallback>();task=loggedOn.Task;}
+        Task<EResult> task;lock(sync){sizeEntitlements.Invalidate();loggedOn=NewCompletion<EResult>();licenses=NewCompletion<SteamApps.LicenseListCallback>();task=loggedOn.Task;}
         var details=SteamLoginPolicy.CreateLogOnDetails(credentials.Username,credentials.RefreshToken);details.LoginID=loginID;
         user.LogOn(details);return await task.WaitAsync(cancel);
     }
@@ -815,7 +818,7 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
     {
         // Dispose/Disconnect may synchronously join a socket worker; never invoke
         // it from that callback/pump. The vendored close-task fix is also required.
-        lock(sync)stopping=true;
+        lock(sync){stopping=true;sizeEntitlements.Invalidate();}
         try
         {
             await Task.Run(()=>{if(client.IsConnected)user.LogOff();client.Disconnect();});
@@ -904,6 +907,20 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
             },CancellationToken.None,TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
         }
     }
+    public async Task<SteamSizePlan> InstallSizeOverviewAsync(SteamSizeRequest request,CancellationToken cancel)
+    {
+        using var budget=CancellationTokenSource.CreateLinkedTokenSource(cancel);budget.CancelAfter(TimeSpan.FromSeconds(15));
+        try
+        {
+            ulong self=client.SteamID?.ConvertToUInt64()??0;if(self==0||!client.IsConnected)throw new IOException();
+            var info=await SteamOwnedGamesCatalog.WithSharedAsync(new[]{request.AppID},(ids,token)=>SteamOwnedGamesCatalog.AppInfoAsync(apps,ids,token),budget.Token);
+            Task<SteamApps.LicenseListCallback> scope;lock(sync)scope=licenses.Task;
+            var plan=SteamInstallSizes.Build(request,info,sizeEntitlements.Get(scope,self));
+            if(client.SteamID?.ConvertToUInt64()!=self||!client.IsConnected)throw new IOException();
+            return plan; // Display only: no package enumeration or depot-key request.
+        }
+        catch(OperationCanceledException)when(!cancel.IsCancellationRequested){return SteamInstallSizes.Unknown(request,"size_plan_timeout");}
+    }
     public async Task<SteamSizePlan> InstallSizePlanAsync(SteamSizeRequest request,CancellationToken cancel)
     {
         using var budget=CancellationTokenSource.CreateLinkedTokenSource(cancel);budget.CancelAfter(TimeSpan.FromSeconds(30));
@@ -916,9 +933,12 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
             if(request.Language!="english")return SteamInstallSizes.Unknown(request,"language_not_supported");
             Task<SteamApps.LicenseListCallback> licenseTask;lock(sync)licenseTask=licenses.Task;
             var licenseList=await licenseTask.WaitAsync(budget.Token);if(licenseList.Result!=EResult.OK)return SteamInstallSizes.Unknown(request,"ownership_unavailable");
-            var entitled=new HashSet<uint>();
-            foreach(var chunk in licenseList.LicenseList.Chunk(100))
+            IReadOnlySet<uint>? entitled=sizeEntitlements.Get(licenseTask,self);
+            if(entitled is null)
             {
+              var selected=new HashSet<uint>();
+              foreach(var chunk in licenseList.LicenseList.Chunk(100))
+              {
                 var missingTokens=chunk.Where(x=>x.AccessToken==0).Select(x=>x.PackageID).Distinct().ToArray();
                 var refreshed=missingTokens.Length==0?null:await apps.PICSGetAccessTokens(Array.Empty<uint>(),missingTokens).ToTask().WaitAsync(budget.Token);
                 var packages=await apps.PICSGetProductInfo(Array.Empty<SteamApps.PICSRequest>(),chunk.Select(x=>new SteamApps.PICSRequest(x.PackageID,x.AccessToken!=0?x.AccessToken:refreshed?.PackageTokens.GetValueOrDefault(x.PackageID)??0))).ToTask().WaitAsync(budget.Token);
@@ -927,7 +947,10 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
                 foreach(var result in packages.Results)foreach(var package in result.Packages.Values)if(package.KeyValues is{} values)packageValues[package.ID]=values;
                 var chunkEntitlements=SteamInstallSizes.PackageEntitlements(chunk.Select(x=>x.PackageID),packageValues,out string ownershipReason);
                 if(chunkEntitlements is null)return SteamInstallSizes.Unknown(request,ownershipReason);
-                entitled.UnionWith(chunkEntitlements);
+                selected.UnionWith(chunkEntitlements);
+              }
+              lock(sync){if(!ReferenceEquals(licenses.Task,licenseTask))return SteamInstallSizes.Unknown(request,"ownership_changed");sizeEntitlements.Store(licenseTask,self,selected);}
+              entitled=selected;
             }
             var info=await SteamOwnedGamesCatalog.AppInfoAsync(apps,new[]{request.AppID},budget.Token);
             var inspected=new HashSet<uint>();var queue=new Queue<uint>();queue.Enqueue(request.AppID);
@@ -952,6 +975,7 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
                 }
             }
             budget.Token.ThrowIfCancellationRequested();if(client.SteamID?.ConvertToUInt64()!=self||!client.IsConnected)throw new IOException();
+            lock(sync){if(!ReferenceEquals(licenses.Task,licenseTask))return SteamInstallSizes.Unknown(request,"ownership_changed");}
             plan.Verified=true;plan.Reason="selection_verified";return plan;
         }
         catch(OperationCanceledException)when(!cancel.IsCancellationRequested){return SteamInstallSizes.Unknown(request,"size_plan_timeout");}
@@ -960,8 +984,9 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
     public async Task LibraryAsync(Action<object[]> page,CancellationToken cancel)
     {
         Task<SteamApps.LicenseListCallback> task;lock(sync)task=licenses.Task;
+        ulong self=client.SteamID?.ConvertToUInt64()??0;
         await SteamOwnedGamesCatalog.CollectAsync(token=>SteamOwnedGamesCatalog.FetchSelfAsync(client,token),
-            token=>SteamOwnedGamesCatalog.PackageIDsAsync(apps,task,token),
+            token=>SteamOwnedGamesCatalog.PackageIDsAsync(apps,task,token,ids=>{lock(sync){if(ReferenceEquals(licenses.Task,task)&&client.SteamID?.ConvertToUInt64()==self)sizeEntitlements.Store(task,self,ids);}}),
             (ids,token)=>SteamOwnedGamesCatalog.AppInfoAsync(apps,ids,token),page,cancel);
     }
     public async ValueTask DisposeAsync()

@@ -25,6 +25,15 @@ private final class AppearanceWindow:NSWindow{override func constrainFrameRect(_
     var checks=[String:Bool]()
     func check(_ value:Bool,_ name:String)throws{checks[name]=value;if !value{throw NSError(domain:name,code:1)}}
     func pump(_ seconds:Double=0.08){let end=Date().addingTimeInterval(seconds);while Date()<end{_=RunLoop.main.run(mode:.default,before:Date().addingTimeInterval(0.005))}}
+    var preloaded=game;preloaded.metadata?["platformSizes"] = .object(["windows":.object(["installedBytes":.unsigned(9_000_000_000)]),"macOS":.object(["installedBytes":.unsigned(3_000_000_000)])]);preloaded.selectedVariant="windows"
+    let windowsFirst=GameDetailView(game:preloaded,artwork:cache,profile:state.activeProfile)
+    try check(windowsFirst.navigationSnapshot.storageText.contains(ByteCountFormatter.string(fromByteCount:9_000_000_000,countStyle:.file)),"WindowsSizeIsPresentInConstructorBeforeWindowOrAsyncCallbacks")
+    preloaded.selectedVariant="native";let nativeFirst=GameDetailView(game:preloaded,artwork:cache,profile:state.activeProfile)
+    try check(nativeFirst.navigationSnapshot.storageText.contains(ByteCountFormatter.string(fromByteCount:3_000_000_000,countStyle:.file)),"MacSizeUsesSameSynchronousFirstRenderPath")
+    _=nativeFirst.handleController(.move(.down));_=nativeFirst.handleController(.move(.right))
+    try check(nativeFirst.selectedVariant?.id=="windows"&&nativeFirst.navigationSnapshot.storageText.contains(ByteCountFormatter.string(fromByteCount:9_000_000_000,countStyle:.file)),"SwitchingFromMacToWindowsShowsCachedSizeBeforeVariantCallback")
+    preloaded.metadata?["platformSizes"] = .object(["windows":.object(["installedBytes":.unsigned(10_000_000_000)])]);windowsFirst.update(game:preloaded,jobs:[])
+    try check(windowsFirst.navigationSnapshot.storageText.contains(ByteCountFormatter.string(fromByteCount:10_000_000_000,countStyle:.file)),"NewMetadataRefreshesDisplayedSizeWithoutWaitingForStorageWorker")
     let canvas=MetalCanvas(frame:NSRect(x:0,y:0,width:1000,height:820),device:device,artworkCache:cache)
     canvas.state=state
     for item in state.games{let deadline=Date().addingTimeInterval(3);while cache.image(for:item,role:.card,refresh:{})==nil && Date()<deadline{pump(0.01)}}
@@ -89,6 +98,8 @@ private final class AppearanceWindow:NSWindow{override func constrainFrameRect(_
     detail.updateStorage(variantID:"native",installedBytes:12345);try check(!detail.navigationSnapshot.storageText.contains("Installazione"),"storageForDifferentVariantDoesNotLeakIntoCurrentSelection")
     detail.updateStorage(variantID:"windows",downloadBytes:2_000_000_000,availableBytes:20_000_000_000,location:"Own external disk");pump()
     try check(detail.navigationSnapshot.storageText.contains("Download") && detail.navigationSnapshot.storageText.contains("Own external disk"),"storageContractShowsScopedOptionalValuesWithoutFilesystemReads")
+    detail.updateStorage(variantID:"windows",installedBytes:12345)
+    try check(detail.navigationSnapshot.storageText.contains("Dimensione installazione") && !detail.navigationSnapshot.storageText.contains("stimata"),"declaredUninstalledPayloadIsNotAlwaysLabelledEstimated")
     for width:CGFloat in [460,740,1092]{detail.setFrameSize(NSSize(width:width,height:detail.frame.height));detail.layoutSubtreeIfNeeded();pump();detail.layoutSubtreeIfNeeded();try check(detail.subviews.allSatisfy{$0.isHidden || ($0.frame.minX>=0 && $0.frame.maxX<=width+0.5)},"detailControlsFitWidth\(Int(width))")}
     try check(!NSApp.isActive && !window.isKeyWindow && !dw.isKeyWindow,"ownHiddenWindowsNeverActivate")
     print(String(decoding:try JSONSerialization.data(withJSONObject:["passed":true,"count":checks.count,"checks":checks,"fixtureOnly":true,"realGameAccountOrLibraryWriteUsed":false,"globalInputInjected":false],options:[.sortedKeys]),as:UTF8.self))

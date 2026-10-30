@@ -50,17 +50,22 @@ static class SteamOwnedGamesCatalog
         if(client.SteamID?.ConvertToUInt64()!=self||!client.IsConnected)throw new IOException();
         return snapshot;
     }
-    internal static async Task<HashSet<uint>> PackageIDsAsync(SteamApps apps,Task<SteamApps.LicenseListCallback> licenseTask,CancellationToken cancel)
+    internal static async Task<HashSet<uint>> PackageIDsAsync(SteamApps apps,Task<SteamApps.LicenseListCallback> licenseTask,CancellationToken cancel,Action<HashSet<uint>>? onEntitlements=null)
     {
         var licenses=await licenseTask.WaitAsync(cancel);if(licenses.Result!=EResult.OK)throw new IOException();
-        var ids=new HashSet<uint>();
+        var ids=new HashSet<uint>();var depots=new HashSet<uint>();
         foreach(var chunk in licenses.LicenseList.Chunk(100))
         {
-            var response=await apps.PICSGetProductInfo(Array.Empty<SteamApps.PICSRequest>(),chunk.Select(x=>new SteamApps.PICSRequest(x.PackageID,x.AccessToken))).ToTask().WaitAsync(cancel);
+            var missing=chunk.Where(x=>x.AccessToken==0).Select(x=>x.PackageID).Distinct().ToArray();
+            var tokens=missing.Length==0?null:await apps.PICSGetAccessTokens(Array.Empty<uint>(),missing).ToTask().WaitAsync(cancel);
+            var response=await apps.PICSGetProductInfo(Array.Empty<SteamApps.PICSRequest>(),chunk.Select(x=>new SteamApps.PICSRequest(x.PackageID,x.AccessToken!=0?x.AccessToken:tokens?.PackageTokens.GetValueOrDefault(x.PackageID)??0))).ToTask().WaitAsync(cancel);
             if(!response.Complete||response.Failed||response.Results is null)throw new IOException();
+            var packages=new Dictionary<uint,KeyValue>();
             foreach(var part in response.Results)foreach(var package in part.Packages.Values)
-                if(package.KeyValues is{} values)foreach(var item in values["appids"].Children)if(uint.TryParse(item.Value,out uint id)&&id>0)ids.Add(id);
+                if(package.KeyValues is{} values){packages[package.ID]=values;foreach(var item in values["appids"].Children)if(uint.TryParse(item.Value,out uint id)&&id>0)ids.Add(id);}
+            var selected=SteamInstallSizes.PackageEntitlements(chunk.Select(x=>x.PackageID),packages);if(selected is null)throw new IOException();depots.UnionWith(selected);
         }
+        onEntitlements?.Invoke(depots);
         return ids;
     }
     internal static async Task<Dictionary<uint,KeyValue>> AppInfoAsync(SteamApps apps,IReadOnlyCollection<uint> ids,CancellationToken cancel)
@@ -69,6 +74,21 @@ static class SteamOwnedGamesCatalog
         var response=await apps.PICSGetProductInfo(ids.Select(id=>new SteamApps.PICSRequest(id,tokens.AppTokens.GetValueOrDefault(id))),Array.Empty<SteamApps.PICSRequest>()).ToTask().WaitAsync(cancel);
         if(!response.Complete||response.Failed||response.Results is null)throw new IOException();
         var result=new Dictionary<uint,KeyValue>();foreach(var part in response.Results)foreach(var app in part.Apps.Values)if(app.KeyValues is{} values)result[app.ID]=values;return result;
+    }
+    internal static async Task<Dictionary<uint,KeyValue>> WithSharedAsync(IReadOnlyCollection<uint> ids,Func<IReadOnlyCollection<uint>,CancellationToken,Task<Dictionary<uint,KeyValue>>> fetch,CancellationToken cancel)
+    {
+        var info=await fetch(ids,cancel);var requested=new HashSet<uint>(ids);
+        for(int depth=0;depth<8;depth++)
+        {
+            cancel.ThrowIfCancellationRequested();
+            var parents=info.Values.SelectMany(app=>app["depots"].Children).Select(depot=>uint.TryParse(depot["depotfromapp"].Value,out uint parent)?parent:0).Where(parent=>parent>0&&!requested.Contains(parent)).Distinct().ToArray();
+            if(parents.Length==0||requested.Count+parents.Length>512)break;
+            requested.UnionWith(parents);
+            try{var extra=await fetch(parents,cancel);foreach(uint parent in parents)if(extra.TryGetValue(parent,out var value))info[parent]=value;}
+            catch(OperationCanceledException)when(cancel.IsCancellationRequested){throw;}
+            catch(Exception){break;} // Keep useful original app metadata on a parent lookup failure.
+        }
+        return info;
     }
     internal static async Task CollectAsync(Func<CancellationToken,Task<SteamOwnedGamesSnapshot>> owned,
         Func<CancellationToken,Task<HashSet<uint>>> licenses,

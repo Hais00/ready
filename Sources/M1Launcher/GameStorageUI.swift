@@ -3,9 +3,10 @@ import AppKit
 import LauncherCore
 
 extension AppDelegate {
-  @MainActor func requestGameStoragePlan(game:Game,variant:GameVariant,completion:@escaping(GameStorageInfo,String?)->Void){
+  @MainActor func requestGameStoragePlan(game:Game,variant:GameVariant,preview:Bool=false,completion:@escaping(GameStorageInfo,String?)->Void){
     let profile=state.activeProfile
-    let options:[String:Any]=["gameID":game.storeID,"platform":variant.platform.rawValue,"branch":"public","language":game.store == .steam ? "english":"en","architecture":"64","includeDLC":false,"metadata":game.metadata?.mapValues{$0.foundation} ?? [:]]
+    var options:[String:Any]=["gameID":game.storeID,"platform":variant.platform.rawValue,"branch":"public","language":game.store == .steam ? "english":"en","architecture":"64","includeDLC":false]
+    if game.store != .steam{options["metadata"]=game.metadata?.mapValues{$0.foundation} ?? [:]}
     let receive:([String:Any])->Void={ [weak self]event in
       MainActor.assumeIsolated{
         guard let self,self.state.activeProfile==profile else{return}
@@ -17,40 +18,41 @@ extension AppDelegate {
             all[variant.platform.rawValue] = .object(metadata)
             if self.state.games[index].metadata==nil{self.state.games[index].metadata=[:]}
             self.state.games[index].metadata?["platformSizes"] = .object(all)
+            if var current=self.state.games[index].metadata{GameStorageDisplayCache.remember(in:&current);self.state.games[index].metadata=current}
             self.repository.saveAsync(self.state){_ in}
           }
           // A transient authorization/metadata failure must not erase useful
           // catalog estimates. Its status and verification remain failed.
           if !info.hasSize{
             let current=self.state.games.first(where:{$0.id==game.id}) ?? game
-            let cached=GameStorageInfo(metadata:current.metadata ?? [:],platform:variant.platform)
+            let cached=GameStorageDisplayCache.info(metadata:current.metadata ?? [:],platform:variant.platform)
             info.installedBytes=cached.installedBytes;info.downloadBytes=cached.downloadBytes;info.requiredBytes=cached.requiredBytes
           }
           completion(info,nil)
         }else{
           let code=event["code"]as?String ?? "size_unavailable"
-          completion(GameStorageInfo(metadata:game.metadata ?? [:],platform:variant.platform),code)
+          completion(GameStorageDisplayCache.info(metadata:game.metadata ?? [:],platform:variant.platform),code)
         }
       }
     }
     if game.store == .steam{
       if steamNetwork==nil{configureSteamNetwork()}
-      guard let network=steamNetwork,network.state.online,network.accountReadyForGame()else{completion(GameStorageInfo(metadata:game.metadata ?? [:],platform:variant.platform),"authentication_required");return}
-      network.request("install_size_plan",options:options,event:receive)
+      guard let network=steamNetwork,network.state.online,network.accountReadyForGame()else{completion(GameStorageDisplayCache.info(metadata:game.metadata ?? [:],platform:variant.platform),"authentication_required");return}
+      network.request(preview ? "install_size_overview":"install_size_plan",options:options,event:receive)
     }else if game.store != .local{storeClient.request(operation:"install_size_plan",store:game.store,profile:profile,options:options,event:receive)}
     else{completion(GameStorageInfo(),"local_import_only")}
   }
   @MainActor func refreshGameStorageDetails(){
     guard let view=gameDetailView,let id=gameDetailID,let game=state.games.first(where:{$0.id==id}),let variant=view.selectedVariant else{return}
     let profile=state.activeProfile,epoch=UUID();gameStorageRequest=epoch
-    let configured=state.configured(game),info=GameStorageInfo(metadata:game.metadata ?? [:],platform:variant.platform)
+    let configured=state.configured(game),info=GameStorageDisplayCache.info(metadata:game.metadata ?? [:],platform:variant.platform)
     view.updateStorage(variantID:variant.id,installedBytes:info.installedBytes,downloadBytes:info.downloadBytes,location:variant.installationRoot,requiredBytes:info.requiredBytes)
     if variant.installed{
       gameStorageSizes.measure(game:configured,variant:variant){[weak self,weak view]bytes in
         MainActor.assumeIsolated{guard let self,let view,self.gameDetailView===view,self.gameStorageRequest==epoch,self.state.activeProfile==profile else{return};view.updateStorage(variantID:variant.id,installedBytes:bytes ?? info.installedBytes,downloadBytes:info.downloadBytes,location:variant.installationRoot,requiredBytes:info.requiredBytes)}
       }
-    }else if info.installedBytes==nil,game.store != .local,(game.store != .steam || steamNetwork?.state.online==true){
-      requestGameStoragePlan(game:configured,variant:variant){[weak self,weak view]size,_ in
+    }else if game.store != .local,(game.store != .steam || steamNetwork?.state.online==true){
+      requestGameStoragePlan(game:configured,variant:variant,preview:true){[weak self,weak view]size,_ in
         guard let self,let view,self.gameDetailView===view,self.gameStorageRequest==epoch,self.state.activeProfile==profile else{return}
         view.updateStorage(variantID:variant.id,installedBytes:size.installedBytes,downloadBytes:size.downloadBytes,requiredBytes:size.requiredBytes)
       }
@@ -62,7 +64,8 @@ extension AppDelegate {
     guard !variant.installed,game.profileIDs==nil || game.profileIDs!.contains(profile)else{return}
     beginPage(.utility);gameDetailView=nil;gameDetailID=nil
     let id=UUID(),view=GameInstallationView(game:game,variant:variant);installationPickerID=id;installationPickerView=view
-    var options=[GameInstallationOption](),selected:UUID?,info=GameStorageInfo(metadata:game.metadata ?? [:],platform:variant.platform),loading=true,planUsable=false,authRequired=false,message:String?
+    var options=[GameInstallationOption](),selected:UUID?,info=GameStorageDisplayCache.info(metadata:game.metadata ?? [:],platform:variant.platform),loading=true,planUsable=false,authRequired=false,message:String?
+    var installationGame=game
     let valid:()->Bool={ [weak self,weak view] in guard let self,let view else{return false};return self.installationPickerID==id && self.state.activeProfile==profile && self.installationPickerView===view && self.session?.running != true}
     let render:()->Void={ [weak view] in guard valid(),let view else{return};view.update(options:options,selected:selected,info:info,loading:loading,message:message,canInstall:planUsable,authorizationRequired:authRequired)}
     let back={ [weak self]in guard let self else{return};self.installationPickerView=nil;self.installationPickerID=nil;self.showGameDetails(id:game.id)}
@@ -77,6 +80,7 @@ extension AppDelegate {
       self.requestGameStoragePlan(game:game,variant:variant){size,code in
         guard valid()else{return};loading=false;info=size;authRequired=["authentication_required","not_online","auth_required","credentials_missing"].contains(code ?? "")
         planUsable=code==nil && size.installedBytes != nil && size.verified && size.status=="available"
+        if planUsable,let current=self.state.games.first(where:{$0.id==game.id}){installationGame=self.state.configured(current)}
         if let code{message=authRequired ? "Accedi allo store per verificare dimensione e installazione.":"Dimensione non verificata: ricalcola quando lo store è disponibile (\(code))."}
         else if !planUsable{
           let reason=size.reason ?? size.status
@@ -102,6 +106,7 @@ extension AppDelegate {
     }
     view.onInstall={[weak self,weak view]in
       guard let self,let view,valid(),let selected,planUsable,let bytes=info.reservationBytes else{return}
+      let selectedPlanGame=installationGame
       view.setWorking("Prenotazione dello spazio e verifica della cartella…")
       let registry=self.storageLibraries
       DispatchQueue.global(qos:.utility).async{
@@ -118,7 +123,7 @@ extension AppDelegate {
             self.installationPickerView=nil;self.installationPickerID=nil
             if game.store == .steam{
               if self.steamDownloads==nil{self.configureSteamNetwork()}
-              self.steamDownloads?.enqueue(game:self.state.configured(self.state.games.first(where:{$0.id==game.id}) ?? game),variant:variant,installation:target,reservationID:reservation.id){[weak self]result in
+              self.steamDownloads?.enqueue(game:selectedPlanGame,variant:variant,installation:target,reservationID:reservation.id){[weak self]result in
                 guard let self else{return}
                 DispatchQueue.global(qos:.utility).async{
                   if case .failure=result{try?registry.release(reservationID:reservation.id)}

@@ -249,9 +249,11 @@ private final class GameHeroView:NSView {
       if let transferFraction{progress.stopAnimation(nil);progress.doubleValue=transferFraction}else{progress.startAnimation(nil)}
     }else{progress.stopAnimation(nil);status.stringValue=variant.map{$0.installed ? $0.verification:"Scegli la versione da scaricare. L’architettura macOS verrà verificata sui file installati."} ?? "Nessuna versione disponibile per questo titolo."}
     var storageParts=[String]()
-    if let id=selectedVariant?.id,let info=storage[id]{
+    if let variant=selectedVariant{
+      let cached=GameStorageDisplayCache.info(metadata:game.metadata ?? [:],platform:variant.platform)
+      let info=storage[variant.id] ?? StorageInfo(installed:cached.installedBytes,download:cached.downloadBytes,available:nil,required:cached.requiredBytes,location:variant.installationRoot)
       func bytes(_ value:UInt64)->String{ByteCountFormatter.string(fromByteCount:Int64(min(value,UInt64(Int64.max))),countStyle:.file)}
-      if let value=info.installed{storageParts.append((selectedVariant?.installed==true ? "Installazione · ":"Installazione stimata · ")+bytes(value))}
+      if let value=info.installed{storageParts.append((selectedVariant?.installed==true ? "Installazione · ":"Dimensione installazione · ")+bytes(value))}
       if let value=info.download{storageParts.append("Download · "+bytes(value))}
       if info.installed==nil,let value=info.required{storageParts.append("Requisito minimo store · "+bytes(value))}
       if let value=info.available{storageParts.append("Disponibili · "+bytes(value))}

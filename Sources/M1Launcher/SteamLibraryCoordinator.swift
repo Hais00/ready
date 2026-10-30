@@ -77,6 +77,7 @@ enum SteamLibraryMerge {
           !localIDs.contains(incoming.id) && !(incoming.architecture == .unknown && old.variants.contains{$0.platform==incoming.platform})
         }
         var metadata = old.metadata ?? [:]
+        GameStorageDisplayCache.remember(in:&metadata)
         let keepRichCatalog = metadata["metadataComplete"] == .bool(true) && remote.metadata?["metadataComplete"] != .bool(true)
         let incoming=remote.metadata ?? [:]
         let authoritative=["pics","cm_player"].contains(incoming["libraryClassificationSource"]?.foundation as?String ?? "") && knownKind(incoming) != nil
@@ -91,6 +92,7 @@ enum SteamLibraryMerge {
           metadata[key] = value
         }
         if keepRichCatalog,let artwork=old.artworkURL,!artwork.isEmpty{game.artworkURL=artwork}
+        GameStorageDisplayCache.remember(in:&metadata)
         game.metadata = metadata
         // Shared discovered installations retain their original visibility.
         game.profileIDs = old.profileIDs == nil && local(old) ? nil : Array(Set((old.profileIDs ?? []) + [profile]))
@@ -100,6 +102,7 @@ enum SteamLibraryMerge {
       } else {
         game.profileIDs = [profile]
         var metadata = game.metadata ?? [:]; metadata[ownersKey] = .object([profile.uuidString: .string(account)])
+        GameStorageDisplayCache.remember(in:&metadata)
         game.metadata = metadata; state.games.append(game)
       }
     }

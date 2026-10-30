@@ -22,7 +22,7 @@ static class PersistentSteamServiceChecks
     sealed class Fake:ISteamServiceTransport
     {
         public event Action<SteamTransportNotice>? Notice;
-        internal int Connects,Auths,Stops,Logons,OwnershipCalls,SizeCalls;
+        internal int Connects,Auths,Stops,Logons,OwnershipCalls,SizeCalls,SizeOverviewCalls;
         internal bool WaitSizePlan;internal TaskCompletionSource<SteamSizePlan> SizeGate=new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool FailConnect,FailStop,WaitAuth,WaitOwnership,IgnoreOwnershipCancellation,WaitLogin,IgnoreLoginCancellation;
         internal EResult LoginResult=EResult.OK;
@@ -79,6 +79,10 @@ static class PersistentSteamServiceChecks
             SizeCalls++;if(WaitSizePlan)return await SizeGate.Task;
             return new(){Request=request,DownloadBytes=50,InstalledBytes=100,Verified=true,Source="fixture_selected_depot_totals",Status="available",Reason="selection_verified",Depots=new(){new(10,request.AppID,110,50,100)}};
         }
+        public Task<SteamSizePlan> InstallSizeOverviewAsync(SteamSizeRequest request,CancellationToken cancel)
+        {
+            SizeOverviewCalls++;cancel.ThrowIfCancellationRequested();return Task.FromResult(new SteamSizePlan{Request=request,DownloadBytes=50,InstalledBytes=100,Verified=false,Status="available",Depots=new(){new(10,request.AppID,110,50,100)}});
+        }
         public Task LibraryAsync(Action<object[]> page,CancellationToken cancel)
         {cancel.ThrowIfCancellationRequested();page(new object[]{new{id="steam:480",storeID="480",variants=Array.Empty<object>()}});return Task.CompletedTask;}
         internal void Drop()=>Notice?.Invoke(new("disconnected"));
@@ -117,10 +121,13 @@ static class PersistentSteamServiceChecks
             string snap=s.Send("snapshot");await s.Done(snap);
             Check(S(s.Terminal(snap),"state")=="offline"&&s.Transport.Connects==0,"offline-snapshot-does-not-connect");
             string offlineSize=s.Send("install_size_plan",new{gameID="480",platform="windows"});await s.Done(offlineSize);Check(S(s.Terminal(offlineSize),"code")=="not_online"&&s.Transport.SizeCalls==0&&s.Transport.Connects==0,"size-plan-never-starts-automatic-login-or-offline-queries");
+            string offlineOverview=s.Send("install_size_overview",new{gameID="480",platform="windows"});await s.Done(offlineOverview);Check(S(s.Terminal(offlineOverview),"code")=="not_online"&&s.Transport.SizeOverviewCalls==0,"size-preview-never-starts-login");
             await s.Connect();Check(s.Transport.Logons==1&&s.Transport.Auths==0&&s.Transport.LastToken==Secret,"saved-refresh-connect-no-QR");
             string sized=s.Send("install_size_plan",new{gameID="480",platform="windows",branch="public",language="english",architecture="64"});await s.Done(sized);var plan=s.Terminal(sized).GetProperty("plan");
             Check(plan.GetProperty("downloadBytes").GetUInt64()==50&&plan.GetProperty("installedBytes").GetUInt64()==100&&plan.GetProperty("verified").GetBoolean()&&plan.GetProperty("selectedDepotCount").GetInt32()==1&&plan.GetProperty("fingerprint").GetString()!.Length==64,"size-plan-reports-distinct-uint64-payloads-filters-and-fingerprint");
             string badSize=s.Send("install_size_plan",new{gameID="480",platform="linux"});await s.Done(badSize);Check(S(s.Terminal(badSize),"code")=="invalid_request"&&s.Transport.SizeCalls==1,"size-plan-invalid-platform-never-reaches-transport");
+            string overview=s.Send("install_size_overview",new{gameID="480",platform="windows"});await s.Done(overview);var display=s.Terminal(overview).GetProperty("plan");
+            Check(display.GetProperty("installedBytes").GetUInt64()==100&&!display.GetProperty("verified").GetBoolean()&&s.Transport.SizeOverviewCalls==1&&s.Transport.SizeCalls==1&&s.Transport.OwnershipCalls==0,"size-preview-routes-one-display-request-without-full-install-or-ownership-check");
             string friends=s.Send("friends");await s.Done(friends);
             Check(s.Terminal(friends).GetProperty("friends")[0].GetProperty("gameID").GetString()=="480","friends-presence-game-snapshot");
             s.Transport.ChangeFriends();Check(s.Output.Events.Any(e=>S(e,"type")=="friends"&&B(e,"changed")),"unsolicited-friends-update");
