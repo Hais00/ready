@@ -1,6 +1,56 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 # Audit della pipeline hosted — 29 ottobre 2026
 
+## Risultato verificato del 30 ottobre: trasporto remoto nativo
+
+Il percorso remoto conserva il layer, i drawable e le code Metal originali del
+processo del gioco. Ready ospita l'albero tramite Core Animation nella propria
+finestra fullscreen; non importa texture e non riceve ACQUIRE/PRESENT per ogni
+frame. Input, focus, overlay e autenticazione mantengono il canale di controllo.
+Gli observer iniziali sono rimossi al primo timestamp nativo positivo.
+
+Prove reali di Cyberpunk 2077 2.5 su Apple M1/macOS 27.0.1, 1920×1200,
+Metal FX Performance, frame generation disattivata. Tutti questi run sono avviati
+e seguiti da CLI, HUD acceso e logging HUD spento, senza Computer Use o cattura
+dello schermo durante la misura. Le impostazioni esportate sono identiche
+all'interno di ogni confronto.
+
+| Configurazione | Nativo FPS | Ready FPS | P99 motore nativo / Ready |
+| --- | ---: | ---: | ---: |
+| VSync 60 | 36,92; ripetizione 36,75 | 37,11 | 49,83; 50,11 / 35,02 ms |
+| VSync Off | 37,12 | 37,52 | 39,43 / 35,46 ms |
+
+Non emerge una penalità aggiuntiva nei run misurati. Sono campioni da circa
+64 secondi, non una prova statistica di costo letteralmente nullo o di assenza
+assoluta di picchi: il run VSync contiene due intervalli sopra 100 ms sia nel
+controllo nativo ripetuto sia in Ready. Nessun risultato qui certifica latenza
+input, direct scanout o assenza di lavoro interno WindowServer/Core Animation.
+Il [record numerico con gli hash delle esportazioni](../Validation/native-render-results-20261030.json)
+separa questi risultati dai checkpoint e dai tentativi di avvio falliti.
+
+Il controllo di avvio del gioco nativo ha trovato **32 drawable di riscaldamento
+con timestamp zero prima del primo positivo, al numero 33**. La soglia iniziale
+di otto non indicava un errore di CAContext: interrompeva una sequenza normale
+del gioco. L'osservazione ora deduplica oggetto e drawableID, termina al primo
+positivo o entro 128 drawable/15 secondi. I log geometrici opt-in restano limitati
+a otto righe. Nessuna API di presentazione viene cambiata per aggirare il gate.
+
+Il trasporto remoto è il default delle sessioni esplicitamente abilitate con
+`--host-game-view`; `--host-game-transport surface` conserva il percorso diretto
+precedente per diagnosi. Non viene cambiato trasporto durante una sessione.
+Le SPI private sono verificate sul sistema sopra indicato, non garantite da
+Apple su altre versioni. L'HUD viene abilitato nel gioco, non sul canvas di Ready.
+Il canvas di caricamento è rimosso e le sue risorse grafiche rilasciate al primo
+frame; non rimane un layer traslucido di Ready durante il benchmark.
+
+Gli argomenti `-benchmark` e la disattivazione temporanea di VSync sono stati
+rimossi: le preferenze del gioco tornano integralmente alla configurazione
+originale dell'utente con VSync 60. Installazioni, salvataggi e credenziali non
+sono modificati dalle prove.
+
+Le sezioni seguenti conservano la progressione e l'audit storico; non descrivono
+la scelta di trasporto attuale.
+
 ## Prove CLI del 30 ottobre: VSync e attese concorrenti
 
 L'utente ha autorizzato nuove prove automatiche del gioco, avviate e seguite

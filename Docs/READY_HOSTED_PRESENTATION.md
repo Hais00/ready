@@ -1,6 +1,16 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 # Experimental presentation in the Ready window
 
+> Current transport (30 October 2026): sessions enabled with `--host-game-view`
+> use the game's native remote Core Animation layer by default. The original
+> surface transport is selected explicitly with `--host-game-transport surface`.
+> Native Metal presentation is preserved; no steady rendering surface/PRESENT
+> messages cross the app protocol. Private system APIs and a bounded startup
+> observer are involved. See [measured results and limits](HOSTED_PERFORMANCE_AUDIT.md)
+> and [license boundaries](LICENSES.md). The historical surface-pipeline details
+> below remain relevant to that explicit fallback, not the remote renderer.
+
+
 The current opt-in experiment keeps Ready's existing NSWindow and requests its
 native AppKit fullscreen Space before granting the presentation lease. It then
 exchanges the library canvas for a CAMetalLayer. It does not move another

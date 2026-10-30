@@ -33,3 +33,12 @@ gesture packets. The mock cursor fixture makes no physical cursor mutation.
 These checks do not establish physical two-finger trackpad behavior in
 Cyberpunk. That acceptance check remains with the user; no commercial game
 benchmark or screen recording is performed by the agent.
+
+The real-event regression on 30 October found an earlier boundary failure:
+AppKit throws `NSInternalInconsistencyException` for `clickCount` on a real
+scroll event. The host now reads click fields only for mouse down/up and preserves
+wheel fields separately. Actual unposted AppKit event tests cover this path;
+the user then confirmed two-finger scrolling works. These input hooks are shared
+by both transports. Later CLI-only native performance checks are documented in
+the [current audit](HOSTED_PERFORMANCE_AUDIT.md); they supersede the earlier
+benchmark restriction above.

@@ -1178,6 +1178,7 @@ static RHGRemoteContext *rhgRemoteContext;
 static NSRecursiveLock *rhgRemoteLock;
 static IMP rhgRemoteOriginalNext,rhgRemoteOriginalUpdate,rhgRemoteOriginalInit;
 static _Atomic bool rhgRemoteFirstArmed,rhgRemoteFirstSent;
+enum {RHG_REMOTE_STARTUP_LIMIT=128,RHG_REMOTE_STARTUP_SECONDS=15,RHG_REMOTE_TRACE_LIMIT=8};
 static _Atomic unsigned rhgRemoteObserved,rhgRemoteCallbacks;
 static char rhgRemoteDrawableMarker;
 static id rhgRemoteNextDrawable(CAMetalLayer *layer,SEL selector);
@@ -1254,27 +1255,27 @@ static void rhgRemoteObserveDrawable(id<CAMetalDrawable>drawable){
         objc_setAssociatedObject(drawable,&rhgRemoteDrawableMarker,@(identity),OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     unsigned count=atomic_fetch_add(&rhgRemoteObserved,1);
-    if(count>=8)return;
+    if(count>=RHG_REMOTE_STARTUP_LIMIT)return;
     atomic_store(&rhgRemoteFirstArmed,true);
-    if(count==0)dispatch_after(dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC),rhgGPUCompletionWorker(),^{
+    if(count==0)dispatch_after(dispatch_time(DISPATCH_TIME_NOW,RHG_REMOTE_STARTUP_SECONDS*NSEC_PER_SEC),rhgGPUCompletionWorker(),^{
         if(!atomic_load(&rhgRemoteFirstSent)){rhgRemoteRestoreObservers();rhgFail(@"remote-layer-presented-startup-timeout");}
     });
     id<MTLTexture> texture=drawable.texture;
     if(!texture||!texture.width||!texture.height||texture.width>8192||texture.height>8192||!rhgFormat(texture.pixelFormat)||!texture.device.registryID)rhgFail(@"remote-layer-invalid-native-drawable");
     RHGRequest first={.surfaceID=rhgRemoteContext.contextId,.width=(uint32_t)texture.width,.height=(uint32_t)texture.height,.pixelFormat=(uint32_t)texture.pixelFormat,.deviceRegistryID=texture.device.registryID};
-    rhgRemoteWriteGeometry(rhgRemoteGeometry(count));
+    if(count<RHG_REMOTE_TRACE_LIMIT)rhgRemoteWriteGeometry(rhgRemoteGeometry(count));
     [drawable addPresentedHandler:^(id<MTLDrawable>native){
         // A zero timestamp denotes a dropped/warmup frame. It must not uncover
         // Ready or be described as GPU-complete/on-glass presentation.
         double presented=native.presentedTime;
-        unsigned callbacks=atomic_fetch_add(&rhgRemoteCallbacks,1)+1;
+        atomic_fetch_add(&rhgRemoteCallbacks,1);
         if(isfinite(presented)&&presented>0&&!atomic_exchange(&rhgRemoteFirstSent,true)){
             rhgRemoteRestoreObservers();
             dispatch_async(rhgGPUCompletionWorker(),^{@autoreleasepool{RHGReply accepted=rhgExchange(RHG_REMOTE_FIRST_FRAME,first);if(accepted.surfaceID!=first.surfaceID)rhgFail(@"remote-layer-context-ack-mismatch");}});
-        }else if(callbacks==8&&!atomic_load(&rhgRemoteFirstSent))rhgFail(@"remote-layer-no-presented-startup-frame");
+        }
     }];
     // Bound startup observation even if presentation callbacks run later.
-    if(count==7)rhgRemoteRestoreObservers();
+    if(count==RHG_REMOTE_STARTUP_LIMIT-1)rhgRemoteRestoreObservers();
 }
 static id rhgRemoteNextDrawable(CAMetalLayer *layer,SEL selector){
     rhgRemoteAttach(layer);

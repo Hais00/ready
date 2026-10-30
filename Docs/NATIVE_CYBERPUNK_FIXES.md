@@ -1,5 +1,13 @@
 # Cyberpunk macOS: scroll, cursore, overlay e pipeline V6
 
+> Aggiornamento verificato del 30 ottobre: il trasporto nativo remoto è ora il
+> default delle sessioni same-window esplicitamente abilitate. Benchmark CLI con
+> HUD e senza cattura schermo: 37,11 FPS contro 36,75–36,92 nativi con VSync;
+> 37,52 contro 37,12 con VSync Off. Vedere [risultati e limiti correnti](HOSTED_PERFORMANCE_AUDIT.md).
+> I vincoli di benchmark manuale e la pipeline surface nelle sezioni storiche
+> seguenti descrivono le fasi precedenti e il fallback esplicito.
+
+
 Aggiornamento del 29 ottobre 2026. Queste modifiche riguardano Cyberpunk nativo
 macOS ospitato nella finestra di Ready. I benchmark reali sono riservati all'utente:
 nessuna acquisizione dello schermo o misura FPS automatica viene usata per

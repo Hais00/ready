@@ -122,7 +122,7 @@ import QuartzCore
   }
 }
 
-/// Experimental direct-drawable presentation in the launcher's existing window.
+/// Native remote-layer or experimental direct-surface presentation in Ready.
 /// This controller never starts/authenticates a game or adopts another window.
 @MainActor final class HostedGamePresentationController {
   private weak var window:NSWindow?
@@ -145,8 +145,6 @@ import QuartzCore
   private var previousCanvasInteraction:Bool?
   private var previousCanvasAlpha:CGFloat?
   private var previousCanvasLayerOpacity:Float?
-  private var previousCanvasFrame:NSRect?
-  private var previousCanvasAutoresizing:NSView.AutoresizingMask?
   private var overlay:HostedGameOverlay?
   private var onQuit:()->Void
   var active:Bool { handle != nil }
@@ -222,12 +220,6 @@ import QuartzCore
           canvas.alphaValue=0.999;canvas.layer?.opacity=0.999
         }
         canvas.frame=view.bounds;canvas.autoresizingMask=[.width,.height]
-        if remoteLayer&&CommandLine.arguments.contains("--host-remote-loading-gap") {
-          self.previousCanvasFrame=canvas.frame;self.previousCanvasAutoresizing=canvas.autoresizingMask
-          canvas.autoresizingMask=[.width]
-          canvas.setFrameSize(NSSize(width:canvas.frame.width,height:max(1,canvas.frame.height-1)))
-          self.captureFacts["startupLoadingGapPoints"]=1
-        }
         view.addSubview(canvas)
       }
       window.makeKeyAndOrderFront(nil)
@@ -260,9 +252,9 @@ import QuartzCore
   }
 
   func resize(){if let handle{RHGHostResize(handle)}}
-  /// Called inside the C host's first validated PRESENT transaction, after the
-  /// guest's GPU work has completed. No waiting, hashing or capture is allowed
-  /// here: hiding the UI and committing the host surface must stay one handoff.
+  /// Called in the transport's first-frame transaction: a positive native
+  /// presentation timestamp for remote layers, or a fenced surface PRESENT.
+  /// No waiting, hashing or capture is allowed during this UI handoff.
   private func firstFrame(){
     guard isLoading,handle != nil else{return}
     isLoading=false
@@ -270,7 +262,6 @@ import QuartzCore
     if let canvas,canvas.superview === hostView{canvas.removeFromSuperview()}
     if let previousCanvasAlpha{canvas?.alphaValue=previousCanvasAlpha;self.previousCanvasAlpha=nil}
     if let previousCanvasLayerOpacity{canvas?.layer?.opacity=previousCanvasLayerOpacity;self.previousCanvasLayerOpacity=nil}
-    restoreCanvasLayout()
     if let hostView{window?.makeFirstResponder(hostView)}
     if let window,let hostView {
       overlay=HostedGameOverlay(window:window,container:hostView,gameResponder:hostView,
@@ -369,11 +360,6 @@ import QuartzCore
     if let previousCanvasInteraction{canvas?.interactionEnabled=previousCanvasInteraction;self.previousCanvasInteraction=nil}
     if let previousCanvasAlpha{canvas?.alphaValue=previousCanvasAlpha;self.previousCanvasAlpha=nil}
     if let previousCanvasLayerOpacity{canvas?.layer?.opacity=previousCanvasLayerOpacity;self.previousCanvasLayerOpacity=nil}
-    restoreCanvasLayout()
-  }
-  private func restoreCanvasLayout(){
-    if let previousCanvasFrame{canvas?.frame=previousCanvasFrame;self.previousCanvasFrame=nil}
-    if let previousCanvasAutoresizing{canvas?.autoresizingMask=previousCanvasAutoresizing;self.previousCanvasAutoresizing=nil}
   }
   private func recordCapture(phase:String){
     guard let diagnostics else{return}
@@ -427,7 +413,7 @@ extension AppDelegate {
       controller.prepare(executable:executable,shim:shim,
         diagnostics:paths.logs.appendingPathComponent("hosted-game-"+sessionID.uuidString.lowercased()+".jsonl"),
         metalHUD:args.contains("--metal-hud"),exclusive:args.contains("--exclusive-hosted-view"),
-        remoteLayer:args.firstIndex(of:"--host-game-transport").map{args[$0+1]=="remote-layer"} ?? false,completion:completion)
+        remoteLayer:args.firstIndex(of:"--host-game-transport").map{args[$0+1]=="remote-layer"} ?? true,completion:completion)
     }catch{completion(.failure(error))}
   }
 }

@@ -16,7 +16,14 @@ public enum AtomicFile {public static func writePrivate(_ data:Data,to url:URL)t
 '''
 FRONTEND=r'''import AppKit
 import LauncherCore
-final class MetalCanvas:NSView {var interactionEnabled=true;var releases=0;func releaseGraphics(){releases+=1}}
+// Scalar fixture identity only: never creates a Metal device or GPU resource.
+struct FixtureCanvasDevice {let registryID:UInt64=42}
+final class MetalCanvas:NSView {
+ let device=FixtureCanvasDevice();var interactionEnabled=true;var releases=0
+ override init(frame:NSRect){super.init(frame:frame);wantsLayer=true}
+ required init?(coder:NSCoder){fatalError("Unused fixture coder")}
+ func releaseGraphics(){releases+=1}
+}
 final class SessionManager {func quit(){}}
 final class AppDelegate:NSObject {var window:NSWindow!;var canvas:MetalCanvas!;var hostedWindowPlacement:HostedWindowPlacement?;var hostedPresentation:HostedGamePresentationController?;var paths=LauncherPaths();var project=URL(fileURLWithPath:"/");var session:SessionManager?;func showError(_ error:Error){};func finishLaunchSplash(){}}
 '''
@@ -29,13 +36,19 @@ HOST=r'''#import <AppKit/AppKit.h>
 @property BOOL stopped;
 @end
 @implementation FixtureHost @end
-static FixtureHost *current;static int created,stops,pointerEnabled;
-void RHGFixtureReset(void){if(current)abort();created=stops=pointerEnabled=0;}
+static FixtureHost *current;static int created,stops,pointerEnabled,transportMode,hudRequested,failCreate;static uint64_t remoteRegistryID;
+void RHGFixtureReset(void){if(current)abort();created=stops=pointerEnabled=transportMode=hudRequested=failCreate=0;remoteRegistryID=0;}
 int RHGFixtureCreateCount(void){return created;}
 int RHGFixtureStopCount(void){return stops;}
 int RHGFixturePointerEnabled(void){return pointerEnabled;}
+int RHGFixtureTransportMode(void){return transportMode;}
+uint64_t RHGFixtureDeviceRegistryID(void){return remoteRegistryID;}
+int RHGFixtureHUDRequested(void){return hudRequested;}
+void RHGFixtureSetFailCreate(int fail){failCreate=fail;}
 void RHGFixturePresent(void){if(current.callback)current.callback(current.context);}
-RHGHostRef RHGHostCreate(void*w,bool hud,const char*e,const char*d){(void)hud;(void)e;(void)d;created++;FixtureHost*h=[FixtureHost new];h.view=[[NSView alloc]initWithFrame:((__bridge NSWindow*)w).contentView.bounds];current=h;return (__bridge_retained RHGHostRef)h;}
+static RHGHostRef fixtureCreate(void*w){created++;if(failCreate)return NULL;FixtureHost*h=[FixtureHost new];h.view=[[NSView alloc]initWithFrame:((__bridge NSWindow*)w).contentView.bounds];current=h;return (__bridge_retained RHGHostRef)h;}
+RHGHostRef RHGHostCreate(void*w,bool hud,const char*e,const char*d){(void)e;(void)d;transportMode=0;hudRequested=hud?1:0;remoteRegistryID=0;return fixtureCreate(w);}
+RHGHostRef RHGHostCreateRemote(void*w,uint64_t registryID,const char*e,const char*d){(void)e;(void)d;transportMode=1;remoteRegistryID=registryID;hudRequested=0;return fixtureCreate(w);}
 void *RHGHostGetView(RHGHostRef h){return (__bridge void*)((__bridge FixtureHost*)h).view;}
 const char *RHGHostService(RHGHostRef h){(void)h;return "app.ready.owned-fixture";}
 const char *RHGHostNonce(RHGHostRef h){(void)h;return "0000000000000000000000000000000000000000000000000000000000000000";}
@@ -52,6 +65,8 @@ int32_t RHGHostGuestPID(RHGHostRef h){(void)h;return 0;}
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
     run=pathlib.Path(tempfile.mkdtemp(prefix='hosted-fullscreen-',dir=WORK/'tests'));run.chmod(0o700)
+    inputs=[ROOT/'Sources/M1Launcher/HostedGamePresentation.swift',ROOT/'Sources/M1Launcher/HostedGameOverlay.swift',ROOT/'Sources/M1Launcher/SessionManager.swift',ROOT/'Synthetic/ReadyHostedFullscreenProbe.swift',pathlib.Path(__file__)]
+    before={str(f.relative_to(ROOT)):sha(f)for f in inputs}
     presentation=(ROOT/'Sources/M1Launcher/SessionManager.swift').read_text().split('struct SessionPresentationOverlay {',1)[1].split('private final class PresentationReply',1)[0]
     (run/'Core.swift').write_text(CORE);(run/'Frontend.swift').write_text(FRONTEND+'\nstruct SessionPresentationOverlay {'+presentation);(run/'Host.m').write_text(HOST)
     header=ROOT/'Sources/ReadyHostedView/include/ReadyHostedView.h'
@@ -71,7 +86,7 @@ def main():
     call(['xcrun','clang','-fobjc-arc','-c',run/'Host.m','-I',run,'-o',run/'Host.o'])
     call(swift+['-parse-as-library','-I',run,'-Xcc','-fmodule-map-file='+str(run/'module.modulemap'),run/'Frontend.swift',ROOT/'Sources/M1Launcher/HostedGameOverlay.swift',ROOT/'Sources/M1Launcher/HostedGamePresentation.swift',ROOT/'Synthetic/ReadyHostedFullscreenProbe.swift',run/'Host.o','-L',run,'-lLauncherCore','-Xlinker','-rpath','-Xlinker',run,'-framework','AppKit','-framework','QuartzCore','-o',run/'probe'])
     p=call([run/'probe',run],timeout=15);report=json.loads(p.stdout)
-    report['sourceHashes']={str(f.relative_to(ROOT)):sha(f)for f in [ROOT/'Sources/M1Launcher/HostedGamePresentation.swift',ROOT/'Sources/M1Launcher/HostedGameOverlay.swift',ROOT/'Sources/M1Launcher/SessionManager.swift',ROOT/'Synthetic/ReadyHostedFullscreenProbe.swift',pathlib.Path(__file__)]}
+    report['sourceHashes']={str(f.relative_to(ROOT)):sha(f)for f in inputs};assert report['sourceHashes']==before
     report['productionHeaderSHA256']=sha(header);report['hostImplementation']='controlled Objective-C fixture, no production host execution'
     retained=run/'report.json';retained.write_text(json.dumps(report,indent=2)+'\n');retained.chmod(0o600)
     pointer={'passed':report['passed'],'count':report['count'],'retainedReport':str(retained),'retainedReportSHA256':sha(retained),'sourceHashes':report['sourceHashes'],'fixtureOnly':True,'actualSpaceOrCaptureVerified':False}

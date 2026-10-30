@@ -8,6 +8,10 @@ import ReadyHostedView
 @_silgen_name("RHGFixtureStopCount") func fixtureStopCount()->Int32
 @_silgen_name("RHGFixturePresent") func fixturePresent()
 @_silgen_name("RHGFixturePointerEnabled") func fixturePointerEnabled()->Int32
+@_silgen_name("RHGFixtureTransportMode") func fixtureTransportMode()->Int32
+@_silgen_name("RHGFixtureDeviceRegistryID") func fixtureDeviceRegistryID()->UInt64
+@_silgen_name("RHGFixtureHUDRequested") func fixtureHUDRequested()->Int32
+@_silgen_name("RHGFixtureSetFailCreate") func fixtureSetFailCreate(_ fail:Int32)
 
 /// Eligibility is simulated inside this isolated helper; this does not activate
 /// an application or acquire the physical pointer.
@@ -166,6 +170,8 @@ final class OffscreenFixtureWindow:NSWindow {
       }
       state.fullscreen=true;state.post(NSWindow.didEnterFullScreenNotification);pump()
       check("host-lease-created-only-after-native-entry",fixtureCreateCount()==1 && callbacks==1 && lease?.keepLauncherWindow==true)
+      check("existing-surface-default-preserved",fixtureTransportMode()==0 && fixtureDeviceRegistryID()==0 && fixtureHUDRequested()==1)
+      check("surface-disables-child-native-hud",lease?.environment["MTL_HUD_ENABLED"]=="0" && lease?.environment["READY_HOSTED_GAME_TRANSPORT"]==nil)
       check("loading-keeps-rendered-canvas-overlay",canvas.superview != nil && canvas.releases==0 && !canvas.interactionEnabled)
       window.simulatedFullscreen=true
       fixturePresent()
@@ -205,6 +211,64 @@ final class OffscreenFixtureWindow:NSWindow {
       placement.failedToExit();host.fullscreenTransitionFailed()
       check("failed-exit-restores-pointer-request-in-eligible-fullscreen",fixturePointerEnabled()==1)
       host.stop();check("stop-disables-pointer-after-failed-exit",fixturePointerEnabled()==0)
+    }
+    do {
+      fixtureReset();let state=FullscreenDriverState();let (host,canvas,window)=controller(state)
+      var callbacks=0,lease:SessionGamePresentation?
+      host.prepare(executable:URL(fileURLWithPath:"/usr/bin/true"),shim:shim,diagnostics:directory.appendingPathComponent("remote-success.jsonl"),metalHUD:true,exclusive:true,remoteLayer:true){result in
+        callbacks+=1;if case .success(let value)=result{lease=value}
+      }
+      check("remote-waits-for-native-space-before-host",fixtureCreateCount()==0 && canvas.alphaValue==1 && canvas.layer?.opacity==1 && canvas.releases==0)
+      state.fullscreen=true;state.post(NSWindow.didEnterFullScreenNotification);pump()
+      check("remote-uses-existing-scalar-device-identity",fixtureCreateCount()==1 && fixtureTransportMode()==1 && fixtureDeviceRegistryID()==42)
+      check("remote-host-does-not-request-host-metal-hud",fixtureHUDRequested()==0)
+      check("remote-native-game-hud-environment",lease?.environment["READY_HOSTED_GAME_TRANSPORT"]=="remote-layer" && lease?.environment["MTL_HUD_ENABLED"]=="1" && lease?.environment["MTL_HUD_LOG_ENABLED"]=="0" && lease?.environment["MTL_HUD_DISABLE_MENU_BAR"]=="1")
+      check("remote-loading-keeps-original-canvas",callbacks==1 && lease?.keepLauncherWindow==true && canvas.superview===window.contentView && canvas.releases==0 && !canvas.interactionEnabled)
+      check("remote-loading-translucent-view-and-layer",abs(canvas.alphaValue-0.999)<0.000001 && abs((canvas.layer?.opacity ?? 0)-0.999)<0.000001)
+      check("remote-loading-does-not-capture-pointer",fixturePointerEnabled()==0)
+      window.simulatedFullscreen=true;fixturePresent()
+      check("remote-first-frame-removes-loading-cover",canvas.superview==nil && canvas.alphaValue==1 && canvas.layer?.opacity==1)
+      check("remote-first-frame-defers-graphics-release",canvas.releases==0)
+      pump();check("remote-release-after-handoff-enables-pointer",canvas.releases==1 && fixturePointerEnabled()==1)
+      fixturePresent();pump();check("remote-duplicate-first-frame-is-idempotent",canvas.releases==1 && canvas.alphaValue==1 && canvas.layer?.opacity==1)
+      state.post(NSWindow.willExitFullScreenNotification)
+      NotificationCenter.default.post(name:NSWindow.willExitFullScreenNotification,object:window)
+      check("remote-fullscreen-exit-disables-pointer",fixturePointerEnabled()==0)
+      NotificationCenter.default.post(name:NSWindow.didChangeOcclusionStateNotification,object:window)
+      check("remote-occlusion-cannot-undo-fullscreen-exit",fixturePointerEnabled()==0)
+      host.stop();host.stop();pump()
+      check("remote-stop-preserves-native-fullscreen-space",state.fullscreen && state.toggles==1 && state.restores==0)
+      check("remote-stop-restores-canvas-and-releases-host-once",!host.active && fixtureStopCount()==1 && canvas.interactionEnabled && canvas.alphaValue==1 && canvas.layer?.opacity==1)
+      _=window
+    }
+    do {
+      fixtureReset();let state=FullscreenDriverState();let (host,canvas,window)=controller(state)
+      var lease:SessionGamePresentation?
+      host.prepare(executable:URL(fileURLWithPath:"/usr/bin/true"),shim:shim,diagnostics:directory.appendingPathComponent("remote-launch-failure.jsonl"),metalHUD:false,remoteLayer:true){result in
+        if case .success(let value)=result{lease=value}
+      }
+      state.fullscreen=true;state.post(NSWindow.didEnterFullScreenNotification);pump()
+      check("remote-hud-off-is-propagated",lease?.environment["MTL_HUD_ENABLED"]=="0" && lease?.environment["READY_HOSTED_GAME_TRANSPORT"]=="remote-layer")
+      check("remote-launch-pending-cover-is-translucent",abs(canvas.alphaValue-0.999)<0.000001 && abs((canvas.layer?.opacity ?? 0)-0.999)<0.000001 && canvas.superview != nil)
+      // The session uses this same lease cleanup if the game fails to launch.
+      lease?.stop();pump()
+      check("remote-launch-failure-stop-restores-loading-canvas",canvas.alphaValue==1 && canvas.layer?.opacity==1 && canvas.interactionEnabled && canvas.superview==nil && canvas.releases==0)
+      check("remote-launch-failure-never-exits-native-space",state.fullscreen && state.toggles==1 && fixtureStopCount()==1 && fixturePointerEnabled()==0 && !host.active)
+      fixturePresent();pump();check("remote-stopped-host-cannot-deliver-late-first-frame",canvas.releases==0 && canvas.alphaValue==1 && canvas.layer?.opacity==1)
+      _=window
+    }
+    do {
+      fixtureReset();fixtureSetFailCreate(1);let state=FullscreenDriverState();let (host,canvas,window)=controller(state)
+      canvas.alphaValue=0.8;canvas.layer?.opacity=0.7
+      var callbacks=0,failed=false
+      host.prepare(executable:URL(fileURLWithPath:"/usr/bin/true"),shim:shim,diagnostics:directory.appendingPathComponent("remote-create-failure.jsonl"),metalHUD:true,remoteLayer:true){result in
+        callbacks+=1;if case .failure=result{failed=true}
+      }
+      state.fullscreen=true;state.post(NSWindow.didEnterFullScreenNotification);pump()
+      check("remote-host-creation-failure-is-reported-once",callbacks==1 && failed && fixtureCreateCount()==1 && fixtureTransportMode()==1 && fixtureDeviceRegistryID()==42 && !host.active)
+      check("remote-create-failure-preserves-original-canvas-properties",canvas.interactionEnabled && abs(canvas.alphaValue-0.8)<0.000001 && abs((canvas.layer?.opacity ?? 0)-0.7)<0.000001 && canvas.releases==0 && window.contentView===canvas)
+      host.stop();pump();check("remote-create-failure-stop-does-not-alter-space",state.fullscreen && state.toggles==1 && fixtureStopCount()==0)
+      _=window
     }
     let report:[String:Any]=["passed":checks.values.allSatisfy{$0},"count":checks.count,"checks":checks,
       "fixtureOnly":true,"realSpaceTransitionPerformed":false,"displayCaptureUsed":false,"accountOrGameOrSDKUsed":false,

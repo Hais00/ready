@@ -1207,7 +1207,7 @@ if let index=args.firstIndex(of:"--host-game-transport") {
   }
 }
 // The native remote layer owns the HUD; the surface transport uses Ready's.
-let remoteLayerHUD=args.firstIndex(of:"--host-game-transport").map{args[$0+1]=="remote-layer"} ?? false
+let remoteLayerHUD=args.firstIndex(of:"--host-game-transport").map{args[$0+1]=="remote-layer"} ?? args.contains("--host-game-view")
 if args.contains("--metal-hud"){setenv("MTL_HUD_ENABLED",remoteLayerHUD ? "0":"1",1)}
 if let index=args.firstIndex(of:"--host-game-view") {
   guard args.filter({$0=="--host-game-view"}).count==1,args.indices.contains(index+1),

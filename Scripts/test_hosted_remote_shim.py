@@ -11,11 +11,11 @@ def main():
  flags=['xcrun','clang','-fobjc-arc','-fblocks','-std=gnu11','-O1','-Wno-deprecated-declarations','-I',str(include),'-framework','Cocoa','-framework','Metal','-framework','QuartzCore','-framework','IOSurface','-framework','CoreGraphics'];p=subprocess.run([*flags,str(tested),'-o',str(binary)],env=env,capture_output=True,text=True,timeout=90);(run/'build.log').write_text(p.stdout+p.stderr)
  if p.returncode:raise RuntimeError('Remote shim fixture compile failed '+str(run)+'\n'+p.stderr[-2000:])
  cases={}
- for mode in ['default','next','getter','reuse-id','trace','trace-file','trace-freopen','trace-zero-limit','foreign','bad-reply','bad-depth','zero-limit','timeout']:
+ for mode in ['default','next','getter','warmup33','reuse-id','trace','trace-file','trace-freopen','trace-cap128','foreign','bad-reply','bad-depth','cap128','timeout']:
   child=dict(env,READY_HOSTED_GAME_SERVICE='local.ready.hostedgame.fixture.'+uuid.uuid4().hex,READY_HOSTED_GAME_NONCE='a1'*32)
   if mode!='default':child['READY_HOSTED_GAME_TRANSPORT']='remote-layer'
   if mode.startswith('trace'):child['RHG_REMOTE_TRACE']='1'
-  expected=77 if mode in ('bad-reply','bad-depth','zero-limit','timeout','trace-zero-limit')else 0
+  expected=77 if mode in ('bad-reply','bad-depth','timeout')else 0
   if mode=='trace-file':
    sink=run/'inherited-stderr.log'
    with sink.open('w')as output:p=subprocess.run([str(binary),mode],env=child,stdout=subprocess.PIPE,stderr=output,text=True,timeout=20)
@@ -26,15 +26,15 @@ def main():
   rows=[json.loads(line)for line in p.stderr.splitlines()if line.startswith('{')]
   if expected==0:cases[mode]=json.loads(p.stdout);assert cases[mode]['passed']
   else:
-   failure=next(row for row in rows if row.get('type')=='hosted-shim-refused');assert failure['reason']=={'bad-reply':'host-rejected-request','bad-depth':'invalid-remote-frame-depth-ack','zero-limit':'remote-layer-no-presented-startup-frame','trace-zero-limit':'remote-layer-no-presented-startup-frame','timeout':'remote-layer-presented-startup-timeout'}[mode];cases[mode]={'passed':True,'expectedExit':77,'reason':failure['reason']}
+   failure=next(row for row in rows if row.get('type')=='hosted-shim-refused');assert failure['reason']=={'bad-reply':'host-rejected-request','bad-depth':'invalid-remote-frame-depth-ack','cap128':'remote-layer-presented-startup-timeout','trace-cap128':'remote-layer-presented-startup-timeout','timeout':'remote-layer-presented-startup-timeout'}[mode];cases[mode]={'passed':True,'expectedExit':77,'reason':failure['reason']}
   if mode.startswith('trace'):
-   status=[row for row in rows if row['type']=='hosted-remote-trace-status'];geometry=[row for row in rows if row['type']=='hosted-remote-startup'];count=8 if mode=='trace-zero-limit'else 2
+   status=[row for row in rows if row['type']=='hosted-remote-trace-status'];geometry=[row for row in rows if row['type']=='hosted-remote-startup'];count=8 if mode=='trace-cap128'else 2
    assert len(status)==1 and status[0]['enabled']and status[0]['sinkAvailable']and status[0]['sinkCloseOnExec'];assert status[0]['sinkRegularFile']==(mode=='trace-file')
    assert len(geometry)==count and all(len(row['layerChain'])<=8 for row in geometry);assert [row['observation']for row in geometry]==list(range(1,count+1))
    forbidden={'nonce','account','username','token','ticket','characters','coordinates','pointerX','pointerY','path','contextId','surfaceID','drawableID'}
    def safe(value):
     if isinstance(value,dict):assert not(forbidden&set(value));[safe(v)for v in value.values()]
     elif isinstance(value,list):[safe(v)for v in value]
-   safe(rows);assert len(p.stderr.encode())<32768;cases[mode]['boundedSafeGeometryRows']=count;cases[mode]['synchronousGeometrySurvivedExit']=mode=='trace-zero-limit';cases[mode]['geometrySurvivedStderrReplacement']=mode=='trace-freopen'
+   safe(rows);assert len(p.stderr.encode())<32768;cases[mode]['boundedSafeGeometryRows']=count;cases[mode]['synchronousGeometrySurvivedExit']=False;cases[mode]['geometrySurvivedStderrReplacement']=mode=='trace-freopen'
  assert before=={str(p.relative_to(ROOT)):sha(p)for p in files};report={'passed':True,'cases':cases,'sourceHashes':before,'syntheticDrawable':True,'actualRenderedFrames':0,'UIOrGameOrAccountUsed':False,'defaultTransport':'surface'};raw=run/'report.json';raw.write_text(json.dumps(report,indent=2)+'\n');raw.chmod(0o600);pointer={**report,'retainedReport':str(raw),'retainedReportSHA256':sha(raw)};(ROOT/'Evidence/hosted-remote-shim-tests.json').write_text(json.dumps(pointer,indent=2)+'\n');print(json.dumps(pointer,indent=2))
 if __name__=='__main__':main()

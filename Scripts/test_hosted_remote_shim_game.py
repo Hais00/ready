@@ -4,7 +4,7 @@
 
 Only a tiny marked test window; no actual game, account, screenshots or readback.
 """
-import hashlib,json,os,pathlib,subprocess,tempfile
+import hashlib,json,os,pathlib,subprocess,tempfile,sys
 ROOT=pathlib.Path(__file__).resolve().parents[1];WORK=pathlib.Path('/Volumes/Dati APFS/Codex-ready-01a17e79')
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 EXPORT=r'''
@@ -32,8 +32,9 @@ def main():
  for name,args in [('shim',['-dynamiclib',str(tested),'-o',str(library)]),('host',[str(fixture),str(host),'-o',str(binary)])]:
   p=subprocess.run([*flags,*args],env=env,capture_output=True,text=True,timeout=90);(run/(name+'.build.log')).write_text(p.stdout+p.stderr)
   if p.returncode:raise RuntimeError('Remote injected '+name+' compile failed '+str(run)+'\n'+p.stderr[-3000:])
- cases={}
- for mode in ['metal3','metal4-native-plain','metal4-native','metal4-plain','metal4','metal4-local-cgs']:
+ cases={};supported='--supported-only'in sys.argv
+ modes=['metal3','metal4-native-plain','metal4-plain']if supported else['metal3','metal4-native-plain','metal4-native','metal4-plain','metal4','metal4-local-cgs']
+ for mode in modes:
   if mode=='metal4-local-cgs'and(cases['metal4']['passed']or not cases['metal3']['passed']):continue
   child=dict(env,OWN_REMOTE_METAL4='0'if mode=='metal3'else'1')
   if mode=='metal4-local-cgs':child['OWN_REMOTE_CONTEXT_STRATEGY']='local-cgs'
@@ -45,5 +46,5 @@ def main():
    guest=next(x for x in rows if'frames'in x);assert guest['passed']
    if not mode.startswith('metal4-native'):
     parent=next(x for x in rows if'hostPassed'in x);assert parent['hostPassed']and guest['shim']['frameCreditStructuresAbsent']and not guest['shim']['realGuestWindowObjectCreated']
- assert before=={str(p.relative_to(ROOT)):sha(p)for p in files};report={'passed':cases['metal3']['passed']and cases['metal4-native']['passed']and cases['metal4']['passed'],'cases':cases,'sourceHashes':before,'privateFactoryVariantOnly':True,'productionContextStrategyUnchanged':True,'actualGameOrAccountUsed':False,'screenCaptureOrReadback':False,'ownTinyWindow':True};raw=run/'report.json';raw.write_text(json.dumps(report,indent=2)+'\n');raw.chmod(0o600);pointer={**report,'retainedReport':str(raw),'retainedReportSHA256':sha(raw)};(ROOT/'Evidence/hosted-remote-shim-game-tests.json').write_text(json.dumps(pointer,indent=2)+'\n');print(json.dumps(pointer,indent=2))
+ assert before=={str(p.relative_to(ROOT)):sha(p)for p in files};report={'passed':all(case['passed']for case in cases.values()),'unsupportedMinimumDurationExperimentIncluded':not supported,'cases':cases,'sourceHashes':before,'privateFactoryVariantOnly':True,'productionContextStrategyUnchanged':True,'actualGameOrAccountUsed':False,'screenCaptureOrReadback':False,'ownTinyWindow':True};raw=run/'report.json';raw.write_text(json.dumps(report,indent=2)+'\n');raw.chmod(0o600);pointer={**report,'retainedReport':str(raw),'retainedReportSHA256':sha(raw)};(ROOT/'Evidence/hosted-remote-shim-game-tests.json').write_text(json.dumps(pointer,indent=2)+'\n');print(json.dumps(pointer,indent=2))
 if __name__=='__main__':main()
