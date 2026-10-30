@@ -38,8 +38,9 @@ static class SteamCatalogMetadata
     internal static string[] PICSPlatforms(KeyValue? values)
     {
         if(values is null)return Array.Empty<string>();
-        var sources=new List<string?>{values["common"]["oslist"].Value};
+        var sources=new List<string?>{values["common"]["oslist"].Value,values["extended"]["validoslist"].Value};
         sources.AddRange(values["config"]["launch"].Children.Select(x=>x["config"]["oslist"].Value));
+        sources.AddRange(values["config"]["launch"].Children.Select(x=>x["oslist"].Value));
         sources.AddRange(values["depots"].Children.Select(x=>x["config"]["oslist"].Value));
         return Platforms(sources);
     }
@@ -83,6 +84,10 @@ static class SteamCatalogMetadata
         string? iconHash=Hash(common["icon"].Value)?common["icon"].Value:Hash(playerGame?.IconHash)?playerGame!.IconHash:null;
         string? icon=iconHash is not null?$"https://cdn.akamai.steamstatic.com/steamcommunity/public/images/apps/{id}/{iconHash}.jpg":null;
         string? capsule=Asset(id,common,"library_capsule"),hero=Asset(id,common,"library_hero"),banner=Asset(id,common,"header");
+        string[] developers=Associations(common,"developer"),publishers=Associations(common,"publisher");
+        string legacyDeveloper=Clean(values?["extended"]["developer"].Value,256),legacyPublisher=Clean(values?["extended"]["publisher"].Value,256);
+        if(developers.Length==0&&legacyDeveloper.Length>0)developers=new[]{legacyDeveloper};
+        if(publishers.Length==0&&legacyPublisher.Length>0)publishers=new[]{legacyPublisher};
         // Standard CDN addresses are candidates when PICS omits publisher art.
         // They may return 404; consumers must retain their normal icon fallback.
         string fallbackCapsule=$"https://cdn.akamai.steamstatic.com/steam/apps/{id}/library_600x900.jpg";
@@ -91,7 +96,7 @@ static class SteamCatalogMetadata
             ["platformSizes"]=SteamInstallSizes.Overview(id,values),
             ["launch"]=values?["config"]["launch"].Children.Select(k=>new{executable=k["executable"].Value,arguments=k["arguments"].Value,workingdir=k["workingdir"].Value,@type=k["type"].Value,description=k["description"].Value,oslist=k["config"]["oslist"].Value,osarch=k["config"]["osarch"].Value}).ToArray()??Array.Empty<object>(),
             ["storeURL"]=$"https://store.steampowered.com/app/{id}/",["iconURL"]=icon,["capsuleURL"]=capsule??fallbackCapsule,["heroURL"]=hero??icon,["bannerURL"]=banner??fallbackBanner,["artworkFallbacksUnverified"]=capsule is null||banner is null,
-            ["developers"]=Associations(common,"developer"),["publishers"]=Associations(common,"publisher"),["genres"]=Array.Empty<string>(),["downloadableVariants"]=platforms,["metadataComplete"]=false,
+            ["developers"]=developers,["publishers"]=publishers,["genres"]=Array.Empty<string>(),["downloadableVariants"]=platforms,["metadataComplete"]=false,
             ["libraryKind"]=kind,["libraryClassificationSource"]=classificationSource,["libraryMembershipSource"]=playerGame is not null?"cm_player":"package_license",
             ["licensePackageMember"]=packageMember,["licenseMembershipComplete"]=packageMembershipComplete,["ownedGameListAvailable"]=owned?.Available??false,["ownedGameListed"]=owned?.Available==true?playerGame is not null:null,
             ["ownedGameListStatus"]=owned?.Status??"unavailable",["contentInfoUnavailable"]=kind=="unknown"||title.Length==0,["descriptionUnavailable"]=true};
@@ -118,6 +123,9 @@ static class SteamCatalogMetadata
         string release="";if(data.TryGetProperty("release_date",out var date)&&date.ValueKind==JsonValueKind.Object&&date.TryGetProperty("date",out var text)&&text.ValueKind==JsonValueKind.String)release=Clean(text.GetString(),128);
         string description=Text("about_the_game",65536);if(description.Length==0)description=Text("short_description",8192);
         var result=new Dictionary<string,object?>{["shortDescription"]=Text("short_description",8192),["description"]=description,["developers"]=Names("developers"),["publishers"]=Names("publishers"),["genres"]=genres,["releaseDate"]=release,["storeURL"]=$"https://store.steampowered.com/app/{id}/",["downloadableVariants"]=platforms.ToArray(),["metadataComplete"]=true};
+        if(data.TryGetProperty("categories",out var categories)&&categories.ValueKind==JsonValueKind.Array)
+            result["categories"]=categories.EnumerateArray().Where(x=>x.ValueKind==JsonValueKind.Object&&x.TryGetProperty("description",out var label)&&label.ValueKind==JsonValueKind.String).Select(x=>Clean(x.GetProperty("description").GetString(),256)).Where(x=>x.Length>0).Distinct().Take(64).ToArray();
+        if(data.TryGetProperty("achievements",out var achievements)&&achievements.ValueKind==JsonValueKind.Object&&achievements.TryGetProperty("total",out var total)&&total.ValueKind==JsonValueKind.Number&&total.TryGetUInt32(out uint count)&&count<=100000)result["achievementsCount"]=count;
         string title=Text("name",512);if(title.Length>0)result["title"]=title;
         if(ContentType(Text("type",64))is{} contentType){result["contentType"]=contentType;result["libraryKind"]=LibraryKind(contentType);result["libraryClassificationSource"]="public_store";}
         result["contentInfoUnavailable"]=title.Length==0||!result.ContainsKey("libraryKind")||Equals(result["libraryKind"],"unknown");

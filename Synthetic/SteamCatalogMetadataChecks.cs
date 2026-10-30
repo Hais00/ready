@@ -44,6 +44,13 @@ static class SteamCatalogMetadataChecks
     static async Task Wait(Func<bool> condition){using var budget=new CancellationTokenSource(TimeSpan.FromSeconds(4));while(!condition())await Task.Delay(2,budget.Token);}
     static async Task<int> Main(string[] args)
     {
+        if(args.Length==2&&args[0]=="bo2-public"){
+            using var doc=JsonDocument.Parse(await File.ReadAllTextAsync(args[1]));var meta=SteamCatalogMetadata.ParseDetails(212910,doc.RootElement);var data=JSON(meta);
+            Check(data.GetProperty("descriptionUnavailable").GetBoolean()&&data.GetProperty("description").GetString()=="","real-zombies-response-has-no-published-description");
+            Check(data.GetProperty("achievementsCount").GetUInt32()==50&&data.GetProperty("categories").GetArrayLength()>0,"real-zombies-objectives-and-features-are-retained");
+            Check(data.GetProperty("downloadableVariants").EnumerateArray().Any(x=>x.GetString()=="windows"),"real-zombies-store-confirms-windows");
+            Console.WriteLine(JsonSerializer.Serialize(new{passed=true,count=checks.Count,checks,metadata=meta}));return 0;
+        }
         if(args.Length==1){using var doc=JsonDocument.Parse(await File.ReadAllTextAsync(args[0]));var meta=SteamCatalogMetadata.ParseDetails(1091500,doc.RootElement);Console.WriteLine(JsonSerializer.Serialize(new{passed=true,publicAppID=1091500,metadata=meta}));return 0;}
         var pic=KeyValue.LoadFromString("\"appinfo\" { \"common\" { \"name\" \"Owned fixture\" \"type\" \"game\" \"oslist\" \" windows,macos \" \"icon\" \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" \"library_assets\" {\"library_capsule\" \"library_600x900.jpg\"} } \"config\" {\"launch\" {\"0\" {\"executable\" \"Game\" \"config\" {\"oslist\" \"macos\" \"osarch\" \"64\"}}}} }")!;
         var game=JSON(SteamCatalogMetadata.LibraryGame(1,pic));var variants=game.GetProperty("variants").EnumerateArray().ToArray();
@@ -56,12 +63,19 @@ static class SteamCatalogMetadataChecks
         var fallback=JSON(SteamCatalogMetadata.LibraryGame(2,null));Check(fallback.GetProperty("id").GetString()=="steam:2"&&fallback.GetProperty("variants").GetArrayLength()==0,"missing-pics-retains-owned-entry-no-invented-platform");
         var union=KeyValue.LoadFromString("\"appinfo\" { \"common\" {\"oslist\" \"windows\"} \"depots\" {\"1\" {\"config\" {\"oslist\" \"macos\"}}}}")!;
         Check(SteamCatalogMetadata.PICSPlatforms(union).SequenceEqual(new[]{"windows","macOS"}),"depot-platform-union");
+        var oldPlatform=KeyValue.LoadFromString("\"appinfo\" {\"common\" {\"type\" \"game\"} \"extended\" {\"validoslist\" \"windows\" \"developer\" \"Legacy Developer\" \"publisher\" \"Legacy Publisher\"}}")!;
+        var oldMeta=JSON(SteamCatalogMetadata.LibraryGame(3,oldPlatform)).GetProperty("metadata");
+        Check(SteamCatalogMetadata.PICSPlatforms(oldPlatform).SequenceEqual(new[]{"windows"})&&oldMeta.GetProperty("developers")[0].GetString()=="Legacy Developer"&&oldMeta.GetProperty("publishers")[0].GetString()=="Legacy Publisher","legacy-platform-and-associations-are-not-lost");
         Check(!SteamCatalogMetadata.IsLibraryApp(KeyValue.LoadFromString("\"appinfo\" {\"common\" {\"type\" \"dlc\"}}")),"known-dlc-is-not-base-game");
         Check(SteamCatalogMetadata.ImageURL("https://evil.example/image.jpg")==null&&SteamCatalogMetadata.ImageURL("http://cdn.akamai.steamstatic.com/a")==null&&SteamCatalogMetadata.ImageURL("https://cdn.akamai.steamstatic.com:8080/a")==null,"image-url-allowlist");
         using var detailsDoc=JsonDocument.Parse(Body());var details=SteamCatalogMetadata.ParseDetails(1091500,detailsDoc.RootElement);var detail=JSON(details);
         Check(detail.GetProperty("shortDescription").GetString()=="Public & safe"&&!detail.GetProperty("description").GetString()!.Contains("bad()"),"plain-text-html-sanitized");
         Check(detail.GetProperty("developers")[0].GetString()=="Developer"&&detail.GetProperty("genres")[0].GetString()=="RPG"&&detail.GetProperty("downloadableVariants").GetArrayLength()==2,"public-details-complete-contract");
         Check(detail.GetProperty("title").GetString()=="Official public name"&&detail.GetProperty("contentType").GetString()=="dlc","optional-official-title-and-content-type-no-filter");
+        using var partialDoc=JsonDocument.Parse("{\"1\":{\"success\":true,\"data\":{\"steam_appid\":1,\"name\":\"Own Zombies fixture\",\"type\":\"advertising\",\"platforms\":{\"windows\":true},\"categories\":[{\"description\":\"Co-op\"}],\"achievements\":{\"total\":50}}}}");
+        var partialMeta=JSON(SteamCatalogMetadata.ParseDetails(1,partialDoc.RootElement));
+        Check(partialMeta.GetProperty("achievementsCount").GetUInt32()==50&&partialMeta.GetProperty("categories")[0].GetString()=="Co-op"&&partialMeta.GetProperty("descriptionUnavailable").GetBoolean(),"partial-store-entry-keeps-real-facts-without-inventing-description");
+        using var badCount=JsonDocument.Parse(partialDoc.RootElement.GetRawText().Replace("\"total\":50","\"total\":\"invalid\""));Check(!SteamCatalogMetadata.ParseDetails(1,badCount.RootElement).ContainsKey("achievementsCount"),"invalid-objective-count-does-not-break-partial-catalog");
         Check(fallback.GetProperty("artworkURL").GetString()!.EndsWith("/2/library_600x900.jpg")&&fallback.GetProperty("metadata").GetProperty("bannerURL").GetString()!.EndsWith("/2/header.jpg")&&fallback.GetProperty("metadata").GetProperty("artworkFallbacksUnverified").GetBoolean(),"missing-pics-standard-art-candidates-not-existence-proof");
         Check(game.GetProperty("metadata").GetProperty("contentType").GetString()=="game"&&game.GetProperty("metadata").GetProperty("title").GetString()=="Owned fixture","pics-title-type-compatible-metadata");
         Check(SteamCatalogMetadata.ContentType("<b>TOOL</b>")=="tool"&&SteamCatalogMetadata.ContentType("bad/type")==null,"content-type-bounded-canonical");
@@ -142,6 +156,10 @@ static class SteamCatalogMetadataChecks
         string Depot(uint id,ulong size,ulong download,string config="",string extra="")=>$"\"{id}\" {{\"config\" {{{config}}} \"manifests\" {{\"public\" {{\"gid\" \"{id+100}\" \"size\" \"{size}\" \"download\" \"{download}\"}}}} {extra}}}";
         var sized=Product(Depot(10,100,50)+Depot(11,200,80,"\"oslist\" \"windows\" \"osarch\" \"64\"")+Depot(12,300,90,"\"oslist\" \"macos\"")+Depot(13,400,150,"\"language\" \"italian\"")+Depot(14,500,200,"\"osarch\" \"32\"")+Depot(15,600,210,"\"lowviolence\" \"1\""));
         var products=new Dictionary<uint,KeyValue>{{1,sized}};var winPlan=SteamInstallSizes.Build(new(1,"windows"),products);var macPlan=SteamInstallSizes.Build(new(1,"macOS"),products);
+        var noPlatform=KeyValue.LoadFromString("\"appinfo\" {\"common\" {\"type\" \"game\"} \"depots\" {"+Depot(10,100,50)+"}}")!;
+        Check(SteamInstallSizes.Build(new(1,"windows"),new Dictionary<uint,KeyValue>{{1,noPlatform}},storePlatforms:new HashSet<string>{"windows"}).InstalledBytes==100,"own-store-platform-fills-missing-pics-platform-for-size");
+        var macOnly=KeyValue.LoadFromString("\"appinfo\" {\"common\" {\"type\" \"game\" \"oslist\" \"macos\"} \"depots\" {"+Depot(10,100,50)+"}}")!;
+        Check(SteamInstallSizes.Build(new(1,"windows"),new Dictionary<uint,KeyValue>{{1,macOnly}},storePlatforms:new HashSet<string>{"windows"}).Reason=="platform_unavailable","store-fallback-cannot-overrule-explicit-pics-platforms");
         Check(winPlan.InstalledBytes==300&&winPlan.DownloadBytes==130&&macPlan.InstalledBytes==400&&macPlan.DownloadBytes==140,"size-os-arch-language-and-lowviolence-match-engine-defaults");
         Check(!winPlan.Verified&&winPlan.Payload()["peakDiskBytes"]is null&&winPlan.Payload()["requiredBytes"]is null,"catalog-size-not-verified-or-invented-peak-space");
         var packageInfo=new KeyValue("package");var appSection=new KeyValue("appids");appSection.Children.Add(new KeyValue("0","10"));packageInfo.Children.Add(appSection);

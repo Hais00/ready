@@ -754,6 +754,7 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
     readonly SteamSocialConfirmation socialConfirmation=new();
     readonly SemaphoreSlim installPlanGate=new(1,1);
     readonly SteamSizeEntitlementCache sizeEntitlements=new();
+    readonly SteamPublicCatalog sizePublicCatalog=new();
     string? confirmedDisplayName;
     // Downloader uses the disjoint 0xD0000000..0xDfffffff range.
     readonly uint loginID=(BitConverter.ToUInt32(RandomNumberGenerator.GetBytes(4))&0x7fffffffU)|1U;
@@ -907,6 +908,12 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
             },CancellationToken.None,TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
         }
     }
+    async Task<IReadOnlySet<string>?> StoreSizePlatformsAsync(SteamSizeRequest request,IReadOnlyDictionary<uint,KeyValue> info,CancellationToken cancel)
+    {
+        if(!info.TryGetValue(request.AppID,out var app)||SteamCatalogMetadata.PICSPlatforms(app).Length>0)return null;
+        var metadata=await sizePublicCatalog.DetailsAsync(request.AppID,request.Language,cancel);
+        return metadata.GetValueOrDefault("downloadableVariants")is string[] platforms?new HashSet<string>(platforms):null;
+    }
     public async Task<SteamSizePlan> InstallSizeOverviewAsync(SteamSizeRequest request,CancellationToken cancel)
     {
         using var budget=CancellationTokenSource.CreateLinkedTokenSource(cancel);budget.CancelAfter(TimeSpan.FromSeconds(15));
@@ -915,7 +922,8 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
             ulong self=client.SteamID?.ConvertToUInt64()??0;if(self==0||!client.IsConnected)throw new IOException();
             var info=await SteamOwnedGamesCatalog.WithSharedAsync(new[]{request.AppID},(ids,token)=>SteamOwnedGamesCatalog.AppInfoAsync(apps,ids,token),budget.Token);
             Task<SteamApps.LicenseListCallback> scope;lock(sync)scope=licenses.Task;
-            var plan=SteamInstallSizes.Build(request,info,sizeEntitlements.Get(scope,self));
+            var storePlatforms=await StoreSizePlatformsAsync(request,info,budget.Token);
+            var plan=SteamInstallSizes.Build(request,info,sizeEntitlements.Get(scope,self),storePlatforms);
             if(client.SteamID?.ConvertToUInt64()!=self||!client.IsConnected)throw new IOException();
             return plan; // Display only: no package enumeration or depot-key request.
         }
@@ -963,7 +971,8 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
                 if(parents.Length>16)return SteamInstallSizes.Unknown(request,"too_many_shared_sources");
                 if(parents.Length>0){var fetched=await SteamOwnedGamesCatalog.AppInfoAsync(apps,parents,budget.Token);foreach(var pair in fetched)info[pair.Key]=pair.Value;foreach(uint parent in parents)queue.Enqueue(parent);}
             }
-            var plan=SteamInstallSizes.Build(request,info,entitled);if(plan.Status!="available")return plan;
+            var storePlatforms=await StoreSizePlatformsAsync(request,info,budget.Token);
+            var plan=SteamInstallSizes.Build(request,info,entitled,storePlatforms);if(plan.Status!="available")return plan;
             foreach(var depot in plan.Depots)
             {
                 var task=apps.GetDepotDecryptionKey(depot.DepotID,request.AppID).ToTask();SteamApps.DepotKeyCallback? response=null;

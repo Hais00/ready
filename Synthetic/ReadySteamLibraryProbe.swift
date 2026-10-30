@@ -44,6 +44,16 @@ private final class LibraryVault {
     try check(GameStorageDisplayCache.info(metadata:sizedState.games[0].metadata ?? [:],platform:.windows).installedBytes==12345,"catalogRefreshCannotEraseKnownDisplaySize")
     sizedRemote.metadata=["platformSizes":.object(["windows":.object(["installedBytes":.unsigned(23456)])])];SteamLibraryMerge.apply([sizedRemote],to:&sizedState,profile:profile,account:"fixture")
     try check(GameStorageDisplayCache.info(metadata:sizedState.games[0].metadata ?? [:],platform:.windows).installedBytes==23456,"newKnownCatalogSizeReplacesSavedDisplayBytes")
+    var partialGame=local;partialGame.metadata=["developers":.array([.string("Known developer")]),"publishers":.array([.string("Known publisher")]),"description":.string("Known description"),"libraryKind":.string("game"),"libraryClassificationSource":.string("pics")]
+    var partialState=LibraryState(profiles:state.profiles,activeProfile:profile,games:[partialGame])
+    SteamLibraryMerge.enrich(["developers":.array([]),"publishers":.array([]),"description":.string(""),"descriptionUnavailable":.bool(true),"contentType":.string("advertising"),"libraryKind":.string("support"),"libraryClassificationSource":.string("public_store"),"achievementsCount":.unsigned(50),"categories":.array([.string("Co-op")])],gameID:partialGame.storeID,in:&partialState)
+    let partialMetadata=partialState.games[0].metadata ?? [:]
+    try check(partialMetadata["developers"]==partialGame.metadata?["developers"]&&partialMetadata["publishers"]==partialGame.metadata?["publishers"]&&partialMetadata["description"]==partialGame.metadata?["description"]&&partialMetadata["descriptionUnavailable"] == .bool(false),"partialStoreMetadataCannotEraseKnownHumanInformation")
+    try check(partialMetadata["achievementsCount"] == .unsigned(50)&&partialMetadata["categories"] == .array([.string("Co-op")])&&partialMetadata["libraryKind"] == .string("game"),"partialStoreFactsRemainAvailableWithoutReclassifyingPICSGame")
+    var emptyRich=partialGame;emptyRich.metadata=["metadataComplete":.bool(true),"developers":.array([]),"publishers":.array([]),"description":.string("")]
+    var emptyRichState=LibraryState(profiles:state.profiles,activeProfile:profile,games:[emptyRich]);var repairedPICS=partialGame;repairedPICS.metadata=["metadataComplete":.bool(false),"developers":.array([.string("Legacy Developer")]),"publishers":.array([.string("Legacy Publisher")])]
+    SteamLibraryMerge.apply([repairedPICS],to:&emptyRichState,profile:profile,account:"fixture")
+    try check(emptyRichState.games[0].metadata?["developers"]==repairedPICS.metadata?["developers"]&&emptyRichState.games[0].metadata?["publishers"]==repairedPICS.metadata?["publishers"],"emptyStoreArraysDoNotBlockLaterPICSAssociationRepair")
     let preferences=try encoder.encode(state.gamePreferences)
     var nativeOnly=local;nativeOnly.id="local700";nativeOnly.storeID="700";nativeOnly.variants=[installed];nativeOnly.selectedVariant=installed.id
     let localWindows=GameVariant(id:"local-windows",platform:.windows,architecture:.x86_64,executable:"/fixture/game.exe",workingDirectory:"/fixture",installationRoot:"/fixture",arguments:["keep"],installed:true)

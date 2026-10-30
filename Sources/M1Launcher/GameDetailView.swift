@@ -178,6 +178,7 @@ private final class GameHeroView:NSView {
     }
   }
   var navigationSnapshot:(focus:String?,targets:[String],heroFrame:CGRect,storageText:String){(controllerFocus,controllerTargets.map{$0.0},hero.frame,storageLabel.stringValue)}
+  var catalogFactsSnapshot:String{facts.stringValue}
   private var currentJob:SteamDownloadJob? {
     guard let variant=selectedVariant else{return nil}
     return jobs.filter{$0.gameID==game.storeID && $0.platform==variant.platform.rawValue && !["completed","cancelled"].contains($0.state)}.max{$0.sequence<$1.sequence}
@@ -217,6 +218,12 @@ private final class GameHeroView:NSView {
     if let text=values("developers"){details.append("SVILUPPATORE   "+text)}
     if let text=values("publishers"){details.append("EDITORE   "+text)}
     if let text=values("genres"){details.append("GENERI   "+text)}
+    if let text=values("categories"){details.append("CARATTERISTICHE   "+text)}
+    if let count=GameStorageInfo.bytes(game.metadata?["achievementsCount"]){details.append("OBIETTIVI STEAM   "+String(count))}
+    if case .array(let launches)=game.metadata?["launch"]{
+      let names=launches.prefix(32).compactMap{item->String? in guard case .object(let launch)=item,case .string(let name)=launch["description"],!name.isEmpty else{return nil};return Self.plain(String(name.prefix(256)))}
+      if !names.isEmpty{details.append("AVVIO   "+Array(Set(names)).sorted().joined(separator:", "))}
+    }
     if let text=value("releaseDate"){details.append("USCITA   "+text)}
     details.append("LIBRERIA   "+game.store.title);facts.stringValue=details.joined(separator:"\n\n")
     let choices=presentedVariants

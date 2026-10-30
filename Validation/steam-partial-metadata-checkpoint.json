@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "date": "2026-10-30",
+  "scope": "Partial mode catalog metadata and legacy platform fallback; no invented parent-game description.",
+  "sourceHashes": {
+    "Sources/M1Launcher/GameDetailView.swift": "1a4914767a0c869c91a18579db00a7b518de9013a384cc88218b0ed6be9d73d8",
+    "Sources/M1Launcher/SteamLibraryCoordinator.swift": "446947e8c8d2a41510dee0f0c35a97fa1ca3db3d0b90e196a3bf007c8cbe7c7e",
+    "StoreBridge/SteamBridge/PersistentSteamService.cs": "2914507d5d55a525bcd732a61bdbff6a4796be180d13165a870ef2abccbd9516",
+    "StoreBridge/SteamBridge/SteamCatalogMetadata.cs": "b151b3dc04cce940a74eb054f05d7cfa5f5cc4d5e7d3aae26fce68c075ba2840",
+    "StoreBridge/SteamBridge/SteamInstallSizes.cs": "e9d7d08a57fe425b31e6c528fa085f79e48eb9e592573310c05814f305115b9d",
+    "Synthetic/ReadySteamLibraryProbe.swift": "5eea6a42c1a7f2ba3ac6acbb50eff5da90bcde70db5b2d94a3ec747bf5fcec01",
+    "Synthetic/SteamCatalogMetadataChecks.cs": "df46ccd6151443a0bfbbddf7a1eca1cbde6c00127ed969eb883289e173715900"
+  },
+  "viewFixtureSHA256": "9b52bcd9d9d9f6fbf675f92c0b99fd28939c560c7061bf2e9a1a9fb98cce06da",
+  "officialSource": "https://store.steampowered.com/api/appdetails?appids=212910&l=english",
+  "officialResponseSHA256": "5349a2aa6540776d61e0b16cd2d14cc4a2de51799ed3c938be7aa56232f6e6d3",
+  "actualResponseReplayChecks": 3,
+  "actualResponseReplaySHA256": "446a03b957fe7389af4cd44e4d329f64daf9659a4c99083878ff4c584fd8076e",
+  "backendChecks": 273,
+  "backendReportSHA256": "c7b6827bac34c7ae62dc15eca639b0be87f8ac846e37b5eca4e74d376cc7fb9d",
+  "mergeChecks": 61,
+  "mergeReportSHA256": "49437802a481317cf453f653532a56f9bed406da5b87180701236e4a780bf388",
+  "ownUIReportSHA256": "ef5bcba794593397ed6a5df1d9feea34f2c2ca7f8c746bc2fb0f436a447257ab",
+  "ownUIOnly": true,
+  "userReportedWorking": true,
+  "limits": [
+    "Steam publishes no description for this mode; Ready does not substitute a different game description.",
+    "Catalog platform availability does not prove binary architecture, license or gameplay compatibility."
+  ]
+}

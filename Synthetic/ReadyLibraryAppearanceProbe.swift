@@ -34,6 +34,9 @@ private final class AppearanceWindow:NSWindow{override func constrainFrameRect(_
     try check(nativeFirst.selectedVariant?.id=="windows"&&nativeFirst.navigationSnapshot.storageText.contains(ByteCountFormatter.string(fromByteCount:9_000_000_000,countStyle:.file)),"SwitchingFromMacToWindowsShowsCachedSizeBeforeVariantCallback")
     preloaded.metadata?["platformSizes"] = .object(["windows":.object(["installedBytes":.unsigned(10_000_000_000)])]);windowsFirst.update(game:preloaded,jobs:[])
     try check(windowsFirst.navigationSnapshot.storageText.contains(ByteCountFormatter.string(fromByteCount:10_000_000_000,countStyle:.file)),"NewMetadataRefreshesDisplayedSizeWithoutWaitingForStorageWorker")
+    var modeGame=game;modeGame.metadata=["achievementsCount":.unsigned(50),"categories":.array([.string("Co-op")]),"launch":.array([.object(["description":.string("Zombies")])])]
+    let modeDetail=GameDetailView(game:modeGame,artwork:cache,profile:state.activeProfile)
+    try check(modeDetail.catalogFactsSnapshot.contains("50")&&modeDetail.catalogFactsSnapshot.contains("Co-op")&&modeDetail.catalogFactsSnapshot.contains("Zombies"),"partialModeEntryShowsAvailableObjectiveFeatureAndLaunchFacts")
     let canvas=MetalCanvas(frame:NSRect(x:0,y:0,width:1000,height:820),device:device,artworkCache:cache)
     canvas.state=state
     for item in state.games{let deadline=Date().addingTimeInterval(3);while cache.image(for:item,role:.card,refresh:{})==nil && Date()<deadline{pump(0.01)}}

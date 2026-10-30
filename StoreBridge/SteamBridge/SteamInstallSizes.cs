@@ -61,13 +61,14 @@ static class SteamInstallSizes
     }
 
     static bool Number(string? value,out ulong result)=>ulong.TryParse(value,NumberStyles.None,CultureInfo.InvariantCulture,out result);
-    internal static SteamSizePlan Build(SteamSizeRequest request,IReadOnlyDictionary<uint,KeyValue> apps,IReadOnlySet<uint>? entitledDepots=null)
+    internal static SteamSizePlan Build(SteamSizeRequest request,IReadOnlyDictionary<uint,KeyValue> apps,IReadOnlySet<uint>? entitledDepots=null,IReadOnlySet<string>? storePlatforms=null)
     {
         var plan=Unknown(request,"metadata_unavailable");
         if(request.Branch!="public")return Unknown(request,"branch_not_supported");
         if(request.Language!="english")return Unknown(request,"language_not_supported");
         if(!apps.TryGetValue(request.AppID,out var app))return plan;
-        if(!SteamCatalogMetadata.PICSPlatforms(app).Contains(request.Platform))return Unknown(request,"platform_unavailable");
+        var availablePlatforms=SteamCatalogMetadata.PICSPlatforms(app);
+        if(!availablePlatforms.Contains(request.Platform)&&!(availablePlatforms.Length==0&&storePlatforms?.Contains(request.Platform)==true))return Unknown(request,"platform_unavailable");
         var depots=app["depots"].Children.Where(x=>uint.TryParse(x.Name,out var id)&&id>0&&x.Children.Count>0).ToArray();
         if(depots.Length>256)return Unknown(request,"too_many_depots");
         ulong download=0,installed=0;

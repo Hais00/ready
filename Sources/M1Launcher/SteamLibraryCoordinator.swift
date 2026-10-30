@@ -7,9 +7,13 @@ import LauncherCore
 /// preference records remain in place even when that membership is removed.
 enum SteamLibraryMerge {
   static let ownersKey = "readySteamCatalogOwners"
-  private static let catalogKeys:Set<String>=["shortDescription","description","releaseDate","storeURL","iconURL","capsuleURL","heroURL","bannerURL","developers","publishers","genres","downloadableVariants","metadataComplete","title","contentType","artworkFallbacksUnverified","libraryKind","libraryClassificationSource","libraryMembershipSource","ownedGameListAvailable","ownedGameListed","contentInfoUnavailable","descriptionUnavailable","descriptionSource","publicMetadataUnavailable","platformSizes","platformRequirements"]
+  private static let catalogKeys:Set<String>=["shortDescription","description","releaseDate","storeURL","iconURL","capsuleURL","heroURL","bannerURL","developers","publishers","genres","categories","achievementsCount","downloadableVariants","metadataComplete","title","contentType","artworkFallbacksUnverified","libraryKind","libraryClassificationSource","libraryMembershipSource","ownedGameListAvailable","ownedGameListed","contentInfoUnavailable","descriptionUnavailable","descriptionSource","publicMetadataUnavailable","platformSizes","platformRequirements"]
   private static let classificationKeys:Set<String>=["libraryKind","libraryClassificationSource","contentType","contentInfoUnavailable"]
   private static let membershipKeys:Set<String>=["libraryMembershipSource","ownedGameListAvailable","ownedGameListed","licensePackageMember","licenseMembershipComplete","ownedGameListStatus"]
+  private static let descriptiveKeys:Set<String>=["shortDescription","description","releaseDate","developers","publishers","genres","categories"]
+  private static func hasValue(_ value:JSONValue?)->Bool{
+    switch value{case .string(let text):return !text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty;case .array(let values):return !values.isEmpty;case nil,.null:return false;default:return true}
+  }
   private static func knownKind(_ metadata:[String:JSONValue])->String? {
     for key in ["libraryKind","contentType"] {
       guard case .string(let raw)=metadata[key]else{continue}
@@ -83,16 +87,18 @@ enum SteamLibraryMerge {
         let authoritative=["pics","cm_player"].contains(incoming["libraryClassificationSource"]?.foundation as?String ?? "") && knownKind(incoming) != nil
         let hadKnownClassification=knownKind(metadata) != nil
         for (key, value) in incoming where key != ownersKey {
+          if descriptiveKeys.contains(key),!hasValue(value),hasValue(metadata[key]){continue}
           if membershipKeys.contains(key){metadata[key]=value;continue}
           if classificationKeys.contains(key){
             if authoritative || !hadKnownClassification {metadata[key]=value}
             continue
           }
-          if keepRichCatalog,catalogKeys.contains(key),metadata[key] != nil,key != "platformSizes"{continue}
+          if keepRichCatalog,catalogKeys.contains(key),hasValue(metadata[key]),key != "platformSizes"{continue}
           metadata[key] = value
         }
         if keepRichCatalog,let artwork=old.artworkURL,!artwork.isEmpty{game.artworkURL=artwork}
         GameStorageDisplayCache.remember(in:&metadata)
+        if hasDescription(metadata){metadata["descriptionUnavailable"] = .bool(false)}
         game.metadata = metadata
         // Shared discovered installations retain their original visibility.
         game.profileIDs = old.profileIDs == nil && local(old) ? nil : Array(Set((old.profileIDs ?? []) + [profile]))
@@ -140,11 +146,13 @@ enum SteamLibraryMerge {
     let oldKind=knownKind(combined),newKind=knownKind(metadata)
     let authoritative=["pics","cm_player"].contains(combined["libraryClassificationSource"]?.foundation as?String ?? "")
     for (key,value) in metadata where catalogKeys.contains(key) && !membershipKeys.contains(key) {
+      if descriptiveKeys.contains(key),!hasValue(value){continue}
       if classificationKeys.contains(key),authoritative,let oldKind,newKind != oldKind{continue}
       if key=="libraryClassificationSource",authoritative,oldKind != nil{continue}
       combined[key]=value
     }
     if metadata["metadataComplete"] == .bool(true){combined["publicMetadataUnavailable"] = .bool(false)}
+    if hasDescription(combined){combined["descriptionUnavailable"] = .bool(false)}
     state.games[index].metadata = combined
     if placeholderTitle(state.games[index]),case .string(let raw)=metadata["title"] {
       let title=String(raw.unicodeScalars.filter{!CharacterSet.controlCharacters.contains($0)}).trimmingCharacters(in:.whitespacesAndNewlines)
