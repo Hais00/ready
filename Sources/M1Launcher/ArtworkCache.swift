@@ -29,30 +29,17 @@ final class ArtworkCache {
   private let maintenanceLock=NSLock()
   private var maintenancePaused=false,workGeneration=UUID()
   private var gameplayPaused=false,returnHold=false
-  private struct ReturnCard {let hash:String,image:CGImage}
-  private var returnCards=[String:ReturnCard](),returnBytes=0
   private var returnPending=Set<String>(),returnCompletion:(()->Void)?
-  var gameplayRetentionSnapshot:(count:Int,bytes:Int,paused:Bool){(returnCards.count,returnBytes,gameplaySuspended)}
-  private var gameplaySuspended:Bool{maintenanceLock.lock();defer{maintenanceLock.unlock()};return gameplayPaused}
+  var gameplaySuspended:Bool{maintenanceLock.lock();defer{maintenanceLock.unlock()};return gameplayPaused}
   private var workSuspended:Bool{maintenanceSuspended || gameplaySuspended}
-  /// Keep only already decoded card thumbnails for the last viewport. These
-  /// are CPU images, never card tiles, Metal textures, banners or full assets.
-  func beginGameplay(retainingViewport games:[Game]){
+  /// Keep artwork on disk only during gameplay. Catalog models and titles are
+  /// owned by the canvas; no decoded images are retained for the return path.
+  func beginGameplay(){
     guard !gameplaySuspended else{return}
-    var kept=[String:ReturnCard](),bytes=0
-    for game in games.prefix(24){
-      let id=key(game.id,.card)
-      guard let hash=index.roles[id]?.hash,
-        let image=cardMemory.object(forKey:memoryKey(hash,.card)as NSString)?.image else{continue}
-      let cost=image.bytesPerRow*image.height
-      guard cost<=16*1024*1024-bytes else{continue}
-      kept[id]=ReturnCard(hash:hash,image:image);bytes+=cost
-    }
-    returnCards=kept;returnBytes=bytes
     maintenanceLock.lock();gameplayPaused=true;maintenanceLock.unlock()
     purge()
   }
-  /// Rehydrate RAM immediately, then only the first viewport's indexed cards.
+  /// Reload only the first viewport's indexed cards from disk after gameplay.
   /// Background artwork waits for these reads; missing blobs do not hold UI
   /// restoration hostage to a network request. Root owns model/GPU restoration.
   func restoreFirstViewport(games:[Game],completion:@escaping()->Void){
@@ -64,7 +51,6 @@ final class ArtworkCache {
       for game in viewport{
         self.bind(game,role:.card);let id=self.key(game.id,.card)
         guard let hash=self.index.roles[id]?.hash else{continue}
-        if let card=self.returnCards[id],card.hash==hash{self.cardMemory.setObject(CachedArtwork(card.image),forKey:self.memoryKey(hash,.card)as NSString,cost:card.image.bytesPerRow*card.image.height)}
         if self.cardMemory.object(forKey:self.memoryKey(hash,.card)as NSString)==nil{self.returnPending.insert(id)}
       }
       for game in viewport{
@@ -84,7 +70,7 @@ final class ArtworkCache {
   }
   private func finishViewportRestore(){
     guard returnHold,returnPending.isEmpty,let done=returnCompletion else{return}
-    returnCompletion=nil;returnCards.removeAll();returnBytes=0
+    returnCompletion=nil
     let epoch=generation
     Self.publish{[weak self]in
       done()
@@ -161,6 +147,10 @@ final class ArtworkCache {
   func prefetch(game:Game){whenLoaded{[weak self]in guard let self else{return};for role in GameArtwork.Role.allCases{self.bind(game,role:role);self.enqueue(gameID:game.id,role:role,force:false,priority:3)}}}
   func revalidate(game:Game){whenLoaded{[weak self]in guard let self else{return};for role in [GameArtwork.Role.icon,.banner,.card]{self.bind(game,role:role);self.enqueue(gameID:game.id,role:role,force:true,priority:3)}}}
   func hasCachedImage(gameID:String,role:GameArtwork.Role)->Bool{index.roles[key(gameID,role)]?.hash != nil}
+  func hasResidentImage(gameID:String,role:GameArtwork.Role)->Bool{
+    guard let hash=index.roles[key(gameID,role)]?.hash else{return false}
+    return memory(role).object(forKey:memoryKey(hash,role)as NSString) != nil
+  }
   func revision(gameID:String,role:GameArtwork.Role)->UInt64{revisions[key(gameID,role)] ?? 0}
   func image(for game:Game,role:GameArtwork.Role,refresh:@escaping()->Void)->CGImage?{
     guard !workSuspended else{return nil}
@@ -182,7 +172,6 @@ final class ArtworkCache {
   /// Disk objects, receipts and bindings survive session/RAM cleanup.
   func purge(){
     returnPending.removeAll();returnCompletion=nil;returnHold=false
-    if !gameplaySuspended{returnCards.removeAll();returnBytes=0}
     maintenanceLock.lock();workGeneration=UUID();maintenanceLock.unlock()
     generation=UUID();tasks.values.forEach{$0.cancel()};tasks.removeAll();readers.cancelAllOperations();readOperations.removeAll()
     pending.removeAll();active.removeAll();jobs.removeAll();deferred.removeAll();refreshers.removeAll();warmFinished.removeAll();diskLoading.removeAll();startup.removeAll();viewportPriorities.removeAll()

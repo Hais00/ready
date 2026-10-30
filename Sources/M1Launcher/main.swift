@@ -294,7 +294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     session.onWillLaunch = { [weak self] in
       guard let self else { return }
       MainActor.assumeIsolated{
-        self.canvas.artworkCache.beginGameplay(retainingViewport:self.canvas.gameplayViewportGames)
+        self.canvas.artworkCache.beginGameplay()
         self.setSteamMaintenanceSuspended(true)
       }
       // Authentication is excluded by launchGame and all pending/session input gates.

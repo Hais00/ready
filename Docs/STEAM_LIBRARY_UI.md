@@ -16,12 +16,12 @@ actions. Installation has its own controller-aware page with library selection.
 See [game libraries and space](GAME_STORAGE.md) for size semantics and storage
 configuration.
 
-Before gameplay, Ready retains the already decoded thumbnails of the last
-viewport, bounded to 24 cards/16 MiB of CPU image memory. It releases its grid
-layers, tiles and Metal resources; the retained thumbnails are not GPU textures.
-Catalog models and titles remain cached. On return, those thumbnails are restored
-before rebuilding the grid. Missing cached thumbnails get priority indexed disk
-reads; background artwork and metadata warming resume afterwards. A cache miss
+Before gameplay, Ready clears its decoded card, icon and banner caches and
+releases its grid layers, tiles and Metal resources. No thumbnail snapshot is
+retained in RAM for the return path. Catalog models and titles remain cached;
+artwork remains indexed on disk. On return, the last viewport's thumbnails get
+priority indexed disk reads; background artwork and metadata warming resume
+afterwards. A cache miss
 does not hold restoration waiting for a network download. Both gameplay and
 maintenance pause states are cleared on return, including failed launches.
 

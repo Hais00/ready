@@ -5,7 +5,7 @@
   "build": {
     "releaseBuildPassed": true,
     "signatureAndRelocationPassed": true,
-    "binarySHA256": "db31c97d0864a0202c30d7ff69663bbc093e17cfea82b8f04030f69e9c9d820a",
+    "binarySHA256": "da8194c4ae7fc389cfd0848bb3312c40a9903b424b291b343520f8e20751d727",
     "proprietaryComponentsIncluded": false
   },
   "steamComponent": {
@@ -29,7 +29,7 @@
     "libraryDetailHiddenUI": {
       "passed": true,
       "checks": 25,
-      "reportSHA256": "a337efef91bed7e36897ae7bbea6e762454a23af934173c8e2a2759264695275",
+      "reportSHA256": "27f256820380f57de4efe6ff84ccf37321b716cb3859f177f536f3288d473e7a",
       "sourceReceiptsMatchCurrentFiles": true
     },
     "installationHiddenUI": {
@@ -70,8 +70,8 @@
     },
     "artworkReturn": {
       "passed": true,
-      "checks": 38,
-      "reportSHA256": "e68f5f82c6c4a527f2ffbd4317463cd7e78e0a5de8495d96ed8748a50740881f",
+      "checks": 39,
+      "reportSHA256": "1d45890ac2208298ed5ff24cdf9c65f7b8a678eed5cfd3203db413e800216b12",
       "sourceReceiptsMatchCurrentFiles": true
     },
     "steamCatalogAndService": {
@@ -116,14 +116,14 @@
     "StoreBridge/steam_install_plan.py": "2d79a6e0137704d25f79119e39a6a3c5c44cb1670716ae0bc52aa6b4014fc786",
     "Synthetic/ReadyGameInstallationProbe.swift": "18c6a8095de4102cd98e39427f680c313b2af425625f4e811432859f5c90bb0c",
     "Synthetic/ReadyGameStorageProbe.swift": "40f852af831631be248ffd1c0b89aa19f29346b26f92473f1730105afb17a02c",
-    "Synthetic/ReadyLibraryAppearanceProbe.swift": "de761b5f61225d3ab48d60eda69566ad2f0880a53a4bf00e5e3bfd62ab989889",
+    "Synthetic/ReadyLibraryAppearanceProbe.swift": "f8caf806dbadce3ea638f8ad7b4965efd63f88ce58fbf6264f761beda1139d88",
     "Synthetic/ReadyStorageLibraryProbe.swift": "94e83f59a823acb6d36a71dff8fd66ce11d95ebf44e5d93e9a2f83e8b3ce40fa",
     "Synthetic/ReadyStorageSettingsProbe.swift": "05cce647c75b586a196c11420f67e8dea68ebbf23e162aeebf4bd6e30fe2fee7",
     "Tests/StoreBridgeTests/test_size_plan.py": "41488df4471a19292e1902dd35a8ef1aa417d7be16417ed96e7abf773d1bee6c",
     "Tests/StoreBridgeTests/test_size_plan_sdks.py": "130e592c70c3f109534b995ebdc18838c8fd96c3a0ca9e4688e01b993911b4c6",
     "Scripts/test_steam_download_manager.py": "22b5e5822075039738bec6134a3ac208e2d5c85db5be6016c2205aaf1dcd33b8",
     "Scripts/test_steam_persistent_service.py": "01072dc691a46112b18e184c3b744096d7f30f064da8ef7ab4d26e1b457bdaa9",
-    "Sources/M1Launcher/ArtworkCache.swift": "7f93b29f8905832735d1ae53a8803da48ca9b497e94be84e702141badc79c667",
+    "Sources/M1Launcher/ArtworkCache.swift": "1c4b72f3248438cae98c50b9a290bd08690480c828bb3ed95903607874548ce2",
     "Sources/M1Launcher/FrontendLifecycle.swift": "aee74aa900e88c132d1bfca40f7388475ee3c2ea03cfe15c97fd12650a26c6ce",
     "Sources/M1Launcher/GameDetailUI.swift": "cbec55276c10d4ba75d261fe35456fea291c8f8a79907abd3f6fbad16913286d",
     "Sources/M1Launcher/GameDetailView.swift": "b47273a1108151ac05e960c6ef4e211a320ff4d2032d658a9dbe6978dc0c1d73",
@@ -134,14 +134,14 @@
     "Sources/M1Launcher/SteamClientUI.swift": "7f3ff29dc917cb4b1164fdaa2cefec32c3ad022dc79f4c5fb9ac1cef19fe1055",
     "Sources/M1Launcher/SteamDownloads.swift": "70ae6556560e884a25962043aa18790447d601dd398b84e7224abf0addee16d2",
     "Sources/M1Launcher/SteamLibraryCoordinator.swift": "5452f6e988124c0fa54b381632394a4822ddeae3b38dbb99d5c873e06e5b651a",
-    "Sources/M1Launcher/main.swift": "c45b865ee8ed9fa2daded791ce828ee6f61d88974cbf261749aacb79399a84a0",
+    "Sources/M1Launcher/main.swift": "89c13606f559d2f6fbd9348858b710208e086e433a3fc95cdd9cf84701651821",
     "StoreBridge/SteamBridge/PersistentSteamService.cs": "31a83c08002e70d3d91cd70766ef2fbbca4effb9f869e7af2820bec7f1a71f11",
     "StoreBridge/SteamBridge/SteamCatalogMetadata.cs": "875dab909774a6eac97892c3a53ebc526c82380b002cd8173ae2545bd4888dcd",
     "StoreBridge/backend.py": "8f997462e5b8b13a2904050eed91c5364d0ce28cac53a5ca40cceaf93fcdd6fd",
     "StoreBridge/bridge.py": "0b6d6fa669039e02eebc96091e8563a74bbe9b55eb945bd96e80763fce57a038",
     "StoreBridge/steam_downloads.py": "9c591e8e0fa0962ce8d3c60348357ab3f3a3d8f46482b8408f5caa7160c9f7b0",
     "Synthetic/PersistentSteamServiceChecks.cs": "2e85fef7719e5c914c57224689f939fea805b9944ff3945fe67fc2919624b436",
-    "Synthetic/ReadyArtworkIndexProbe.swift": "b4cb3504902462c7abb19fca9dee2072de6fcba708cdf394315e2e200542f728",
+    "Synthetic/ReadyArtworkIndexProbe.swift": "dae4e12b4aa842f382ba7435884ed061c37ea473ce04f187f27a8246c41b9bc4",
     "Synthetic/ReadySteamDownloadsProbe.swift": "f4a32e6af369a1739ccb81d9066b5447de6c2c526ad1db485050ebc7987eccd4",
     "Synthetic/SteamCatalogMetadataChecks.cs": "dbb95b0319902a77b8eba0e3540c1737ded957790c6e5873efe3fe4c285509ee"
   },
@@ -157,12 +157,14 @@
     "visualInspectionBlocker": "macOS session locked; no screenshots or game benchmarks performed"
   },
   "artworkReturn": {
-    "retainedCPUCardLimit": 24,
-    "retainedCPUByteLimit": 16777216,
+    "retainedCPUCardLimit": 0,
+    "retainedCPUByteLimit": 0,
     "retainedGPUTextures": false,
     "cachedTitlesAndConfiguredModelsRetained": true,
     "firstViewportBeforeBackgroundWarming": true,
-    "networkRequiredForCachedReturn": false
+    "networkRequiredForCachedReturn": false,
+    "decodedArtworkDuringGameplay": false,
+    "returnSource": "priority indexed disk reads for the last viewport; no retained image snapshot"
   },
   "limitations": [
     "Physical controller navigation and on-screen appearance await unlocked-session review.",
@@ -172,5 +174,6 @@
     "Installed-size invalidation recognizes completion, executable and build manifests; arbitrary modifications are not universally watched.",
     "Volume disconnection during an actual download and shared free space across separate APFS volumes in the same container remain unverified.",
     "Owned canvas resource release is not a claim of zero system-wide GPU memory or improved game FPS."
-  ]
+  ],
+  "policyUpdate": "User requested no thumbnail RAM retention; removes the earlier 24-card/16 MiB snapshot. Models and titles remain cached."
 }

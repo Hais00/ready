@@ -173,18 +173,19 @@ private final class ImageProtocol:URLProtocol {
     suspended.purge()
     let returning=ArtworkCache(directory:directory,session:session,networkEnabled:false)
     try spin{returning.image(for:first,role:.card,refresh:{}) != nil}
-    let retainedCard=returning.image(for:first,role:.card,refresh:{})!,retainedIdentity=ObjectIdentifier(retainedCard)
-    returning.beginGameplay(retainingViewport:games);let retained=returning.gameplayRetentionSnapshot
-    try check(retained.paused && retained.count>0 && retained.count<=24 && retained.bytes>0 && retained.bytes<=16*1024*1024,"gameplayRetainsOnlyHardBoundedCPUCardSnapshot")
+    try spin{returning.image(for:first,role:.banner,refresh:{}) != nil}
+    try check(returning.hasResidentImage(gameID:first.id,role:.card) && returning.hasResidentImage(gameID:first.id,role:.banner),"gameplayReleaseStartsWithRealResidentCardAndBanner")
+    returning.beginGameplay()
+    try check(returning.gameplaySuspended && !returning.hasResidentImage(gameID:first.id,role:.card) && !returning.hasResidentImage(gameID:first.id,role:.banner),"gameplayClearsResidentCardAndBannerWithoutReturnSnapshot")
     returning.purge();ImageProtocol.clear();returning.prepare(games:[game(700)]);returning.prefetch(game:game(701));let during=returning.image(for:first,role:.card,refresh:{})
-    settle(0.1);try check(during==nil && ImageProtocol.calls.isEmpty && returning.gameplayRetentionSnapshot.count==retained.count,"gameplayPurgePreservesReturnSnapshotButCannotScheduleArtworkOrDecode")
+    settle(0.1);try check(during==nil && ImageProtocol.calls.isEmpty && !returning.hasResidentImage(gameID:first.id,role:.card),"gameplayCannotReloadArtworkOrScheduleDecode")
     returning.setMaintenanceSuspended(true)
     var restored=false;returning.restoreFirstViewport(games:[first]){restored=true}
-    try check(!returning.maintenanceSuspended && !returning.gameplayRetentionSnapshot.paused,"returnAtomicallyClearsBothGameplayAndMaintenancePause")
+    try check(!returning.maintenanceSuspended && !returning.gameplaySuspended,"returnAtomicallyClearsBothGameplayAndMaintenancePause")
     let immediate=returning.image(for:first,role:.card,refresh:{})
-    try check(immediate != nil && ObjectIdentifier(immediate!)==retainedIdentity,"firstViewportCPUCardReturnsSynchronouslyWithoutReloadOrNetwork")
-    try spin{restored};try check(!returning.gameplayRetentionSnapshot.paused && returning.gameplayRetentionSnapshot.count==0 && ImageProtocol.calls.isEmpty,"firstViewportRestoreCompletionReleasesSnapshotAndDoesNotWarmAllAssets")
-    returning.purge();returning.beginGameplay(retainingViewport:[]);var coldRestored=false;let coldStart=Date()
+    try check(immediate==nil,"firstViewportStartsWithNoRetainedDecodedImage")
+    try spin{restored};try check(!returning.gameplaySuspended && returning.hasResidentImage(gameID:first.id,role:.card) && !returning.hasResidentImage(gameID:first.id,role:.banner) && ImageProtocol.calls.isEmpty,"firstViewportReloadsCardFromDiskWithoutWarmingBannerOrNetwork")
+    returning.purge();returning.beginGameplay();var coldRestored=false;let coldStart=Date()
     returning.setMaintenanceSuspended(true)
     returning.restoreFirstViewport(games:[first]){coldRestored=true}
     try spin{coldRestored && returning.image(for:first,role:.card,refresh:{}) != nil}

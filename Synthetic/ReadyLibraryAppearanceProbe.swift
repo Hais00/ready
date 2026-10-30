@@ -49,11 +49,11 @@ private final class AppearanceWindow:NSWindow{override func constrainFrameRect(_
     let second=canvas.interactionSnapshot.hits.first{$0.id=="game.other"}!,gray=sample(second.rect.midX,second.rect.minY+coverHeight/2)
     try check(abs(gray.redComponent-gray.greenComponent)<0.03 && abs(gray.greenComponent-gray.blueComponent)<0.03,"uninstalledCoverRasterRemainsGrayscale")
     let snapshot=canvas.gameplayViewportGames,sortBefore=canvas.visibleGames.map(\.id)
-    cache.beginGameplay(retainingViewport:snapshot)
+    cache.beginGameplay()
     cache.setMaintenanceSuspended(true)
     canvas.releaseGraphics()
     try check(canvas.allocatedTextureBytes==0 && canvas.gameplayViewportGames.map(\.id)==snapshot.map(\.id),"graphicsReleaseRetainsOnlyViewportModelsAndClearsGPUStorage")
-    try check(cache.gameplayRetentionSnapshot.paused && cache.gameplayRetentionSnapshot.count==snapshot.count && cache.gameplayRetentionSnapshot.bytes<=16*1024*1024,"gameplayKeepsOnlyBoundedCPUCardSnapshotWhileAllCanvasGPUStorageIsReleased")
+    try check(cache.gameplaySuspended && snapshot.allSatisfy{!cache.hasResidentImage(gameID:$0.id,role:.card)},"gameplayReleasesDecodedCardsAndAllCanvasGPUStorage")
     var restored=false;let returnBegan=ProcessInfo.processInfo.systemUptime
     cache.restoreFirstViewport(games:snapshot){restored=true}
     let returnDeadline=Date().addingTimeInterval(3)
@@ -61,7 +61,7 @@ private final class AppearanceWindow:NSWindow{override func constrainFrameRect(_
     canvas.resumeGraphics();canvas.renderDisplayTick();pump();canvas.renderDisplayTick()
     let returnMilliseconds=(ProcessInfo.processInfo.systemUptime-returnBegan)*1000
     try check(restored && canvas.visibleGames.map(\.id)==sortBefore && canvas.viewportArtworkSnapshot.committedIDs.isSuperset(of:Set(snapshot.map(\.id))),"returnRestoresFirstViewportRealArtworkAndCachedSortBeforeBackgroundWarm")
-    try check(returnMilliseconds<500,"ownRetainedViewportReturnCompletesWithoutWaitingForAllArtwork")
+    try check(returnMilliseconds<500,"ownIndexedDiskViewportReturnCompletesWithoutWaitingForAllArtwork")
     var nextProfileState=state;nextProfileState.activeProfile=UUID();nextProfileState.games=[Game(id:"new-profile",store:.local,storeID:"new",title:"New profile")];canvas.state=nextProfileState
     try check(canvas.gameplayViewportGames.map(\.id)==["new-profile"],"profileChangeCannotRestorePreviousProfileViewportModels")
     canvas.state=state
