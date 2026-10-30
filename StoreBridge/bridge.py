@@ -185,7 +185,8 @@ class StoreAdapter:
             if systems.get('osx') or any(i.get('os') in ('osx','mac','macos') for i in installers):platforms.append('macOS')
             images=d.get('images') or {};art=images.get('logo2x') or images.get('logo') or images.get('icon')
             if art and art.startswith('//'):art='https:'+art
-            result.append(game('gog',gid,d.get('title'),platforms,art,{'installers':installers}))
+            from size_plan import gog_catalog_sizes
+            result.append(game('gog',gid,d.get('title'),platforms,art,{'installers':installers,'platformSizes':gog_catalog_sizes(gid,installers)}))
         return result
 
     def amazon_library(self,c):
@@ -260,7 +261,7 @@ def dispatch(r,http=None):
     operation={'auth_start':'auth_begin','install':'download'}.get(operation,operation)
     if operation!=r.get('operation'):r={**r,'operation':operation}
     if 'authState' not in o and 'state' in o:o={**o,'authState':o['state']}
-    if operation=='capabilities':return {'protocolVersion':1,'stores':['steam','epic','gog','amazon'],'operations':['auth_begin','auth_complete','refresh','library','download','download_prepare','download_run','download_status','download_list','download_control','launch_info','authorize_game','native_inspect'],'operationStores':{'authorize_game':['steam'],'download_prepare':['steam'],'download_run':['steam'],'download_status':['steam'],'download_list':['steam'],'download_control':['steam']},'nativeArchitecturePolicy':'unknown until local Mach-O inspection','credentialsTransport':'stdin/stdout only; caller must store in Keychain'}
+    if operation=='capabilities':return {'protocolVersion':1,'stores':['steam','epic','gog','amazon'],'operations':['auth_begin','auth_complete','refresh','library','download','download_prepare','download_run','download_status','download_list','download_control','launch_info','authorize_game','install_size_plan','native_inspect'],'operationStores':{'authorize_game':['steam'],'install_size_plan':['epic','gog','amazon'],'download_prepare':['steam'],'download_run':['steam'],'download_status':['steam'],'download_list':['steam'],'download_control':['steam']},'nativeArchitecturePolicy':'unknown until local Mach-O inspection','credentialsTransport':'stdin/stdout only; caller must store in Keychain'}
     if operation=='native_inspect':return inspect_native(require(o.get('path')))
     if store=='steam':
         from backend import steam_request
@@ -269,11 +270,14 @@ def dispatch(r,http=None):
     if operation=='auth_begin':return a.auth_begin(r['profileID'])
     if operation=='auth_complete':return {'credentials':a.auth_complete(r['profileID'],o)}
     if operation=='refresh':return {'credentials':a.refresh(c)}
-    if operation in ('library','download','launch_info') and c.get('expires_at_epoch',float('inf')) < time.time()+60:
+    if operation in ('library','download','launch_info','install_size_plan') and c.get('expires_at_epoch',float('inf')) < time.time()+60:
         c=a.refresh(c);r={**r,'credentials':c}
     if operation=='library':
         return {'games':a.library(c),'credentials':c}
     if operation=='launch_info':return a.launch_info(c,o)
+    if operation=='install_size_plan':
+        from backend import install_size_plan
+        result=install_size_plan(r);result.setdefault('credentials',c);return result
     if operation=='download':
         from backend import download
         return download(r)

@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Actual UI geometry/controller activation in own hidden windows; no global build."""
+import argparse,hashlib,json,os,pathlib,subprocess,tempfile
+ROOT=pathlib.Path(__file__).resolve().parents[1];WORK=pathlib.Path('/Volumes/Dati APFS/Codex-ready-01a17e79')
+def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+def main():
+ ap=argparse.ArgumentParser();ap.add_argument('--core-root',type=pathlib.Path,required=True);a=ap.parse_args();core=a.core_root.resolve();assert(core/'LauncherCore.swiftmodule').exists();archive=core/'libLauncherCore.a';dynamic=core/'libLauncherCore.dylib';assert archive.is_file()or dynamic.is_file();link=[str(archive)]if archive.is_file()else['-L',str(core),'-lLauncherCore','-Xlinker','-rpath','-Xlinker',str(core)]
+ coreReceipt=core.parent/'report.json';record=json.loads(coreReceipt.read_text());models=sorted((ROOT/'Sources/LauncherCore').glob('*.swift'));assert {str(p.relative_to(ROOT)):sha(p)for p in models}=={k:v for k,v in record['sourceHashes'].items()if k.startswith('Sources/LauncherCore/')};assert sha(core/'LauncherCore.swiftmodule')==record['coreModuleSHA256'];assert sha(archive if archive.is_file()else dynamic)==record['coreLibrarySHA256']
+ run=pathlib.Path(tempfile.mkdtemp(prefix='library-appearance-',dir=WORK/'tests'));run.chmod(0o700)
+ names=['CanvasDrawing.swift','ControllerNavigation.swift','LibraryEntryPresentation.swift','ArtworkIndexStore.swift','ArtworkCache.swift','GameArtwork.swift','CanvasShellRenderer.swift','LibraryGridSurface.swift','MetalCanvas.swift','GameDetailView.swift'];paths=[ROOT/'Sources/M1Launcher'/n for n in names]+[ROOT/'Synthetic/ReadyLibraryAppearanceProbe.swift'];before={str(p.relative_to(ROOT)):sha(p)for p in paths}
+ jobs=(ROOT/'Sources/M1Launcher/SteamDownloads.swift').read_text().split('@MainActor\nfinal class SteamDownloads',1)[0];stub=run/'Stub.swift';stub.write_text(jobs+'\nprotocol ReadyDialogContentSizing{var maximumViewportHeight:CGFloat{get}}\nextension Notification.Name{static let readyDialogContentLayoutChanged=Notification.Name("own.fixture.content-layout")}\n')
+ env={k:v for k,v in os.environ.items()if not k.startswith(('READY_','DYLD_','STEAM','Steam','RHG_','MTL_HUD_'))};env['TMPDIR']=str(WORK/'tmp')+'/'
+ cmd=['xcrun','swiftc','-swift-version','5','-parse-as-library','-module-cache-path',str(WORK/'cache/library-appearance-module-cache'),'-I',str(core),str(stub),*map(str,paths),*link,'-framework','AppKit','-framework','Metal','-framework','QuartzCore','-o',str(run/'probe')];p=subprocess.run(cmd,cwd=ROOT,env=env,capture_output=True,text=True,timeout=120);(run/'build.log').write_text(p.stdout+p.stderr)
+ if p.returncode:raise RuntimeError('Own UI appearance compile failed '+p.stderr[-3000:])
+ p=subprocess.run([str(run/'probe'),str(run)],env=env,capture_output=True,text=True,timeout=30);(run/'stdout.json').write_text(p.stdout);(run/'stderr.log').write_text(p.stderr)
+ if p.returncode:raise RuntimeError('Own appearance fixture failed '+str(run))
+ d=json.loads(p.stdout);assert d['passed'];assert before=={str(p.relative_to(ROOT)):sha(p)for p in paths};d['sourceHashes']=before;d['coreProducts']=str(core);d['coreModuleSHA256']=sha(core/'LauncherCore.swiftmodule');d['coreLibrarySHA256']=sha(archive if archive.is_file()else dynamic);d['coreScope']='Current complete LauncherCore source membership verified against matching module/library receipt.';d['coreSourceReceiptSHA256']=sha(coreReceipt);raw=run/'report.json';raw.write_text(json.dumps(d,indent=2)+'\n');out={**d,'retainedReport':str(raw),'retainedReportSHA256':sha(raw)};(ROOT/'Evidence/library-appearance-tests.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(out,indent=2))
+if __name__=='__main__':main()

@@ -3,11 +3,12 @@ import AppKit
 import LauncherCore
 
 enum SettingsPageSection: String {
-  case overview, accounts, runtime, data, evaluation
+  case overview, accounts, storage, runtime, data, evaluation
   var title: String {
     switch self {
     case .overview: return "Generali"
     case .accounts: return "Account"
+    case .storage: return "Archiviazione"
     case .runtime: return "Motori"
     case .data: return "Dati e ripristino"
     case .evaluation: return "Toolkit Apple"
@@ -27,7 +28,7 @@ extension AppDelegate {
     let back: () -> Void = { [weak self] in self?.navigateToLibrary() }
     switch section {
     case .settings:
-      pages.configureNavigation(title: "Impostazioni", tabs: [SettingsPageSection.overview, .accounts, .runtime, .data, .evaluation].map { item in
+      pages.configureNavigation(title: "Impostazioni", tabs: [SettingsPageSection.overview, .accounts, .storage, .runtime, .data, .evaluation].map { item in
         ReadyPageTab(id: item.rawValue, title: item.title, action: { [weak self] in self?.openSettingsSection(item) })
       }, selected: settingsPageSection.rawValue, onBack: back)
     case .steamAccount:
@@ -55,6 +56,7 @@ extension AppDelegate {
     switch section {
     case .overview: settings()
     case .accounts: connectStore()
+    case .storage: MainActor.assumeIsolated { showStorageSettings() }
     case .runtime: runtimeLocationSettings()
     case .data: dataMaintenance()
     case .evaluation: evaluationSettings()

@@ -44,6 +44,7 @@ interface ISteamServiceTransport:IAsyncDisposable
     Task<SteamServiceMutation> FriendActionAsync(string operation,ulong steamID,CancellationToken cancel);
     Task<SteamServiceOwnership> AuthorizeAsync(uint appID,CancellationToken cancel);
     Task LibraryAsync(Action<object[]> page,CancellationToken cancel);
+    Task<SteamSizePlan> InstallSizePlanAsync(SteamSizeRequest request,CancellationToken cancel)=>Task.FromResult(SteamInstallSizes.Unknown(request,"not_supported"));
 }
 
 /// One process serves one immutable (profileID, profileGeneration). It receives
@@ -249,6 +250,11 @@ sealed class PersistentSteamService:IAsyncDisposable
                     var pages=new SteamLibraryPages(paged,(games,index)=>Emit("library_page",id,new(){["games"]=games,["pageIndex"]=index}));
                     await transport.LibraryAsync(page=>{lock(sync){EnsureEpoch(libraryEpoch);cancel.Token.ThrowIfCancellationRequested();pages.Add(page);}},cancel.Token);
                     lock(sync){EnsureEpoch(libraryEpoch);cancel.Token.ThrowIfCancellationRequested();Result(id,pages.Complete());}break;
+                case "install_size_plan":
+                    RequireOnline();long sizeEpoch=CurrentEpoch();var sizeOptions=Options(root);
+                    var sizeRequest=SteamSizeRequest.Create(AppID(root),Text(sizeOptions,"platform"),Text(sizeOptions,"branch","public"),Text(sizeOptions,"language","english"),Text(sizeOptions,"architecture","64"));
+                    var sizePlan=await transport.InstallSizePlanAsync(sizeRequest,cancel.Token);
+                    lock(sync){EnsureEpoch(sizeEpoch);cancel.Token.ThrowIfCancellationRequested();Result(id,new(){["appID"]=sizeRequest.AppID,["plan"]=sizePlan.Payload()});}break;
                 case "catalog_metadata":
                     uint catalogApp=AppID(root);var catalogOptions=Options(root);string language=SteamPublicCatalog.Language(Text(catalogOptions,"language","english"));bool refresh=false;
                     if(catalogOptions.TryGetProperty("refresh",out var refreshOption)){if(refreshOption.ValueKind is not (JsonValueKind.True or JsonValueKind.False))throw new ArgumentException();refresh=refreshOption.ValueKind==JsonValueKind.True;}
@@ -599,7 +605,7 @@ sealed class PersistentSteamService:IAsyncDisposable
             var fields=state=="online"?FriendPage(options):new Dictionary<string,object?>{["friends"]=Array.Empty<object>()};
             fields["state"]=state;fields["reason"]=reason;fields["account"]=state=="online"?transport.Account(credentials?.Username??""):null;
             fields["steamResult"]=SteamSafeFailure.ResultName(lastConnectionResult);fields["connectionResultContext"]=connectionResultContext;
-            fields["capabilities"]=new[]{"connect","authenticate","guard_code","snapshot","friends","set_presence","set_persona_name","add_friend","remove_friend","block_friend","unblock_friend","set_activity","authorize_game","library","catalog_metadata","offline","reconnect","logout","cancel","shutdown"};
+            fields["capabilities"]=new[]{"connect","authenticate","guard_code","snapshot","friends","set_presence","set_persona_name","add_friend","remove_friend","block_friend","unblock_friend","set_activity","authorize_game","library","catalog_metadata","install_size_plan","offline","reconnect","logout","cancel","shutdown"};
             fields["protocolVersion"]=1;fields["backendSessionReady"]=false;
             Result(id,fields);
         }
@@ -744,6 +750,7 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
     readonly object sync=new();
     readonly Task pump;
     readonly SteamSocialConfirmation socialConfirmation=new();
+    readonly SemaphoreSlim installPlanGate=new(1,1);
     string? confirmedDisplayName;
     // Downloader uses the disjoint 0xD0000000..0xDfffffff range.
     readonly uint loginID=(BitConverter.ToUInt32(RandomNumberGenerator.GetBytes(4))&0x7fffffffU)|1U;
@@ -896,6 +903,57 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
                 else _=completed.Exception;
             },CancellationToken.None,TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
         }
+    }
+    public async Task<SteamSizePlan> InstallSizePlanAsync(SteamSizeRequest request,CancellationToken cancel)
+    {
+        using var budget=CancellationTokenSource.CreateLinkedTokenSource(cancel);budget.CancelAfter(TimeSpan.FromSeconds(30));
+        bool admitted=false;
+        try
+        {
+            await installPlanGate.WaitAsync(budget.Token);admitted=true;
+            ulong self=client.SteamID?.ConvertToUInt64()??0;if(self==0||!client.IsConnected)throw new IOException();
+            if(request.Branch!="public")return SteamInstallSizes.Unknown(request,"branch_not_supported");
+            if(request.Language!="english")return SteamInstallSizes.Unknown(request,"language_not_supported");
+            Task<SteamApps.LicenseListCallback> licenseTask;lock(sync)licenseTask=licenses.Task;
+            var licenseList=await licenseTask.WaitAsync(budget.Token);if(licenseList.Result!=EResult.OK)return SteamInstallSizes.Unknown(request,"ownership_unavailable");
+            var entitled=new HashSet<uint>();
+            foreach(var chunk in licenseList.LicenseList.Chunk(100))
+            {
+                var packages=await apps.PICSGetProductInfo(Array.Empty<SteamApps.PICSRequest>(),chunk.Select(x=>new SteamApps.PICSRequest(x.PackageID,x.AccessToken))).ToTask().WaitAsync(budget.Token);
+                if(!packages.Complete||packages.Failed||packages.Results is null)return SteamInstallSizes.Unknown(request,"ownership_unavailable");
+                var packageValues=new Dictionary<uint,KeyValue>();
+                foreach(var result in packages.Results)foreach(var package in result.Packages.Values)if(package.KeyValues is{} values)packageValues[package.ID]=values;
+                var chunkEntitlements=SteamInstallSizes.PackageEntitlements(chunk.Select(x=>x.PackageID),packageValues);
+                if(chunkEntitlements is null)return SteamInstallSizes.Unknown(request,"ownership_unavailable");
+                entitled.UnionWith(chunkEntitlements);
+            }
+            var info=await SteamOwnedGamesCatalog.AppInfoAsync(apps,new[]{request.AppID},budget.Token);
+            var inspected=new HashSet<uint>();var queue=new Queue<uint>();queue.Enqueue(request.AppID);
+            while(queue.Count>0)
+            {
+                uint app=queue.Dequeue();if(!inspected.Add(app))continue;
+                if(inspected.Count>16)return SteamInstallSizes.Unknown(request,"too_many_shared_sources");
+                if(!info.TryGetValue(app,out var values))continue;
+                var parents=values["depots"].Children.Select(x=>uint.TryParse(x["depotfromapp"].Value,out uint id)?id:0).Where(x=>x>0&&!info.ContainsKey(x)).Distinct().ToArray();
+                if(parents.Length>16)return SteamInstallSizes.Unknown(request,"too_many_shared_sources");
+                if(parents.Length>0){var fetched=await SteamOwnedGamesCatalog.AppInfoAsync(apps,parents,budget.Token);foreach(var pair in fetched)info[pair.Key]=pair.Value;foreach(uint parent in parents)queue.Enqueue(parent);}
+            }
+            var plan=SteamInstallSizes.Build(request,info,entitled);if(plan.Status!="available")return plan;
+            foreach(var depot in plan.Depots)
+            {
+                var task=apps.GetDepotDecryptionKey(depot.DepotID,request.AppID).ToTask();SteamApps.DepotKeyCallback? response=null;
+                try{response=await task.WaitAsync(budget.Token);if(response.Result!=EResult.OK||response.DepotKey is not{Length:>0})return SteamInstallSizes.Unknown(request,"depot_access_unconfirmed");}
+                finally
+                {
+                    if(response?.DepotKey is{} key)CryptographicOperations.ZeroMemory(key);
+                    else _=task.ContinueWith(done=>{if(done.IsCompletedSuccessfully&&done.Result.DepotKey is{} key)CryptographicOperations.ZeroMemory(key);else _=done.Exception;},CancellationToken.None,TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
+                }
+            }
+            budget.Token.ThrowIfCancellationRequested();if(client.SteamID?.ConvertToUInt64()!=self||!client.IsConnected)throw new IOException();
+            plan.Verified=true;plan.Reason="selection_verified";return plan;
+        }
+        catch(OperationCanceledException)when(!cancel.IsCancellationRequested){return SteamInstallSizes.Unknown(request,"size_plan_timeout");}
+        finally{if(admitted)installPlanGate.Release();}
     }
     public async Task LibraryAsync(Action<object[]> page,CancellationToken cancel)
     {

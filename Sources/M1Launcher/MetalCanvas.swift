@@ -36,6 +36,8 @@ final class MetalCanvas: NSView {
   private var lastViewportIDs=[String](),lastAheadIDs=[String]()
   private var scrollDirection=1,lastScrollOffset:CGFloat=0
   private struct PreparedTile{let key:LibraryTileCache.Key;let image:CGImage;let hasArtwork:Bool}
+  private var lastViewportModels=[Game]()
+  var gameplayViewportGames:[Game]{lastViewportModels.isEmpty ? Array(visibleGames.prefix(12)):lastViewportModels}
   private var previousTiles=[String:PreparedTile](),tileArtwork=[String:(LibraryTileCache.Key,Bool)]()
   private var pendingArtInvalidations=Set<String>(),tileVersions=[String:UInt64]()
   private struct ArtworkEntry{let began:Double,cached:Bool;var ram:Double?;var committed=false}
@@ -56,7 +58,7 @@ final class MetalCanvas: NSView {
   private var libraryViewport=CGRect.zero
   private var libraryCardStride:CGFloat=1
   private var libraryMaximumScroll:CGFloat=0
-  var state = LibraryState.initial(){didSet{cachedProfileGames=nil;cachedVisibleGames=nil;cachedKindCounts=nil;catalogRevision=UUID()}}
+  var state = LibraryState.initial(){didSet{cachedProfileGames=nil;cachedVisibleGames=nil;cachedKindCounts=nil;if oldValue.activeProfile != state.activeProfile{lastViewportModels.removeAll()};catalogRevision=UUID()}}
   var showOtherContent=false{didSet{if oldValue != showOtherContent{libraryScroll=0;cachedVisibleGames=nil;lastChromeKey="";redraw()}}}
   var section: CanvasSection = .library {
     didSet {
@@ -230,7 +232,7 @@ final class MetalCanvas: NSView {
   deinit{displayLink?.invalidate();if let artworkObserver{NotificationCenter.default.removeObserver(artworkObserver)}}
   func releaseGraphics(){
     suspended=true;renderDirty=false;displayLink?.invalidate();displayLink=nil;linkTarget=nil
-    gridSurface?.clear();gridSurface=nil;tileCache.clear();previousTiles.removeAll();tileArtwork.removeAll();tileVersions.removeAll();pendingArtInvalidations.removeAll();artworkEntries.removeAll();cachedProfileGames=nil;cachedVisibleGames=nil
+    gridSurface?.clear();gridSurface=nil;tileCache.clear();previousTiles.removeAll();tileArtwork.removeAll();tileVersions.removeAll();pendingArtInvalidations.removeAll();artworkEntries.removeAll()
     shellRenderer?.stop();shellRenderer=nil;canvasLayer?.device=nil;canvasLayer?.removeFromSuperlayer();canvasLayer=nil;layer=nil
     lastChromeKey="";cachedShellHits=[];art.purge();hits=[];hoverID=nil;pressedID=nil;window?.invalidateCursorRects(for:self)
   }
@@ -249,7 +251,8 @@ final class MetalCanvas: NSView {
   }
   private func recordViewportEntries(){
     guard section == .library,!suspended else{return}
-    let ids=Set(indexRange(prefetch:false).map{visibleGames[$0].id}),now=ProcessInfo.processInfo.systemUptime
+    lastViewportModels=indexRange(prefetch:false).map{visibleGames[$0]}
+    let ids=Set(lastViewportModels.map(\.id)),now=ProcessInfo.processInfo.systemUptime
     for id in Array(artworkEntries.keys) where !ids.contains(id){if artworkEntries[id]?.committed==false{droppedEntries+=1};artworkEntries.removeValue(forKey:id)}
     for id in ids where artworkEntries[id]==nil{let cached=art.hasCachedImage(gameID:id,role:.card);artworkEntries[id]=ArtworkEntry(began:now,cached:cached);entryCount+=1;if cached{cachedEntryCount+=1}}
   }
@@ -270,14 +273,14 @@ final class MetalCanvas: NSView {
   }
   private func updateGridGeometry(){
     let content=bounds.width-148,gap:CGFloat=18
-    libraryViewport=CGRect(x:107,y:187,width:content+10,height:max(0,bounds.height-243))
+    libraryViewport=CGRect(x:105,y:180,width:content+14,height:max(0,bounds.height-236))
     libraryGridColumns=max(1,Int((content+gap)/178))
-    let cardWidth=floor((content-gap*CGFloat(libraryGridColumns-1))/CGFloat(libraryGridColumns)),cardHeight=cardWidth*1.28+80
+    let cardWidth=floor((content-gap*CGFloat(libraryGridColumns-1))/CGFloat(libraryGridColumns)),cardHeight=cardWidth*LibraryCardMetrics.coverRatio+LibraryCardMetrics.titleHeight
     libraryCardStride=cardHeight+gap
     let rows=(visibleGames.count+libraryGridColumns-1)/libraryGridColumns
-    libraryMaximumScroll=max(0,CGFloat(rows)*libraryCardStride-gap-libraryViewport.height);libraryScroll=min(max(0,libraryScroll),libraryMaximumScroll)
+    libraryMaximumScroll=max(0,CGFloat(rows)*libraryCardStride-gap+2*LibraryCardMetrics.edgePadding-libraryViewport.height);libraryScroll=min(max(0,libraryScroll),libraryMaximumScroll)
   }
-  private var cardSize:NSSize{let width=floor((bounds.width-148-18*CGFloat(libraryGridColumns-1))/CGFloat(libraryGridColumns));return NSSize(width:width,height:width*1.28+80)}
+  private var cardSize:NSSize{let width=floor((bounds.width-148-18*CGFloat(libraryGridColumns-1))/CGFloat(libraryGridColumns));return NSSize(width:width,height:width*LibraryCardMetrics.coverRatio+LibraryCardMetrics.titleHeight)}
   private func indexRange(prefetch:Bool)->Range<Int>{
     guard !visibleGames.isEmpty else{return 0..<0}
     let start=max(0,Int(floor(libraryScroll/libraryCardStride))-(prefetch ? 1:0))
@@ -407,34 +410,35 @@ final class MetalCanvas: NSView {
   }
   @discardableResult private func drawCard(_ cg:CGContext,game:Game,rect r:CGRect)->Bool{
       var hasArtwork=false
-      let coverHeight=r.width*1.28
+      let coverHeight=r.width*LibraryCardMetrics.coverRatio
       let installed=game.variants.contains{$0.installed}
       round(r,color(installed ? 0x24332f:0x242a2d))
       let cover=CGRect(x:r.minX,y:r.minY,width:r.width,height:coverHeight)
       cg.saveGState();cg.addPath(CGPath(roundedRect:cover,cornerWidth:10,cornerHeight:10,transform:nil));cg.clip()
       if let image=art.image(for:game,role:.card,refresh:{[weak self]in self?.invalidateGame(id:game.id)}){
         hasArtwork=true
+        let maximum=max(image.width,image.height)<=128 ? CGFloat(1):CGFloat.greatestFiniteMagnitude
+        let scale=min(maximum,min(cover.width/CGFloat(image.width),cover.height/CGFloat(image.height)))
+        let size=CGSize(width:CGFloat(image.width)*scale,height:CGFloat(image.height)*scale)
         cg.saveGState();cg.translateBy(x:cover.minX,y:cover.maxY);cg.scaleBy(x:1,y:-1)
-        cg.draw(image,in:GameArtwork.imageRect(imageSize:CGSize(width:image.width,height:image.height),in:CGRect(origin:.zero,size:cover.size),role:.card));cg.restoreGState()
+        cg.draw(image,in:CGRect(x:(cover.width-size.width)/2,y:(cover.height-size.height)/2,width:size.width,height:size.height));cg.restoreGState()
       }else{
         let hash=game.id.utf8.reduce(0){($0*31+Int($1))&0xffffff}
         cg.setFillColor(color(0x20363a | (hash&0x0f0f0f)).cgColor);cg.fill(cover)
-        text(String(LibraryEntryPresentation.title(game).prefix(2)).uppercased(),CGRect(x:cover.minX+16,y:cover.midY-28,width:cover.width-32,height:55),size:40,bold:true,color:color(0xb9d4ce,0.8))
-        icon("gamecontroller",CGRect(x:cover.minX+14,y:cover.minY+14,width:22,height:22),tint:color(0xc1d2ce,0.7))
+        icon("gamecontroller",CGRect(x:cover.midX-28,y:cover.midY-28,width:56,height:56),tint:color(0xc1d2ce,0.7))
       }
       if !installed{cg.setBlendMode(.saturation);cg.setFillColor(NSColor.gray.cgColor);cg.fill(cover);cg.setBlendMode(.normal);cg.setFillColor(color(0x11171a,0.22).cgColor);cg.fill(cover)}
       cg.restoreGState()
-      text(LibraryEntryPresentation.title(game),CGRect(x:r.minX+10,y:cover.maxY+10,width:r.width-20,height:23),size:13,bold:true,color:installed ? .white:color(0xc6cdcd))
-      let chips=Self.platformLabels(game)
-      var chipX=r.minX+10
-      for chip in chips{
-        let chipWidth=ceil((chip as NSString).size(withAttributes:[.font:NSFont.systemFont(ofSize:9,weight:.semibold)]).width)+12
-        guard chipX+chipWidth<=r.maxX-6 else{break}
-        let chipRect=CGRect(x:chipX,y:cover.maxY+35,width:chipWidth,height:18)
-        round(chipRect,color(0x345245,0.8),radius:5)
-        text(chip,chipRect.insetBy(dx:6,dy:3),size:9,bold:true,color:color(0xb7e7ca));chipX+=chipWidth+5
+      let mac=game.variants.contains{$0.platform == .macOS},windows=game.variants.contains{$0.platform == .windows}
+      let count=(mac ? 1:0)+(windows ? 1:0)
+      if count>0 {
+        let badge=CGRect(x:cover.maxX-CGFloat(count)*22-10,y:cover.minY+9,width:CGFloat(count)*22+3,height:25)
+        round(badge,color(0x101819,0.82),radius:7)
+        var x=badge.minX+4
+        if mac{icon("apple.logo",CGRect(x:x,y:badge.minY+4,width:17,height:17),tint:color(0xf0f6f3));x+=22}
+        if windows{let box=CGRect(x:x+1,y:badge.minY+5,width:15,height:15);color(0xf0f6f3).setFill();for row in 0..<2{for column in 0..<2{CGRect(x:box.minX+CGFloat(column)*8,y:box.minY+CGFloat(row)*8,width:6.5,height:6.5).fill()}}}
       }
-      text(installed ? "Installato":game.store.title,CGRect(x:r.minX+10,y:cover.maxY+56,width:r.width-20,height:16),size:10,color:color(0x93a3a4))
+      text(LibraryEntryPresentation.title(game),CGRect(x:r.minX+10,y:cover.maxY+10,width:r.width-20,height:23),size:13,bold:true,color:installed ? .white:color(0xc6cdcd))
       return hasArtwork
   }
   private func drawScene(_ cg: CGContext) {
@@ -495,13 +499,13 @@ final class MetalCanvas: NSView {
       let rect=CGRect(x:left+CGFloat(index)*180,y:139,width:170,height:31);round(rect,color(showOtherContent==entry.0 ? 0x2a443b:0x202b2e),radius:8);text(entry.1,rect.insetBy(dx:12,dy:8),size:12,bold:true,color:color(0xc9dfd5));registerHit(rect,id:"library.section.\(index)",action:.librarySection(entry.0))
     }
     let gap:CGFloat=18
-    libraryViewport=CGRect(x:left-5,y:187,width:content+10,height:max(0,height-243))
+    libraryViewport=CGRect(x:left-7,y:180,width:content+14,height:max(0,height-236))
     libraryGridColumns=max(1,Int((content+gap)/178))
     let cardWidth=floor((content-gap*CGFloat(libraryGridColumns-1))/CGFloat(libraryGridColumns))
-    let coverHeight=cardWidth*1.28,cardHeight=coverHeight+80
+    let coverHeight=cardWidth*LibraryCardMetrics.coverRatio,cardHeight=coverHeight+LibraryCardMetrics.titleHeight
     libraryCardStride=cardHeight+gap
     let rows=(games.count+libraryGridColumns-1)/libraryGridColumns
-    libraryMaximumScroll=max(0,CGFloat(rows)*libraryCardStride-gap-libraryViewport.height)
+    libraryMaximumScroll=max(0,CGFloat(rows)*libraryCardStride-gap+2*LibraryCardMetrics.edgePadding-libraryViewport.height)
     libraryScroll=min(max(0,libraryScroll),libraryMaximumScroll)
     if drawingChrome && !games.isEmpty{finishScene(left:left,content:content,height:height,libraryHelp:true);return}
     cg.saveGState();cg.clip(to:libraryViewport)

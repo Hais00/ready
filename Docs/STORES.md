@@ -216,3 +216,34 @@ It persists safe per-profile jobs, retains partial game/depot data, inherits the
 shared installation lease, and publishes launch state only after completion and
 binary/manifest checks. Its process and C# fixtures are synthetic; they do not
 claim real account/CDN/commercial-game download validation.
+
+## Non-Steam size planning
+
+The bridge exposes `install_size_plan` for Epic, GOG and Amazon. Send the normal
+profile-scoped credentials on stdin, with `options.gameID`, `platform`
+(`windows` or `macOS`), `language` and `includeDLC:false`. The result contains
+`plan.installedBytes` and `plan.downloadBytes` independently nullable, plus
+`verified`, `source`, `status`, `reason` and `basis`. Unknown bytes remain null.
+These values do not declare peak working space, filesystem allocation overhead
+or a comparison with an existing installation.
+
+Epic reads Legendary's manifest totals for **all manifest install tags**; it does
+not filter that total by the requested language or inspect installed game data.
+GOG uses the selected base-game depots and the SDK's language/wildcard selection
+once, including inline non-redistributable dependency metadata. Summing GOG's
+per-language info buckets can count a wildcard depot twice, so that route is not
+used. Existing GOG catalog `installers[].total_size` is surfaced separately as an
+unverified, download-only offline-installer estimate in `metadata.platformSizes`.
+
+Amazon queries entitlement/download metadata and the signed manifest through
+Nile's open API and parser, without importing its CLI or SDK self-updater. File
+sizes provide installed content bytes; wire/compressed download bytes remain
+unknown. Multi-package manifests remain unverified for installation because the
+current Nile downloader compares the first package only. macOS is unsupported
+through that Amazon API. No game payload or installation directory is accessed
+by planning. SDK config/token files are private and ephemeral; refreshed tokens
+return only on the existing private credentials channel, never inside the plan.
+
+`Evidence/store-size-plan-tests.json` records fake-process transport and
+installed-SDK in-memory parser checks, with network denied for the latter. It
+does not prove a real-account manifest request or a completed store download.

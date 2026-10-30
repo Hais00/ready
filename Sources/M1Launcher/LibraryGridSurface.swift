@@ -2,6 +2,13 @@
 import AppKit
 import QuartzCore
 
+enum LibraryCardMetrics {
+  static let coverRatio:CGFloat=1.5
+  static let titleHeight:CGFloat=42
+  static let edgePadding:CGFloat=7
+  static let focusOutset:CGFloat=4
+}
+
 private final class LibraryGridDocument:NSView {
   weak var canvas:MetalCanvas?
   var inputEnabled=true
@@ -27,6 +34,8 @@ final class LibraryGridSurface:NSScrollView {
   var didScroll:((CGFloat)->Void)?
   var inputEnabled=true{didSet{grid.inputEnabled=inputEnabled}}
   var tileLayerCount:Int{layers.count}
+  var feedbackGeometry:[CGRect]{[selection,hover,focus].filter{!$0.isHidden}.map{$0.frame.insetBy(dx:-$0.lineWidth/2,dy:-$0.lineWidth/2)}}
+  var documentBounds:CGRect{grid.bounds}
   var offset:CGFloat{contentView.bounds.minY}
   init(canvas:MetalCanvas){
     super.init(frame:.zero);grid.canvas=canvas

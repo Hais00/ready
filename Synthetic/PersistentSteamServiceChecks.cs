@@ -22,7 +22,8 @@ static class PersistentSteamServiceChecks
     sealed class Fake:ISteamServiceTransport
     {
         public event Action<SteamTransportNotice>? Notice;
-        internal int Connects,Auths,Stops,Logons,OwnershipCalls;
+        internal int Connects,Auths,Stops,Logons,OwnershipCalls,SizeCalls;
+        internal bool WaitSizePlan;internal TaskCompletionSource<SteamSizePlan> SizeGate=new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool FailConnect,FailStop,WaitAuth,WaitOwnership,IgnoreOwnershipCancellation,WaitLogin,IgnoreLoginCancellation;
         internal EResult LoginResult=EResult.OK;
         internal EResult OwnershipResult=EResult.OK;
@@ -73,6 +74,11 @@ static class PersistentSteamServiceChecks
             if(OwnershipException is {} failure)throw failure;
             return SteamServiceOwnership.Observe(app,OwnershipResult,ReturnedApp??app,TicketPresent?new byte[]{1,2,3}:Array.Empty<byte>(),OwnershipSteamID);
         }
+        public async Task<SteamSizePlan> InstallSizePlanAsync(SteamSizeRequest request,CancellationToken cancel)
+        {
+            SizeCalls++;if(WaitSizePlan)return await SizeGate.Task;
+            return new(){Request=request,DownloadBytes=50,InstalledBytes=100,Verified=true,Source="fixture_selected_depot_totals",Status="available",Reason="selection_verified",Depots=new(){new(10,request.AppID,110,50,100)}};
+        }
         public Task LibraryAsync(Action<object[]> page,CancellationToken cancel)
         {cancel.ThrowIfCancellationRequested();page(new object[]{new{id="steam:480",storeID="480",variants=Array.Empty<object>()}});return Task.CompletedTask;}
         internal void Drop()=>Notice?.Invoke(new("disconnected"));
@@ -110,7 +116,11 @@ static class PersistentSteamServiceChecks
         {
             string snap=s.Send("snapshot");await s.Done(snap);
             Check(S(s.Terminal(snap),"state")=="offline"&&s.Transport.Connects==0,"offline-snapshot-does-not-connect");
+            string offlineSize=s.Send("install_size_plan",new{gameID="480",platform="windows"});await s.Done(offlineSize);Check(S(s.Terminal(offlineSize),"code")=="not_online"&&s.Transport.SizeCalls==0&&s.Transport.Connects==0,"size-plan-never-starts-automatic-login-or-offline-queries");
             await s.Connect();Check(s.Transport.Logons==1&&s.Transport.Auths==0&&s.Transport.LastToken==Secret,"saved-refresh-connect-no-QR");
+            string sized=s.Send("install_size_plan",new{gameID="480",platform="windows",branch="public",language="english",architecture="64"});await s.Done(sized);var plan=s.Terminal(sized).GetProperty("plan");
+            Check(plan.GetProperty("downloadBytes").GetUInt64()==50&&plan.GetProperty("installedBytes").GetUInt64()==100&&plan.GetProperty("verified").GetBoolean()&&plan.GetProperty("selectedDepotCount").GetInt32()==1&&plan.GetProperty("fingerprint").GetString()!.Length==64,"size-plan-reports-distinct-uint64-payloads-filters-and-fingerprint");
+            string badSize=s.Send("install_size_plan",new{gameID="480",platform="linux"});await s.Done(badSize);Check(S(s.Terminal(badSize),"code")=="invalid_request"&&s.Transport.SizeCalls==1,"size-plan-invalid-platform-never-reaches-transport");
             string friends=s.Send("friends");await s.Done(friends);
             Check(s.Terminal(friends).GetProperty("friends")[0].GetProperty("gameID").GetString()=="480","friends-presence-game-snapshot");
             s.Transport.ChangeFriends();Check(s.Output.Events.Any(e=>S(e,"type")=="friends"&&B(e,"changed")),"unsolicited-friends-update");
@@ -136,6 +146,19 @@ static class PersistentSteamServiceChecks
             string offline=s.Send("offline");await s.Done(offline);int count=s.Transport.Connects;s.Transport.Drop();await Task.Delay(30);
             Check(s.Transport.Connects==count&&S(s.Terminal(snap),"type")=="result","manual-offline-prevents-reconnect");
             string reconnect=s.Send("reconnect");await s.Done(reconnect);Check(s.Transport.Connects==count+1,"explicit-reconnect-reuses-private-credentials");
+        }
+        await using(var s=new Session())
+        {
+            await s.Connect();s.Transport.WaitSizePlan=true;string id=s.Send("install_size_plan",new{gameID="480",platform="macOS"});await Until(()=>s.Transport.SizeCalls==1);
+            string cancellation=s.Send("cancel",new{requestID=id});await s.Done(cancellation);
+            s.Transport.SizeGate.SetResult(new(){Request=new(480,"macOS"),InstalledBytes=123,DownloadBytes=45,Verified=true,Status="available"});await s.Done(id);
+            Check(S(s.Terminal(id),"type")=="error"&&S(s.Terminal(id),"code")=="cancelled"&&s.Output.Events.Count(e=>S(e,"id")==id&&S(e,"type") is "result" or "error")==1,"late-cancelled-size-plan-cannot-publish-result");
+        }
+        await using(var s=new Session())
+        {
+            await s.Connect();s.Transport.WaitSizePlan=true;string id=s.Send("install_size_plan",new{gameID="480",platform="windows"});await Until(()=>s.Transport.SizeCalls==1);s.Transport.LogOff(EResult.LoggedInElsewhere);
+            s.Transport.SizeGate.SetResult(new(){Request=new(480,"windows"),InstalledBytes=123,Verified=true,Status="available"});await s.Done(id);
+            Check(S(s.Terminal(id),"type")=="error"&&!s.Output.Events.Any(e=>S(e,"id")==id&&S(e,"type")=="result"),"connection-epoch-change-rejects-late-size-plan");
         }
         await using(var s=new Session())
         {

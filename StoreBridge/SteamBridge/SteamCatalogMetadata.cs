@@ -88,6 +88,7 @@ static class SteamCatalogMetadata
         string fallbackCapsule=$"https://cdn.akamai.steamstatic.com/steam/apps/{id}/library_600x900.jpg";
         string fallbackBanner=$"https://cdn.akamai.steamstatic.com/steam/apps/{id}/header.jpg";
         var metadata=new Dictionary<string,object?>{
+            ["platformSizes"]=SteamInstallSizes.Overview(id,values),
             ["launch"]=values?["config"]["launch"].Children.Select(k=>new{executable=k["executable"].Value,arguments=k["arguments"].Value,workingdir=k["workingdir"].Value,@type=k["type"].Value,description=k["description"].Value,oslist=k["config"]["oslist"].Value,osarch=k["config"]["osarch"].Value}).ToArray()??Array.Empty<object>(),
             ["storeURL"]=$"https://store.steampowered.com/app/{id}/",["iconURL"]=icon,["capsuleURL"]=capsule??fallbackCapsule,["heroURL"]=hero??icon,["bannerURL"]=banner??fallbackBanner,["artworkFallbacksUnverified"]=capsule is null||banner is null,
             ["developers"]=Associations(common,"developer"),["publishers"]=Associations(common,"publisher"),["genres"]=Array.Empty<string>(),["downloadableVariants"]=platforms,["metadataComplete"]=false,
@@ -121,6 +122,9 @@ static class SteamCatalogMetadata
         if(ContentType(Text("type",64))is{} contentType){result["contentType"]=contentType;result["libraryKind"]=LibraryKind(contentType);result["libraryClassificationSource"]="public_store";}
         result["contentInfoUnavailable"]=title.Length==0||!result.ContainsKey("libraryKind")||Equals(result["libraryKind"],"unknown");
         result["descriptionUnavailable"]=description.Length==0;if(description.Length>0)result["descriptionSource"]="public_store";
+        var requirements=new Dictionary<string,object?>();
+        foreach(var pair in new[]{("windows","pc_requirements"),("macOS","mac_requirements")})if(SteamInstallSizes.MinimumRequirement(data,pair.Item2)is{} bytes)requirements[pair.Item1]=new Dictionary<string,object?>{["requiredBytes"]=bytes,["source"]="steam_store_minimum_requirement",["label"]="Requisito minimo dichiarato, non dimensione del download",["verified"]=false};
+        if(requirements.Count>0)result["platformRequirements"]=requirements;
         // Do not erase genuine PICS icons/heroes when Store supplies no such field.
         if(Image("header_image") is {} header)result["bannerURL"]=header;
         if((Image("background_raw")??Image("background")) is {} background)result["heroURL"]=background;

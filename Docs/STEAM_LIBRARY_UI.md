@@ -1,9 +1,35 @@
 # Steam library, metadata and artwork
 
-Updated 2026-10-29. Ready keeps the library on disk and opens a game detail page
+Updated 2026-10-30. Ready keeps the library on disk and opens a game detail page
 before Play. Remote metadata describes content and platform availability; it
 never grants ownership, invents executable paths or marks a game installed.
 Hosted-game input and benchmark testing remains suspended during this UI work.
+
+## Current cards, details and return from gameplay
+
+Library cards show the title and upper-right Apple/Windows availability icons.
+Portrait artwork keeps its aspect ratio; selection and hover have dedicated
+viewport/document padding. The detail body inherits the launcher background and
+uses a larger hero. Controller navigation reaches the version picker, primary
+action, options, transfer control, long description and Back, skipping disabled
+actions. Installation has its own controller-aware page with library selection.
+See [game libraries and space](GAME_STORAGE.md) for size semantics and storage
+configuration.
+
+Before gameplay, Ready retains the already decoded thumbnails of the last
+viewport, bounded to 24 cards/16 MiB of CPU image memory. It releases its grid
+layers, tiles and Metal resources; the retained thumbnails are not GPU textures.
+Catalog models and titles remain cached. On return, those thumbnails are restored
+before rebuilding the grid. Missing cached thumbnails get priority indexed disk
+reads; background artwork and metadata warming resume afterwards. A cache miss
+does not hold restoration waiting for a network download. Both gameplay and
+maintenance pause states are cleared on return, including failed launches.
+
+Controlled hidden-window checks verify actual artwork restoration and release
+of owned canvas GPU storage. They do not establish zero system-wide GPU memory,
+immediate display scan-out, game FPS, or physical controller acceptance. The
+[storage/interface checkpoint](../Validation/storage-interface-checkpoint.json)
+records the current verification scope.
 
 ## Scrolling
 

@@ -7,7 +7,7 @@ import LauncherCore
 /// preference records remain in place even when that membership is removed.
 enum SteamLibraryMerge {
   static let ownersKey = "readySteamCatalogOwners"
-  private static let catalogKeys:Set<String>=["shortDescription","description","releaseDate","storeURL","iconURL","capsuleURL","heroURL","bannerURL","developers","publishers","genres","downloadableVariants","metadataComplete","title","contentType","artworkFallbacksUnverified","libraryKind","libraryClassificationSource","libraryMembershipSource","ownedGameListAvailable","ownedGameListed","contentInfoUnavailable","descriptionUnavailable","descriptionSource","publicMetadataUnavailable"]
+  private static let catalogKeys:Set<String>=["shortDescription","description","releaseDate","storeURL","iconURL","capsuleURL","heroURL","bannerURL","developers","publishers","genres","downloadableVariants","metadataComplete","title","contentType","artworkFallbacksUnverified","libraryKind","libraryClassificationSource","libraryMembershipSource","ownedGameListAvailable","ownedGameListed","contentInfoUnavailable","descriptionUnavailable","descriptionSource","publicMetadataUnavailable","platformSizes","platformRequirements"]
   private static let classificationKeys:Set<String>=["libraryKind","libraryClassificationSource","contentType","contentInfoUnavailable"]
   private static let membershipKeys:Set<String>=["libraryMembershipSource","ownedGameListAvailable","ownedGameListed","licensePackageMember","licenseMembershipComplete","ownedGameListStatus"]
   private static func knownKind(_ metadata:[String:JSONValue])->String? {
@@ -87,7 +87,7 @@ enum SteamLibraryMerge {
             if authoritative || !hadKnownClassification {metadata[key]=value}
             continue
           }
-          if keepRichCatalog,catalogKeys.contains(key),metadata[key] != nil{continue}
+          if keepRichCatalog,catalogKeys.contains(key),metadata[key] != nil,key != "platformSizes"{continue}
           metadata[key] = value
         }
         if keepRichCatalog,let artwork=old.artworkURL,!artwork.isEmpty{game.artworkURL=artwork}

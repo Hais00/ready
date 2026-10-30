@@ -28,13 +28,77 @@ final class ArtworkCache {
   private var generation=UUID(),persisting=false,indexRevision:UInt64=0
   private let maintenanceLock=NSLock()
   private var maintenancePaused=false,workGeneration=UUID()
+  private var gameplayPaused=false,returnHold=false
+  private struct ReturnCard {let hash:String,image:CGImage}
+  private var returnCards=[String:ReturnCard](),returnBytes=0
+  private var returnPending=Set<String>(),returnCompletion:(()->Void)?
+  var gameplayRetentionSnapshot:(count:Int,bytes:Int,paused:Bool){(returnCards.count,returnBytes,gameplaySuspended)}
+  private var gameplaySuspended:Bool{maintenanceLock.lock();defer{maintenanceLock.unlock()};return gameplayPaused}
+  private var workSuspended:Bool{maintenanceSuspended || gameplaySuspended}
+  /// Keep only already decoded card thumbnails for the last viewport. These
+  /// are CPU images, never card tiles, Metal textures, banners or full assets.
+  func beginGameplay(retainingViewport games:[Game]){
+    guard !gameplaySuspended else{return}
+    var kept=[String:ReturnCard](),bytes=0
+    for game in games.prefix(24){
+      let id=key(game.id,.card)
+      guard let hash=index.roles[id]?.hash,
+        let image=cardMemory.object(forKey:memoryKey(hash,.card)as NSString)?.image else{continue}
+      let cost=image.bytesPerRow*image.height
+      guard cost<=16*1024*1024-bytes else{continue}
+      kept[id]=ReturnCard(hash:hash,image:image);bytes+=cost
+    }
+    returnCards=kept;returnBytes=bytes
+    maintenanceLock.lock();gameplayPaused=true;maintenanceLock.unlock()
+    purge()
+  }
+  /// Rehydrate RAM immediately, then only the first viewport's indexed cards.
+  /// Background artwork waits for these reads; missing blobs do not hold UI
+  /// restoration hostage to a network request. Root owns model/GPU restoration.
+  func restoreFirstViewport(games:[Game],completion:@escaping()->Void){
+    returnHold=true;returnCompletion=completion;returnPending.removeAll()
+    maintenanceLock.lock();gameplayPaused=false;maintenancePaused=false;maintenanceLock.unlock()
+    whenLoaded{[weak self]in
+      guard let self else{return};let epoch=self.generation
+      let viewport=Array(games.prefix(32))
+      for game in viewport{
+        self.bind(game,role:.card);let id=self.key(game.id,.card)
+        guard let hash=self.index.roles[id]?.hash else{continue}
+        if let card=self.returnCards[id],card.hash==hash{self.cardMemory.setObject(CachedArtwork(card.image),forKey:self.memoryKey(hash,.card)as NSString,cost:card.image.bytesPerRow*card.image.height)}
+        if self.cardMemory.object(forKey:self.memoryKey(hash,.card)as NSString)==nil{self.returnPending.insert(id)}
+      }
+      for game in viewport{
+        let id=self.key(game.id,.card);guard self.returnPending.contains(id),let record=self.index.roles[id],let hash=record.hash else{continue}
+        self.diskLoading.insert(id)
+        self.load(hash:hash,role:.card,priority:3,binding:id){[weak self]image in
+          guard let self,self.generation==epoch else{return};self.diskLoading.remove(id)
+          if self.index.roles[id]?.hash==hash,let image{
+            self.cardMemory.setObject(CachedArtwork(image),forKey:self.memoryKey(hash,.card)as NSString,cost:image.bytesPerRow*image.height)
+            self.notify(gameID:game.id,role:.card,url:record.preferredURL ?? "",changed:false,loaded:true)
+          }
+          self.returnPending.remove(id);self.finishViewportRestore()
+        }
+      }
+      self.finishViewportRestore()
+    }
+  }
+  private func finishViewportRestore(){
+    guard returnHold,returnPending.isEmpty,let done=returnCompletion else{return}
+    returnCompletion=nil;returnCards.removeAll();returnBytes=0
+    let epoch=generation
+    Self.publish{[weak self]in
+      done()
+      guard let self,self.generation==epoch else{return}
+      self.returnHold=false;self.drain();self.persist()
+    }
+  }
   var maintenanceSuspended:Bool{maintenanceLock.lock();defer{maintenanceLock.unlock()};return maintenancePaused}
   func setMaintenanceSuspended(_ value:Bool){
     maintenanceLock.lock();let changed=maintenancePaused != value;maintenancePaused=value;maintenanceLock.unlock()
     if changed && value{purge()}else if changed{persist()}
   }
   private func readEpoch()->UUID{maintenanceLock.lock();defer{maintenanceLock.unlock()};return workGeneration}
-  private func workAllowed(_ epoch:UUID)->Bool{maintenanceLock.lock();defer{maintenanceLock.unlock()};return !maintenancePaused && workGeneration==epoch}
+  private func workAllowed(_ epoch:UUID)->Bool{maintenanceLock.lock();defer{maintenanceLock.unlock()};return !maintenancePaused && !gameplayPaused && workGeneration==epoch}
   init(directory:URL?=ArtworkCache.defaultDirectory,session:URLSession = ArtworkCache.publicSession,networkEnabled:Bool=true,maximumPixelSize:Int=2048,backgroundWriteGate:(()->Void)?=nil,indexStore:ArtworkIndexStore?=nil){
     self.directory=directory;self.session=session;store=indexStore ?? ArtworkIndexStore(directory);self.networkEnabled=networkEnabled
     self.maximumPixelSize=min(2048,max(128,maximumPixelSize));self.backgroundWriteGate=backgroundWriteGate
@@ -99,7 +163,7 @@ final class ArtworkCache {
   func hasCachedImage(gameID:String,role:GameArtwork.Role)->Bool{index.roles[key(gameID,role)]?.hash != nil}
   func revision(gameID:String,role:GameArtwork.Role)->UInt64{revisions[key(gameID,role)] ?? 0}
   func image(for game:Game,role:GameArtwork.Role,refresh:@escaping()->Void)->CGImage?{
-    guard !maintenanceSuspended else{return nil}
+    guard !workSuspended else{return nil}
     let id=key(game.id,role)
     guard loaded else{whenLoaded{[weak self]in _=self?.image(for:game,role:role,refresh:refresh)};return nil}
     bind(game,role:role)
@@ -108,7 +172,7 @@ final class ArtworkCache {
   }
   func image(_ address:String?,refresh:@escaping()->Void)->CGImage?{image(addresses:[address],refresh:refresh)}
   func image(addresses:[String?],refresh:@escaping()->Void)->CGImage?{
-    guard !maintenanceSuspended else{return nil}
+    guard !workSuspended else{return nil}
     let candidates=addresses.compactMap{$0}.filter(Self.validURL),gameID="legacy:"+ArtworkIndexStore.hash(Data(candidates.joined(separator:"\n").utf8)),id=key(gameID,.card)
     guard !candidates.isEmpty else{return nil};guard loaded else{whenLoaded{[weak self]in _=self?.image(addresses:addresses,refresh:refresh)};return nil}
     if index.roles[id]==nil{index.roles[id]=ArtworkRoleRecord(gameID:gameID,role:.card,candidates:candidates);changedIndex()}
@@ -117,12 +181,14 @@ final class ArtworkCache {
   }
   /// Disk objects, receipts and bindings survive session/RAM cleanup.
   func purge(){
+    returnPending.removeAll();returnCompletion=nil;returnHold=false
+    if !gameplaySuspended{returnCards.removeAll();returnBytes=0}
     maintenanceLock.lock();workGeneration=UUID();maintenanceLock.unlock()
     generation=UUID();tasks.values.forEach{$0.cancel()};tasks.removeAll();readers.cancelAllOperations();readOperations.removeAll()
     pending.removeAll();active.removeAll();jobs.removeAll();deferred.removeAll();refreshers.removeAll();warmFinished.removeAll();diskLoading.removeAll();startup.removeAll();viewportPriorities.removeAll()
     cardMemory.removeAllObjects();detailMemory.removeAllObjects()
   }
-  private func whenLoaded(_ action:@escaping()->Void){guard !maintenanceSuspended else{return};if loaded{action()}else{startup.append(action)}}
+  private func whenLoaded(_ action:@escaping()->Void){guard !workSuspended else{return};if loaded{action()}else{startup.append(action)}}
   private func key(_ game:String,_ role:GameArtwork.Role)->String{game+"\u{1f}"+role.rawValue}
   private func size(_ role:GameArtwork.Role)->Int{switch role{case .icon:return 128;case .card:return min(maximumPixelSize,512);case .banner:return maximumPixelSize}}
   private func memory(_ role:GameArtwork.Role)->NSCache<NSString,CachedArtwork>{role == .card ? cardMemory:detailMemory}
@@ -163,16 +229,16 @@ final class ArtworkCache {
     }
     jobs[id]=job;pending.append(id);drain()
   }
-  private func valid(_ job:Job,_ epoch:UUID)->Bool{!maintenanceSuspended && generation==epoch && jobs[job.key]?.token==job.token}
+  private func valid(_ job:Job,_ epoch:UUID)->Bool{!workSuspended && generation==epoch && jobs[job.key]?.token==job.token}
   private func lane(_ priority:Int)->Int{priority>=2 ? 2:priority==1 ? 1:0}
   private func drain(){
-    guard !maintenanceSuspended else{return}
+    guard !workSuspended else{return}
     while active.count<5{
       pending.removeAll{jobs[$0]==nil || active.contains($0)}
       let counts=Dictionary(grouping:active.compactMap{jobs[$0]}){lane($0.priority)}.mapValues(\.count)
       // Reserved foreground capacity cannot be consumed by backgrounds or
       // look-ahead. All lanes are bounded; visible downloads retain two slots.
-      let eligible=pending.enumerated().filter{_,id in guard let job=jobs[id]else{return false};let l=lane(job.priority);return (counts[l] ?? 0)<(l==1 ? 1:2) && stagedBytes<(l==0 ? 32:64)*1024*1024}
+      let eligible=pending.enumerated().filter{_,id in guard let job=jobs[id]else{return false};let l=lane(job.priority);return (!returnHold || l>0) && (counts[l] ?? 0)<(l==1 ? 1:2) && stagedBytes<(l==0 ? 32:64)*1024*1024}
       guard let selected=eligible.max(by:{a,b in let x=jobs[a.element]!.priority,y=jobs[b.element]!.priority;return x==y ? a.offset>b.offset:x<y})else{return}
       let id=pending.remove(at:selected.offset);guard let job=jobs[id]else{continue};active.insert(id);resolve(job,position:0,epoch:generation)
     }
@@ -289,7 +355,7 @@ final class ArtworkCache {
   }
   private func changedIndex(){indexRevision &+= 1;persist()}
   private func persist(){
-    guard !maintenanceSuspended,loaded,!persisting else{return};persisting=true;let snapshot=index,version=indexRevision
+    guard !workSuspended,loaded,!persisting else{return};persisting=true;let snapshot=index,version=indexRevision
     io.async{[weak self]in
       guard let self else{return};self.backgroundWriteGate?();_=self.store.save(snapshot)
       Self.publish{[weak self]in guard let self else{return};self.persisting=false

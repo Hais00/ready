@@ -1,0 +1,176 @@
+{
+  "schema": 1,
+  "date": "2026-10-30",
+  "scope": "Game library storage, size plans, installation selection, cards/details/controller routing, and cached library return; controlled fixtures unless explicitly listed as live.",
+  "build": {
+    "releaseBuildPassed": true,
+    "signatureAndRelocationPassed": true,
+    "binarySHA256": "db31c97d0864a0202c30d7ff69663bbc093e17cfea82b8f04030f69e9c9d820a",
+    "proprietaryComponentsIncluded": false
+  },
+  "steamComponent": {
+    "selectedVersion": "steambridge-333920f4cdb357a3f2effd61",
+    "manifestSHA256": "fe5e6ffb6a95d582ea21a7df9a9bf8a42f5b0861b8e3d8ceb0498e6a89dec0ba",
+    "helperSHA256": "d780a9f28d60958e35f19cafd557ad2c7870103e32f595d2d8d6743ad28fe2d8"
+  },
+  "checks": {
+    "storageRepository": {
+      "passed": true,
+      "checks": 34,
+      "reportSHA256": "7a7860e12daa01f2554337de0ab45a409c2bea11b6a0bb8e06c6cbf1ab88fe7c",
+      "sourceReceiptsMatchCurrentFiles": true
+    },
+    "storageSettingsHiddenUI": {
+      "passed": true,
+      "checks": 8,
+      "reportSHA256": "efa4e688b449be182cab8cc83db9c108e16fca179731d17012c575f00f425a21",
+      "sourceReceiptsMatchCurrentFiles": true
+    },
+    "libraryDetailHiddenUI": {
+      "passed": true,
+      "checks": 25,
+      "reportSHA256": "a337efef91bed7e36897ae7bbea6e762454a23af934173c8e2a2759264695275",
+      "sourceReceiptsMatchCurrentFiles": true
+    },
+    "installationHiddenUI": {
+      "passed": true,
+      "checks": 24,
+      "reportSHA256": "ba766cc9020836aad19d49d293a14271ae5929cc7ae6dff28b84afd46f7e3d61",
+      "sourceReceiptsMatchCurrentFiles": true
+    },
+    "installedSizeIndex": {
+      "passed": true,
+      "checks": 11,
+      "reportSHA256": "a17f9350e2345ea133ebdf59a9e41301120ff268a17203b48e05b766633f67ac",
+      "sourceReceiptsMatchCurrentFiles": true
+    },
+    "otherStoreSizePlans": {
+      "passed": true,
+      "checks": 21,
+      "reportSHA256": "d0ad0e2af9e92470da5adb6b540b934cab0c8267f403674b7d9d6c50ecae246a",
+      "sourceReceiptsMatchCurrentFiles": true
+    },
+    "steamPinnedPlan": {
+      "passed": true,
+      "checks": 49,
+      "reportSHA256": "287c4764e6ad3fd030ae6bb51f29ab325d761a9c815636a200ece0648b877807",
+      "sourceReceiptsMatchCurrentFiles": true
+    },
+    "legacySteamQueue": {
+      "passed": true,
+      "checks": 21,
+      "reportSHA256": "46d8256b7b4b33ac83f3628222aa31b9f4ffa1d6e90e363ea1d218c8e3e2698d",
+      "sourceReceiptsMatchCurrentFiles": true
+    },
+    "frontendQueueRegistration": {
+      "passed": true,
+      "checks": 18,
+      "reportSHA256": "c3c16a876e4862b79d13ef8ba251dd81ddb111b0e5d1bba08b533b99fa2610f5",
+      "sourceReceiptsMatchCurrentFiles": true
+    },
+    "artworkReturn": {
+      "passed": true,
+      "checks": 38,
+      "reportSHA256": "e68f5f82c6c4a527f2ffbd4317463cd7e78e0a5de8495d96ed8748a50740881f",
+      "sourceReceiptsMatchCurrentFiles": true
+    },
+    "steamCatalogAndService": {
+      "passed": true,
+      "checks": 256,
+      "reportSHA256": "59f35f059db9057d15f2ded21a99fb595206e3e6766b6d11aebcc2f23682addc",
+      "sourceReceiptsMatchCurrentFiles": true
+    },
+    "isolatedComponentRuntime": {
+      "passed": true,
+      "checks": 7,
+      "reportSHA256": "e13a76750eca7a759a971bf2b935eb520415e0ed6fe88dab0c5c20daf70eee9d",
+      "sourceReceiptsMatchCurrentFiles": true
+    },
+    "relocatedFrontend": {
+      "passed": true,
+      "checks": 14,
+      "reportSHA256": "e04a77deaab12cab2f03bc433defaaa3ad09c8fde0a68a34c587ffb5f06247bf",
+      "sourceReceiptsMatchCurrentFiles": true
+    }
+  },
+  "sourceHashes": {
+    "Scripts/test_game_installation_view.py": "659b8c30ade0df7fc5a02ca279b46a24f9b39b1dcd94669969b0293b102d4fdb",
+    "Scripts/test_game_storage.py": "8338dc155857cb5bd53b064f05c9046b5e0a873e1fd0d787726b0d5e655a0a23",
+    "Scripts/test_library_appearance.py": "507f03dd20be94e40bda2539fa39b70252abe32f31bc75df1aa73d26a3613bd7",
+    "Scripts/test_steam_install_plan.py": "7f1be6db2deff7ab97858c0154420a4e359add9cb22d4d528fbf77d7d56b2f62",
+    "Scripts/test_storage_libraries.py": "24b8b57ab4df46e5fd28f8d4b02513532d3a464856545254babde58c1c08d6f2",
+    "Scripts/test_storage_settings.py": "66588ac333d8c51c2f3324dc22c67857619fd0e58a68ff21f280b08b19791881",
+    "Scripts/test_store_size_plan.py": "4b75917a448155fbe9f8d138a8479fc6a201817b5e84a032b5d4ab5fe6df62ff",
+    "Sources/LauncherCore/GameStorageInfo.swift": "382a9f8f8f266469db5d9f280985e87ee46960261571bf96b308a2b216bf128f",
+    "Sources/LauncherCore/StorageLibraries.swift": "25a4eba61b8b25ee030a8f0ba7d16414355ab50d361921a64c9db7fadf728072",
+    "Sources/LauncherCore/StorageLibraryRepository.swift": "607551dc5bdb7b4b0a907ed1c15fa0430be497b42710e2647e55c8ae4ac16bb3",
+    "Sources/M1Launcher/GameInstallationView.swift": "80c4f860ae1bc7f6e768d0ae005c537b30800c06c79823b966417a4413b70b17",
+    "Sources/M1Launcher/GameStorageSizeService.swift": "e34709b1ee7ca40ce1f6969fe480a0c4107ccf341ead9ebd46bbbf51cc46add8",
+    "Sources/M1Launcher/GameStorageUI.swift": "56af2b03f2cd103a57dd3767314ab70e6fef62350051959621c4c8f10ca42256",
+    "Sources/M1Launcher/OtherStoreInstallationUI.swift": "9900bc3711b2d11de903f7f74f47bd3a7ae2cce0c9a61616da0ddcaa21468f3a",
+    "Sources/M1Launcher/StorageDownloadIntegration.swift": "2636d389501d581e204efee73a5c404b1422a66232a2151417f51e410a9ac794",
+    "Sources/M1Launcher/StorageSettings.swift": "788962025562132137f05bb6690e981f6b2d6e1f6c5c5fa31d73555d7f22a9ad",
+    "StoreBridge/SteamBridge/SteamInstallSizes.cs": "c18c577d0284fd61b2a84eea42379677297ed35c0d9f3018f90eb894bd885d98",
+    "StoreBridge/size_plan.py": "0ce368a3c3b7b9a123bcd54626148945d8b26bff2514b27b78f4f46e35b0a522",
+    "StoreBridge/size_plan_worker.py": "aeac2e0b9de239991092b7aac484db06aecd401fc78685b67bc548edfec1205b",
+    "StoreBridge/steam_install_plan.py": "2d79a6e0137704d25f79119e39a6a3c5c44cb1670716ae0bc52aa6b4014fc786",
+    "Synthetic/ReadyGameInstallationProbe.swift": "18c6a8095de4102cd98e39427f680c313b2af425625f4e811432859f5c90bb0c",
+    "Synthetic/ReadyGameStorageProbe.swift": "40f852af831631be248ffd1c0b89aa19f29346b26f92473f1730105afb17a02c",
+    "Synthetic/ReadyLibraryAppearanceProbe.swift": "de761b5f61225d3ab48d60eda69566ad2f0880a53a4bf00e5e3bfd62ab989889",
+    "Synthetic/ReadyStorageLibraryProbe.swift": "94e83f59a823acb6d36a71dff8fd66ce11d95ebf44e5d93e9a2f83e8b3ce40fa",
+    "Synthetic/ReadyStorageSettingsProbe.swift": "05cce647c75b586a196c11420f67e8dea68ebbf23e162aeebf4bd6e30fe2fee7",
+    "Tests/StoreBridgeTests/test_size_plan.py": "41488df4471a19292e1902dd35a8ef1aa417d7be16417ed96e7abf773d1bee6c",
+    "Tests/StoreBridgeTests/test_size_plan_sdks.py": "130e592c70c3f109534b995ebdc18838c8fd96c3a0ca9e4688e01b993911b4c6",
+    "Scripts/test_steam_download_manager.py": "22b5e5822075039738bec6134a3ac208e2d5c85db5be6016c2205aaf1dcd33b8",
+    "Scripts/test_steam_persistent_service.py": "01072dc691a46112b18e184c3b744096d7f30f064da8ef7ab4d26e1b457bdaa9",
+    "Sources/M1Launcher/ArtworkCache.swift": "7f93b29f8905832735d1ae53a8803da48ca9b497e94be84e702141badc79c667",
+    "Sources/M1Launcher/FrontendLifecycle.swift": "aee74aa900e88c132d1bfca40f7388475ee3c2ea03cfe15c97fd12650a26c6ce",
+    "Sources/M1Launcher/GameDetailUI.swift": "cbec55276c10d4ba75d261fe35456fea291c8f8a79907abd3f6fbad16913286d",
+    "Sources/M1Launcher/GameDetailView.swift": "b47273a1108151ac05e960c6ef4e211a320ff4d2032d658a9dbe6978dc0c1d73",
+    "Sources/M1Launcher/LibraryGridSurface.swift": "148228654e73adcda3efef6a29e98fc16a459e272865c561d8a6aeeb916a0a4c",
+    "Sources/M1Launcher/MetalCanvas.swift": "32984ab668cc9d2faf77dc06fa583ef32439a4b7099f47c048be9a413a264826",
+    "Sources/M1Launcher/NavigationPages.swift": "15cd3038e77901fbf5d7c828059b1bc9ff1988d79792d3e4f0ac88f066d39e39",
+    "Sources/M1Launcher/ReadyPagePresenter.swift": "6bdd12676dca6136d8a26aab2dbc2c94f6649eebfa8a894cea047c1be27fa0bc",
+    "Sources/M1Launcher/SteamClientUI.swift": "7f3ff29dc917cb4b1164fdaa2cefec32c3ad022dc79f4c5fb9ac1cef19fe1055",
+    "Sources/M1Launcher/SteamDownloads.swift": "70ae6556560e884a25962043aa18790447d601dd398b84e7224abf0addee16d2",
+    "Sources/M1Launcher/SteamLibraryCoordinator.swift": "5452f6e988124c0fa54b381632394a4822ddeae3b38dbb99d5c873e06e5b651a",
+    "Sources/M1Launcher/main.swift": "c45b865ee8ed9fa2daded791ce828ee6f61d88974cbf261749aacb79399a84a0",
+    "StoreBridge/SteamBridge/PersistentSteamService.cs": "31a83c08002e70d3d91cd70766ef2fbbca4effb9f869e7af2820bec7f1a71f11",
+    "StoreBridge/SteamBridge/SteamCatalogMetadata.cs": "875dab909774a6eac97892c3a53ebc526c82380b002cd8173ae2545bd4888dcd",
+    "StoreBridge/backend.py": "8f997462e5b8b13a2904050eed91c5364d0ce28cac53a5ca40cceaf93fcdd6fd",
+    "StoreBridge/bridge.py": "0b6d6fa669039e02eebc96091e8563a74bbe9b55eb945bd96e80763fce57a038",
+    "StoreBridge/steam_downloads.py": "9c591e8e0fa0962ce8d3c60348357ab3f3a3d8f46482b8408f5caa7160c9f7b0",
+    "Synthetic/PersistentSteamServiceChecks.cs": "2e85fef7719e5c914c57224689f939fea805b9944ff3945fe67fc2919624b436",
+    "Synthetic/ReadyArtworkIndexProbe.swift": "b4cb3504902462c7abb19fca9dee2072de6fcba708cdf394315e2e200542f728",
+    "Synthetic/ReadySteamDownloadsProbe.swift": "f4a32e6af369a1739ccb81d9066b5447de6c2c526ad1db485050ebc7987eccd4",
+    "Synthetic/SteamCatalogMetadataChecks.cs": "dbb95b0319902a77b8eba0e3540c1737ded957790c6e5873efe3fe4c285509ee"
+  },
+  "live": {
+    "updatedFrontendStarted": true,
+    "storageRegistryInitialized": true,
+    "configuredLibraries": 2,
+    "knownInstallationsAdoptedWithoutMovingFiles": 1,
+    "defaultOnDatiAPFS": true,
+    "gamesLaunched": false,
+    "gameDownloadsStarted": false,
+    "visualInspectionCompleted": false,
+    "visualInspectionBlocker": "macOS session locked; no screenshots or game benchmarks performed"
+  },
+  "artworkReturn": {
+    "retainedCPUCardLimit": 24,
+    "retainedCPUByteLimit": 16777216,
+    "retainedGPUTextures": false,
+    "cachedTitlesAndConfiguredModelsRetained": true,
+    "firstViewportBeforeBackgroundWarming": true,
+    "networkRequiredForCachedReturn": false
+  },
+  "limitations": [
+    "Physical controller navigation and on-screen appearance await unlocked-session review.",
+    "No real-account size plan or CDN installation was executed during this verification.",
+    "Unknown or partial store sizes remain explicit; installation requires a usable verified plan.",
+    "Payload bytes are not exact peak disk usage, network transfer, or physical APFS allocation.",
+    "Installed-size invalidation recognizes completion, executable and build manifests; arbitrary modifications are not universally watched.",
+    "Volume disconnection during an actual download and shared free space across separate APFS volumes in the same container remain unverified.",
+    "Owned canvas resource release is not a claim of zero system-wide GPU memory or improved game FPS."
+  ]
+}

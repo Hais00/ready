@@ -8,6 +8,9 @@ TOOLS=tools_root()
 LEGENDARY_CACHE=('installed.json','metadata','manifests')
 from state_paths import state_root
 PROFILE_ROOT=state_root()/'Profiles'
+def install_size_plan(request):
+    from size_plan import execute
+    return execute(request)
 def supervised():
     return os.getenv('READY_STORE_SUPERVISED')=='1' and os.getenv('READY_STORE_PROCESS_GROUP')==str(os.getpgrp())
 
@@ -91,6 +94,8 @@ def prepare_download(request,config,secrets_dir):
         login_id=o.get('downloadLoginID',0xD0000000|int.from_bytes(os.urandom(4),'big')&0x0fffffff)
         if type(login_id)is not int or not 0xD0000000<=login_id<=0xDfffffff:raise BridgeError('invalid_request','Invalid downloader connection identity')
         args=[str(dotnet),str(dll),'-app',gid,'-username','ready-stdin-account','-remember-password','-loginid',str(login_id),'-validate','-os','macos' if platform=='macOS' else 'windows','-osarch','64','-dir',str(path)]
+        from steam_install_plan import pinned_arguments
+        args+=pinned_arguments(o)
         return args,env,json.dumps({'username':c['username'],'refresh_token':c['refresh_token']})+'\n',path
     if not py.exists():raise BridgeError('backend_missing','Install the open store engines with Scripts/store_bootstrap.py first')
     if store=='epic':

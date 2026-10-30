@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import AppKit
 
+/// A full-content page may inherit the launcher background instead of drawing a panel.
+protocol ReadyPageTransparentContent {}
+
 struct ReadyPageTab {
   let id:String
   let title:String
@@ -124,7 +127,7 @@ final class ReadyPagePresenter:NSObject {
     guard page==nil,let request=active,let host=hostProvider(),windowProvider() != nil else{return}
     previousResponder=windowProvider()?.firstResponder
     let surface=PageSurface(frame:pageRect(host.bounds));surface.identifier=NSUserInterfaceItemIdentifier("ready.page.surface")
-    surface.autoresizingMask=[.width,.height];surface.wantsLayer=true;surface.layer?.backgroundColor=pageColor(0x111a1e).cgColor
+    surface.autoresizingMask=[.width,.height];surface.wantsLayer=true;surface.layer?.backgroundColor=(request.content is ReadyPageTransparentContent ? NSColor.clear:pageColor(0x111a1e)).cgColor
     surface.appearance=NSAppearance(named:.darkAqua);host.addSubview(surface);page=surface
     surface.changed={[weak self]in self?.scheduleLayout()}
     let title=NSTextField(wrappingLabelWithString:request.title);title.font = .systemFont(ofSize:25,weight:.bold);title.textColor = .white

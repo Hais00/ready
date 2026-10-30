@@ -15,8 +15,10 @@ extension AppDelegate {
     let profile = state.activeProfile
     let downloads=SteamDownloads(profile:profile,client:storeClient)
     steamDownloads=downloads
+    configureStorageDownloads(downloads)
     downloads.onChange = {[weak self,weak downloads] jobs in
       guard let self,let downloads,self.steamDownloads===downloads,self.state.activeProfile==profile else{return}
+      self.handleStorageDownloadProgress(jobs,profile:profile)
       self.steamDownloadsView?.update(jobs)
       if !self.session.running { self.refreshGameDetails() }
     }
@@ -121,6 +123,7 @@ extension AppDelegate {
     if let selected=state.games[index].variants.first(where:{$0.platform.rawValue==job.platform}){variant.id=selected.id}
     variant.installationRoot=job.raw["installDir"]as?String ?? variant.installationRoot
     if let position=state.games[index].variants.firstIndex(where:{$0.id==variant.id}){state.games[index].variants[position]=variant}else{state.games[index].variants.append(variant)}
+    gameStorageSizes.invalidate(game:state.games[index])
     PEImports.annotate(&state.games[index],variant:variant)
     do{try persist()}catch{showError(error)}
   }

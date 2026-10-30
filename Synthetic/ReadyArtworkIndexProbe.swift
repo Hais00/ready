@@ -171,6 +171,26 @@ private final class ImageProtocol:URLProtocol {
     try spin{suspended.image(for:first,role:.card,refresh:{}) != nil}
     try check(ImageProtocol.calls.isEmpty,"maintenanceResumeReloadsExistingDiskArtworkWithoutRefetch")
     suspended.purge()
+    let returning=ArtworkCache(directory:directory,session:session,networkEnabled:false)
+    try spin{returning.image(for:first,role:.card,refresh:{}) != nil}
+    let retainedCard=returning.image(for:first,role:.card,refresh:{})!,retainedIdentity=ObjectIdentifier(retainedCard)
+    returning.beginGameplay(retainingViewport:games);let retained=returning.gameplayRetentionSnapshot
+    try check(retained.paused && retained.count>0 && retained.count<=24 && retained.bytes>0 && retained.bytes<=16*1024*1024,"gameplayRetainsOnlyHardBoundedCPUCardSnapshot")
+    returning.purge();ImageProtocol.clear();returning.prepare(games:[game(700)]);returning.prefetch(game:game(701));let during=returning.image(for:first,role:.card,refresh:{})
+    settle(0.1);try check(during==nil && ImageProtocol.calls.isEmpty && returning.gameplayRetentionSnapshot.count==retained.count,"gameplayPurgePreservesReturnSnapshotButCannotScheduleArtworkOrDecode")
+    returning.setMaintenanceSuspended(true)
+    var restored=false;returning.restoreFirstViewport(games:[first]){restored=true}
+    try check(!returning.maintenanceSuspended && !returning.gameplayRetentionSnapshot.paused,"returnAtomicallyClearsBothGameplayAndMaintenancePause")
+    let immediate=returning.image(for:first,role:.card,refresh:{})
+    try check(immediate != nil && ObjectIdentifier(immediate!)==retainedIdentity,"firstViewportCPUCardReturnsSynchronouslyWithoutReloadOrNetwork")
+    try spin{restored};try check(!returning.gameplayRetentionSnapshot.paused && returning.gameplayRetentionSnapshot.count==0 && ImageProtocol.calls.isEmpty,"firstViewportRestoreCompletionReleasesSnapshotAndDoesNotWarmAllAssets")
+    returning.purge();returning.beginGameplay(retainingViewport:[]);var coldRestored=false;let coldStart=Date()
+    returning.setMaintenanceSuspended(true)
+    returning.restoreFirstViewport(games:[first]){coldRestored=true}
+    try spin{coldRestored && returning.image(for:first,role:.card,refresh:{}) != nil}
+    timings["returnViewportIndexedDiskMilliseconds"]=Date().timeIntervalSince(coldStart)*1000
+    try check(ImageProtocol.calls.isEmpty,"returnWithoutRAMSnapshotUsesOnlyIndexedCardDiskRead")
+    returning.purge()
     let unsafe=root.appendingPathComponent("unsafe"),outside=root.appendingPathComponent("outside");try FileManager.default.createDirectory(at:outside,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700]);try FileManager.default.createSymbolicLink(at:unsafe,withDestinationURL:outside)
     let store=ArtworkIndexStore(unsafe);store.save(ArtworkDiskIndex())
     try check(!FileManager.default.fileExists(atPath:outside.appendingPathComponent("index.json").path),"aliasedCacheDirectoryCannotReceiveIndexWrites")

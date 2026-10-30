@@ -41,6 +41,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   var steamAccountDialog: UUID?
   var steamPreparationID: UUID?
   var steamCatalogUpdate: DispatchWorkItem?
+  lazy var storageLibraries = StorageLibraryRepository(paths: paths)
+  var storageReturnGameID: String?
+  var installationPickerView: GameInstallationView?
+  var installationPickerID: UUID?
+  lazy var gameStorageSizes = GameStorageSizeService(directory: paths.root.appendingPathComponent("Storage",isDirectory:true))
+  var gameStorageRequest = UUID()
+  let storageWork = DispatchQueue(label:"app.ready.storage-operations",qos:.utility)
+  var activeOtherStorageJobs=Set<String>()
   var steamConnectionDiagnosticSignature = ""
   lazy var dialogs = ReadyDialogPresenter(window: { [weak self] in self?.window })
   lazy var pages: ReadyPagePresenter = {
@@ -166,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     NSApp.activate(ignoringOtherApps: true)
     if args.contains("--fullscreen") { window.toggleFullScreen(nil) }
     refreshLocal()
-    MainActor.assumeIsolated { configureSteamNetwork() }
+    MainActor.assumeIsolated { configureSteamNetwork();bootstrapGameStorage() }
   }
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     !CommandLine.arguments.contains("--graphics-self-test") && !session.running
@@ -285,7 +293,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     session.onWillLaunch = { [weak self] in
       guard let self else { return }
-      MainActor.assumeIsolated{self.setSteamMaintenanceSuspended(true)}
+      MainActor.assumeIsolated{
+        self.canvas.artworkCache.beginGameplay(retainingViewport:self.canvas.gameplayViewportGames)
+        self.setSteamMaintenanceSuspended(true)
+      }
       // Authentication is excluded by launchGame and all pending/session input gates.
       let notices = self.pages.detachForSession() + self.dialogs.detachForSession()
       self.canvas.section = .library
@@ -308,7 +319,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     session.onFinish = { [weak self] message in
       self?.steamNativeGame?.stop(); self?.steamNativeGame = nil
       self?.restoreLauncher(message)
-      if let self{MainActor.assumeIsolated{self.setSteamMaintenanceSuspended(false)}}
       self?.dialogs.attach()
       if let self,let destination=self.launchReturnGame {
         self.launchReturnGame=nil
@@ -732,6 +742,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
           }
         case .failure(let error):
           self.steamNativeGame?.stop(); self.steamNativeGame = nil
+          MainActor.assumeIsolated{self.restoreLibraryArtworkAfterSession()}
           self.window.contentView = self.canvas
           self.canvas.resumeGraphics()
           self.window.makeKeyAndOrderFront(nil)
@@ -1021,104 +1032,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       MainActor.assumeIsolated { requestSteamLibrary(profile:profile,event:receive) }
     } else { storeClient.request(operation:"library",store:store,profile:profile,event:receive) }
   }
-  func installGame(index: Int, variant: GameVariant, showDownloads: Bool = true) {
-    guard !maintenanceInProgress, state.games.indices.contains(index) else { return }
-    let profile = state.activeProfile
-    let game = state.games[index]
-    if game.store == .steam {
-      MainActor.assumeIsolated {
-        if steamDownloads==nil{configureSteamNetwork()}
-        let external=ProcessInfo.processInfo.environment["READY_GAME_LIBRARY_ROOT"] ?? "/Volumes/Dati APFS/Ready Games"
-        let volume=URL(fileURLWithPath:"/Volumes/Dati APFS")
-        guard FileManager.default.fileExists(atPath:volume.path)else{showError(LauncherError.unavailable("Collega il disco Dati APFS per installare i giochi."));return}
-        let target=URL(fileURLWithPath:external).appendingPathComponent("Steam/\(SafePath.component(game.storeID))/\(variant.platform.rawValue)")
-        steamDownloads?.enqueue(game:game,variant:variant,installation:target)
-        if showDownloads { showSteamDownloads() }
-      }
-      return
-    }
-    let base = paths.root.appendingPathComponent(
-      "Games/\(game.store.rawValue)/\(SafePath.component(game.storeID))/\(variant.platform.rawValue)"
-    )
-    do {
-      try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-    } catch {
-      showError(error)
-      return
-    }
-    canvas.message = "Installazione di \(game.title)…"
-    canvas.refresh()
-    let options: [String: Any] = [
-      "gameID": game.storeID, "platform": variant.platform.rawValue, "installDir": base.path,
-      "metadata": game.metadata?.mapValues { $0.foundation } ?? [:],
-    ]
-    storeClient.request(
-      operation: "download", store: game.store, profile: profile, options: options
-    ) { [weak self] event in
-      guard let self else { return }
-      switch event["type"] as? String {
-      case "error":
-        MainActor.assumeIsolated { if self.state.activeProfile == profile && self.gameDetailID == game.id { self.gameDetailView?.setTransferStatus(nil) } }
-        self.showError(LauncherError.failed(event["message"] as? String ?? "Download non riuscito"))
-      case "progress":
-        self.canvas.message =
-          "Download \(game.title) · \(event["message"] as? String ?? "in corso")"
-        self.canvas.refresh()
-        if self.state.activeProfile == profile && self.gameDetailID == game.id {
-          MainActor.assumeIsolated { self.gameDetailView?.setTransferStatus(event["message"] as? String ?? "Download in corso", fraction:event["fraction"] as? Double) }
-        }
-      case "result":
-        MainActor.assumeIsolated { if self.state.activeProfile == profile && self.gameDetailID == game.id { self.gameDetailView?.setTransferStatus(nil) } }
-        if let raw = event["installedVariant"] as? [String: Any],
-          let data = try? JSONSerialization.data(withJSONObject: raw),
-          var installed = try? JSONDecoder().decode(GameVariant.self, from: data),
-          let i = self.state.games.firstIndex(where: { $0.id == game.id })
-        {
-          installed.id = variant.id
-          installed.installationRoot = event["installDir"] as? String ?? base.path
-          self.state.clearVariantOverride(profile: profile, gameID: game.id, variantID: variant.id)
-          PEImports.annotate(&self.state.games[i], variant: installed)
-          if let j = self.state.games[i].variants.firstIndex(where: { $0.id == variant.id }) {
-            self.state.games[i].variants[j] = installed
-          } else {
-            self.state.games[i].variants.append(installed)
-          }
-          self.canvas.message = "\(game.title) installato · \(installed.title)"
-          try? self.persist()
-          return
-        }
-        self.presentDialog(
-          title: "File di \(game.title) scaricati",
-          message: "Seleziona il programma di avvio per verificare l’architettura.",
-          actions: [
-            .init("Seleziona eseguibile", role: .primary), .init("Più tardi", role: .cancel),
-          ]
-        ) { [weak self] choice in
-          guard let self, choice == 0 else { return }
-          self.selectLocalFile(
-            title: "Programma di avvio", prompt: "Seleziona", directory: base, mode: .file
-          ) { [weak self] url in
-            guard let self, !self.maintenanceInProgress, !self.session.running,
-              self.pendingLaunch == nil,
-              self.state.activeProfile == profile, let url,
-              let imported = try? LocalDiscovery.importGame(url),
-              let checked = imported.variants.first,
-              let i = self.state.games.firstIndex(where: { $0.id == game.id })
-            else { return }
-            var v = checked
-            v.id = variant.id
-            v.installationRoot = base.path
-            self.state.clearVariantOverride(
-              profile: profile, gameID: game.id, variantID: variant.id)
-            if let j = self.state.games[i].variants.firstIndex(where: { $0.id == variant.id }) {
-              self.state.games[i].variants[j] = v
-            }
-            try? self.persist()
-          }
-        }
-      default: break
-      }
-    }
+  func installGame(index:Int,variant:GameVariant,showDownloads:Bool=true){
+    MainActor.assumeIsolated { showGameInstallation(index:index,variant:variant,showDownloads:showDownloads) }
   }
   func setupControllers() {
     GCController.shouldMonitorBackgroundEvents = true
@@ -1136,6 +1051,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         if self.pages.isPresenting {
           guard !self.session.running, !self.maintenanceInProgress, NSApp.isActive else { return }
+          if let detail=self.gameDetailView,detail.window===self.window,MainActor.assumeIsolated({detail.handleController(action)}){return}
+          if let install=self.installationPickerView,install.window===self.window,MainActor.assumeIsolated({install.handleController(action)}){return}
           if action == .profiles { self.profiles(); return }
           if action == .previousStore || action == .nextStore { self.navigateToLibrary(); return }
           if action == .cancel { self.navigateToLibrary(store:self.canvas.filter); return }

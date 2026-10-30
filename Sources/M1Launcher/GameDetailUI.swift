@@ -2,14 +2,19 @@
 import AppKit
 import LauncherCore
 
+extension GameDetailView:ReadyPageTransparentContent {}
+
 extension AppDelegate {
   @MainActor func showGameDetails(id:String){
     guard !maintenanceInProgress,session?.running != true,pendingLaunch==nil,
       let stored=state.games.first(where:{$0.id==id}),stored.profileIDs==nil || stored.profileIDs!.contains(state.activeProfile)else{return}
+    installationPickerView=nil;installationPickerID=nil
     let game=state.configured(stored),profile=state.activeProfile
     beginPage(.utility)
     let view=GameDetailView(game:game,artwork:canvas.artworkCache,profile:profile)
     gameDetailView=view;gameDetailID=id
+    view.onBack={[weak self]in self?.navigateToLibrary(store:self?.canvas.filter,preservingSelection:true)}
+    view.onVariantChanged={[weak self] _ in self?.refreshGameStorageDetails()}
     view.onPlay={[weak self,weak view] variant in
       guard let self,let view,self.gameDetailView===view,self.state.activeProfile==profile,
         !self.maintenanceInProgress,self.session?.running != true,self.pendingLaunch==nil,
@@ -45,6 +50,7 @@ extension AppDelegate {
       guard let self,self.gameDetailView===view else{return};self.gameDetailView=nil;self.gameDetailID=nil
     }){_ in}
     view.update(game:game,jobs:steamDownloads?.snapshot ?? [])
+    refreshGameStorageDetails()
     canvas.artworkCache.prefetch(game:game)
     if game.store == .steam {
       canvas.artworkCache.revalidate(game:game)

@@ -11,6 +11,7 @@ extension AppDelegate {
       hostedPresentation?.stop()
       hostedPresentation=nil
     }
+    MainActor.assumeIsolated{restoreLibraryArtworkAfterSession()}
     canvas.resumeGraphics()
     canvas.message =
       backgroundNotices.isEmpty ? message : message + " · Nuove notifiche in Libreria → Notifiche"
@@ -19,6 +20,14 @@ extension AppDelegate {
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
     canvas.refresh()
+  }
+
+  @MainActor func restoreLibraryArtworkAfterSession(){
+    let games=canvas.gameplayViewportGames
+    canvas.artworkCache.restoreFirstViewport(games:games){[weak self]in
+      guard let self,self.session?.running != true else{return}
+      self.setSteamMaintenanceSuspended(false)
+    }
   }
 
   /// Runs the real frontend/keeper/native-session lifecycle, without accounts or

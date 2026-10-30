@@ -8,6 +8,7 @@ Pause/cancel stop the owned engine without deleting game/cache/personal files.
 import contextlib,fcntl,hashlib,json,os,pathlib,selectors,signal,stat,subprocess,tempfile,time,uuid,zlib
 from bridge import BridgeError,emit
 from state_paths import state_root
+from steam_install_plan import normalize as install_plan,preflight as install_preflight,expected_manifests
 from install_lock import private_directory,file_lock,installation_lease,verify_installation,identity
 
 OPERATIONS={'download_prepare','download_run','download_status','download_list','download_control'}
@@ -67,7 +68,7 @@ def busy(profile,job):
         raise
 
 def dto(value):
-    allowed=['jobID','profileID','gameID','platform','installDir','state','phase','sequence','createdAt','updatedAt','bytesCompleted','bytesTotal','networkBytesReceived','errorCode','retryable','attempts','installedVariant','launchCandidates','launchSelectionRequired','downloadComplete','executionVerified']
+    allowed=['jobID','profileID','gameID','platform','installDir','state','phase','sequence','createdAt','updatedAt','bytesCompleted','bytesTotal','networkBytesReceived','errorCode','retryable','attempts','installedVariant','launchCandidates','launchSelectionRequired','downloadComplete','executionVerified','storageReservationID']
     result={key:value.get(key) for key in allowed if key in value}
     completed=value.get('bytesCompleted');total=value.get('bytesTotal')
     result['fraction']=None if completed is None or not total else min(completed/total,1.0 if value['state']=='completed' else 0.999999)
@@ -118,15 +119,22 @@ def prepare(request):
     if not game.isascii() or not game.isdecimal() or not 0<int(game)<=0xffffffff:raise BridgeError('invalid_game_id','Steam gameID must be a nonzero uint32')
     platform=options.get('platform','windows')
     if platform not in ('windows','macOS'):raise BridgeError('invalid_platform','Choose Windows or macOS')
+    reservation=options.get('storageReservationID')
+    if reservation is not None:reservation=uid(reservation)
+    plan=install_plan(options,fresh=True)
+    if reservation is not None:install_preflight({'gameID':game,'platform':platform,'profileID':profile,'jobID':None,'installDir':options.get('installDir'),'storageReservationID':reservation,'expectedInstallPlan':plan})
     target=installation(options.get('installDir'));root=profile_root(profile)
     with file_lock(root/'queue.lock',fcntl.LOCK_EX,nonblocking=False):
         for path in root.glob('*.json'):
             value=read(path)
             if value.get('gameID')==game and value.get('platform')==platform and value.get('installDir')==str(target) and value.get('state') not in ('completed','cancelled'):
+                if reservation is not None and(value.get('storageReservationID')!=reservation or value.get('expectedInstallPlan')!=plan):raise BridgeError('download_plan_conflict','An existing job uses a different storage reservation or depot selection')
                 return {'job':dto(value)}
         job=str(uuid.uuid4());now=time.time()
         value={'schema':1,'jobID':job,'profileID':profile,'gameID':game,'platform':platform,'installDir':str(target),'installationIdentity':list(identity(target)),'loginID':login_id(job),
                'metadata':clean_metadata(options.get('metadata',{})),'state':'queued','desiredState':'run','phase':'queued','sequence':0,'createdAt':now,'updatedAt':now,'bytesCompleted':None,'bytesTotal':None,'networkBytesReceived':None,'retryable':False,'attempts':0}
+        if reservation is not None:value['storageReservationID']=reservation
+        if plan is not None:value.update(expectedInstallPlan=plan,planFingerprint=plan['fingerprint'],plannedDownloadBytes=plan['downloadBytes'],plannedInstalledBytes=plan['installedBytes'],selectedManifests=expected_manifests(plan))
         atomic(root/(job+'.json'),value)
     return {'job':dto(value)}
 
@@ -188,6 +196,8 @@ def verify_completion(value):
     target=pathlib.Path(value['installDir']);verify_installation(target,tuple(value['installationIdentity']))
     expected=value.get('_completedManifests')
     if not isinstance(expected,dict) or not expected:raise BridgeError('download_incomplete','The engine did not verify selected depot manifests')
+    pinned=install_plan({'gameID':value['gameID'],'platform':value['platform'],'storageReservationID':value.get('storageReservationID'),'expectedInstallPlan':value.get('expectedInstallPlan')})
+    if pinned is not None and expected!=expected_manifests(pinned):raise BridgeError('download_incomplete','The engine completed a different depot selection')
     try:
         actual=manifest_map(target)
         if any(actual.get(str(depot))!=str(manifest) for depot,manifest in expected.items()):raise ValueError()
@@ -266,18 +276,21 @@ def run_job(request,engine_factory=None):
         if value['state']=='completed':return {'job':dto(value),**{key:value[key] for key in ['installedVariant','launchCandidates','launchSelectionRequired'] if key in value}}
         if value['desiredState']!='run':return {'job':dto(value)}
         target=pathlib.Path(value['installDir'])
-        try:verify_installation(target,tuple(value['installationIdentity']));validate_tree(target)
+        try:verify_installation(target,tuple(value['installationIdentity']));validate_tree(target);install_preflight(value)
         except BridgeError as error:
             mutate(profile,job,lambda current:current.update(state='failed',phase='failed',errorCode=error.code,retryable=False));raise
         credentials=request.get('credentials',{})
         if not credentials.get('username') or not credentials.get('refresh_token'):raise BridgeError('authentication_required','Steam credentials are required to resume')
         run_request={'operation':'download','store':'steam','profileID':profile,'credentials':credentials,'options':{'gameID':value['gameID'],'platform':value['platform'],'installDir':str(target),'metadata':value.get('metadata',{}),'downloadJobID':job,'downloadLoginID':value['loginID']}}
+        for field in('storageReservationID','expectedInstallPlan'):
+            if field in value:run_request['options'][field]=value[field]
         config=game_config(run_request,profile_config(run_request));cache=private_directory(config/value['platform'])
         def starting(current):
             current.update(state='preparing',phase='preparing',bytesCompleted=None,bytesTotal=None,networkBytesReceived=None,errorCode=None,retryable=False,attempts=current['attempts']+1);current.pop('_completedManifests',None);current.pop('_engineExitConfirmed',None)
         mutate(profile,job,starting);code=None;engine_error=None;stopped=None;process=None
         try:
             with installation_lease(target) as lease,file_lock(cache/'operation.lock',fcntl.LOCK_EX,'store_busy','This game/platform already has an engine') as cache_fd:
+                install_preflight(value)
                 recover_cache(target)
                 with tempfile.TemporaryDirectory(prefix='ready-download-auth-',dir=os.getenv('READY_STORE_SECRET_PARENT')) as temp:
                     secret=pathlib.Path(temp);secret.chmod(0o700)
