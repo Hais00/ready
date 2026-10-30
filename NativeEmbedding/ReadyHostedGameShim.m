@@ -31,6 +31,9 @@ typedef struct {
     double logicalWidth,logicalHeight,quartzX,quartzY,cocoaX,cocoaY;
 } RHGWindowMetadata;
 static RHGWindowMetadata rhgMetadata;
+// Updated only by Ready's nonce-authenticated overlay state event. Rendering
+// experiments can stay dormant for the entire normal gameplay session.
+static _Atomic bool rhgOverlayRequested;
 static os_unfair_lock rhgMetadataLock=OS_UNFAIR_LOCK_INIT;
 static uint64_t rhgMetadataRequestID;
 static RHGWindowMetadata rhgMetadataSnapshot(void){os_unfair_lock_lock(&rhgMetadataLock);RHGWindowMetadata value=rhgMetadata;os_unfair_lock_unlock(&rhgMetadataLock);return value;}
@@ -642,6 +645,7 @@ static NSPoint rhgEventLocation(id event,SEL selector){RHGInput input;if(rhgRead
 static id rhgEventWindow(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input))return rhgWindow;return ((id(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
 static NSInteger rhgEventWindowNumber(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input))return rhgMetadataSnapshot().window;return ((NSInteger(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
 static void rhgDeliverInput(RHGInput input) {
+    if(input.type==RHG_OVERLAY_STATE){if(input.keyCode>1)rhgFail(@"invalid-overlay-state");atomic_store_explicit(&rhgOverlayRequested,input.keyCode!=0,memory_order_release);return;}
     RHGLogicalWindow *window=rhgWindow;if(!window)return;
     if(input.type==RHG_FOCUS){
         if(!input.keyCode){
@@ -724,9 +728,17 @@ static void rhgConnect(void) {
                 RHGReply reply={0};if(!rhgTryPoll(&reply)){usleep(8000);continue;}
                 // Apply the activity lease before dispatching input to Main:
                 // loading may block Main and the logical window may not exist.
-                for(unsigned i=0;i<reply.eventCount;i++)rhgActivityForTrustedFocus(reply.events[i]);
+                for(unsigned i=0;i<reply.eventCount;i++){
+                    if(reply.events[i].type==RHG_OVERLAY_STATE){
+                        if(reply.events[i].keyCode>1)rhgFail(@"invalid-overlay-state");
+                        atomic_store_explicit(&rhgOverlayRequested,reply.events[i].keyCode!=0,memory_order_release);
+                        // This control event is consumed here; it is never
+                        // synthesized as guest keyboard or Cocoa input.
+                        reply.events[i].type=0;
+                    }else rhgActivityForTrustedFocus(reply.events[i]);
+                }
                 if(reply.eventCount)dispatch_async(dispatch_get_main_queue(),^{
-                    for(unsigned i=0;i<reply.eventCount;i++)rhgDeliverInput(reply.events[i]);
+                    for(unsigned i=0;i<reply.eventCount;i++)if(reply.events[i].type)rhgDeliverInput(reply.events[i]);
                 });
                 // Bound idle polling; full batches drain promptly while yielding
                 // between RPCs so rendering can acquire the shared transaction lock.

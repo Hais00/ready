@@ -99,6 +99,11 @@ while a session is running.
 
 Ctrl+Shift+Space opens/closes the interface and Escape resumes the game. Opening
 calls `RHGHostSetOverlayVisible`, suspending guest input and pointer ownership.
+The host sends a bounded `RHG_OVERLAY_STATE` edge over the already authenticated
+input poll. The guest consumes it on the polling worker into an atomic flag; it
+never appears as keyboard input. Optional rendering work can arm from that flag
+on open and disarm on close, leaving the per-frame path untouched during normal
+play.
 Ordinary UI keys reach the actual controls. Closing restores the game responder;
 foreground, active Space and console checks still decide pointer eligibility.
 
