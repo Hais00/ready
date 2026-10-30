@@ -102,6 +102,7 @@ static void RHGCancelPendingAcquire(RHGHost*host);
 @property(nonatomic)double began;
 @property(nonatomic)BOOL overlayVisible;
 @property(nonatomic)BOOL overlayGPUBlurEnabled,overlayBlurReady;
+@property(nonatomic)uint64_t overlayEpoch;
 @property(nonatomic,assign)RHGHostOverlayBlurReadyCallback overlayBlurReadyCallback;
 @property(nonatomic,assign)void *overlayBlurReadyContext;
 @property(nonatomic,weak)NSView *overlayBlurPlaceholder;
@@ -237,6 +238,7 @@ static BOOL RHGFormat(uint32_t format){return format==MTLPixelFormatBGRA8Unorm||
  if(atomic_fetch_add(&diagnosticPending,1)>=64){atomic_fetch_sub(&diagnosticPending,1);return;}
  NSMutableDictionary*v=[@{@"schema":@1,@"phase":phase,@"elapsedMilliseconds":@((CACurrentMediaTime()-self.began)*1000),@"hostPID":@(getpid()),@"guestPID":@(self.guestPID),@"window":@(self.window.windowNumber),@"frames":@(self.frames),@"acquires":@(self.acquires),@"requests":@(self.requests),@"hostCommandQueues":@0,@"hostCommandBuffers":@0,@"hostEncoders":@0,@"applicationSurfaceCopies":@0,@"pixelReadbacks":@0,@"metalHUDRequested":@(self.metalHUD),@"presentsWithTransaction":@(self.metal.presentsWithTransaction)}mutableCopy];
  if(reason)v[@"reason"]=reason;
+ if([phase hasPrefix:@"overlay-"])v[@"overlayEpoch"]=@(self.overlayEpoch);
  if(self.inputTraceEnabled){v[@"inputTraceEnabled"]=@YES;v[@"scrollReceived"]=@(self.scrollReceived);v[@"scrollPreciseReceived"]=@(self.scrollPreciseReceived);v[@"scrollEligibilityDropped"]=@(self.scrollEligibilityDropped);v[@"scrollQueued"]=@(self.scrollQueued);v[@"scrollDelivered"]=@(self.scrollDelivered);}
  v[@"outstandingFrames"]=@(self.slots.count);v[@"maximumFramesInFlight"]=@(self.pipelineDepth);
  v[@"pendingAcquire"]=@(self.acquirePending);v[@"remoteLayerTransport"]=@(self.remoteMode);
@@ -514,6 +516,10 @@ static BOOL RHGAcquireAsync(RHGHost*host,const RHGRequest*q,RHGReply*reply,uint6
  }});
  return YES;
 }
+static BOOL RHGOverlayBlurReadyAllowed(RHGHost*host,const RHGRequest*q){
+ return host.remoteMode&&host.overlayVisible&&host.overlayGPUBlurEnabled&&host.firstFrameAnnounced
+  &&host.remoteContextID&&q->surfaceID==host.remoteContextID&&q->frameID==host.overlayEpoch&&host.overlayEpoch;
+}
 static void RHGServe(RHGHost*host){
  while(!atomic_load(&host->stopped)){@autoreleasepool{
   RHGRequestReceive incoming={0};mach_port_t port=host.port;if(!port)break;
@@ -560,7 +566,7 @@ static void RHGServe(RHGHost*host){
     NSString *textureReason=q->remoteTextureFlags&RHG_REMOTE_TEXTURE_SHADER_READABLE?@"source-texture-shader-readable":q->remoteTextureFlags&RHG_REMOTE_TEXTURE_FRAMEBUFFER_ONLY?@"source-texture-framebuffer-only":@"source-texture-not-readable";
     [host record:@"remote-first-frame-transition" reason:textureReason];
    }else if(q->op==RHG_REMOTE_BLUR_READY){
-    if(!host.remoteMode||!host.overlayVisible||!host.overlayGPUBlurEnabled||!host.firstFrameAnnounced||!host.remoteContextID||q->surfaceID!=host.remoteContextID){reply.status=RHG_REJECTED;return;}
+    if(!RHGOverlayBlurReadyAllowed(host,q)){reply.status=RHG_REJECTED;return;}
     if(!host.overlayBlurReady){host.overlayBlurReady=YES;[CATransaction begin];[CATransaction setDisableActions:YES];[host.overlayBlurPlaceholder removeFromSuperview];host.overlayBlurPlaceholder=nil;if(host.overlayBlurReadyCallback)host.overlayBlurReadyCallback(host.overlayBlurReadyContext);[CATransaction commit];[host record:@"overlay-gpu-blur-ready" reason:@"first-presented-frame"];}RHGFill(host,&reply);reply.surfaceID=host.remoteContextID;
    }else if(q->op==RHG_CONFIGURE){
     RHGConfigureLayer(host,q,&reply);
@@ -664,7 +670,20 @@ const char*RHGHostService(RHGHostRef ref){return ref?((__bridge RHGHost*)ref).se
 const char*RHGHostNonce(RHGHostRef ref){return ref?((__bridge RHGHost*)ref).nonceString.UTF8String:NULL;}
 void RHGHostSetFirstFrameCallback(RHGHostRef ref,void*context,RHGHostFirstFrameCallback callback){if(ref)RHGMainSync(^{RHGHost*host=(__bridge RHGHost*)ref;host.firstFrameContext=context;host.firstFrameCallback=callback;});}
 void RHGHostSetPointerEnabled(RHGHostRef ref,bool enabled){if(ref)RHGMainSync(^{RHGHost*host=(__bridge RHGHost*)ref;if(host.pointerEnabled!=enabled)host.pointerRetryBlocked=NO;if(enabled&&(host.window.styleMask&NSWindowStyleMaskFullScreen)&&host.window.isOnActiveSpace)host.pointerFullscreenSuspended=NO;host.pointerEnabled=enabled;[host reconcilePointer];});}
-void RHGHostSetOverlayVisible(RHGHostRef ref,bool visible){if(ref)RHGMainSync(^{RHGHost*host=(__bridge RHGHost*)ref;if(host.overlayVisible==visible)return;host.overlayVisible=visible;host.overlayBlurReady=NO;RHGInputQueueClear(&host->inputQueue);RHGInput focus={0};focus.type=RHG_FOCUS;focus.keyCode=0;focus.timestamp=CACurrentMediaTime();RHGInput state={0};state.type=RHG_OVERLAY_STATE;state.keyCode=visible?1:0;state.button=visible&&host.overlayGPUBlurEnabled?1:0;state.timestamp=focus.timestamp;if(!RHGInputQueuePush(&host->inputQueue,focus)||!RHGInputQueuePush(&host->inputQueue,state)){[host record:@"input-rejected" reason:@"overlay-state-queue-overflow"];[host shutdown];return;}host.lastFocus=NO;if(visible)[host releasePointer];else{[host.overlayBlurPlaceholder removeFromSuperview];host.overlayBlurPlaceholder=nil;[host reconcilePointer];}});}
+void RHGHostSetOverlayVisible(RHGHostRef ref,bool visible){if(ref)RHGMainSync(^{
+ RHGHost*host=(__bridge RHGHost*)ref;if(host.overlayVisible==visible)return;
+ if(host.overlayEpoch==UINT64_MAX){[host shutdown];return;}
+ host.overlayEpoch++;host.overlayVisible=visible;host.overlayBlurReady=NO;
+ RHGInputQueueClear(&host->inputQueue);
+ RHGInput focus={0};focus.type=RHG_FOCUS;focus.timestamp=CACurrentMediaTime();
+ RHGInput state={0};state.type=RHG_OVERLAY_STATE;state.keyCode=visible?1:0;
+ state.button=visible&&host.overlayGPUBlurEnabled?1:0;state.modifiers=host.overlayEpoch;state.timestamp=focus.timestamp;
+ if(!RHGInputQueuePush(&host->inputQueue,focus)||!RHGInputQueuePush(&host->inputQueue,state)){
+  [host record:@"input-rejected" reason:@"overlay-state-queue-overflow"];[host shutdown];return;
+ }
+ host.lastFocus=NO;if(visible)[host releasePointer];else{[host.overlayBlurPlaceholder removeFromSuperview];host.overlayBlurPlaceholder=nil;[host reconcilePointer];}
+ [host record:@"overlay-state" reason:visible?@"opened":@"closed"];
+});}
 void RHGHostSetOverlayGPUBlurEnabled(RHGHostRef ref,bool enabled){if(ref)RHGMainSync(^{((__bridge RHGHost*)ref).overlayGPUBlurEnabled=enabled;});}
 void RHGHostSetOverlayBlurReadyCallback(RHGHostRef ref,void*context,RHGHostOverlayBlurReadyCallback callback){if(ref)RHGMainSync(^{RHGHost*h=(__bridge RHGHost*)ref;h.overlayBlurReadyContext=context;h.overlayBlurReadyCallback=callback;});}
 void RHGHostSetOverlayBlurPlaceholderView(RHGHostRef ref,void*view){if(ref)RHGMainSync(^{RHGHost*h=(__bridge RHGHost*)ref;h.overlayBlurPlaceholder=view?(__bridge NSView*)view:nil;});}

@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "dateUTC": "2026-10-30T18:54:54.781254+00:00",
+  "fix": "Reinstall previously restored Metal hooks at every overlay opening; keep original IMPs, preserve foreign hooks, reject stale overlay generations and retry dropped presented frames.",
+  "sourceSHA256": {
+    "NativeEmbedding/ReadyHostedGameShim.m": "65d74a152638b6e320b0ce7a4405898eb854fb28f50beb1b873cdc040a4a8309",
+    "Sources/ReadyHostedView/ReadyHostedView.m": "d62a13de67392c17624b054c9415a81bcdc7ec294536bd307300a9478838b07e",
+    "Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h": "c4f0ae953767b8d4b2eae4045d90ec618c62508c7550c6860b58c06bea63b4e8",
+    "Scripts/test_gpu_blur_reopen.py": "3912bf8ed56dbc3052f8cdb3d6356840c986779e7e46dc690f50a0a594760233",
+    "Synthetic/ReadyGPUBlurReopenProbe.m": "08eb749d4ff028cc97a7f3d54265cb116a579ccb759a9876c473d6597553c508"
+  },
+  "regression": {
+    "passed": true,
+    "guestChecks": 194,
+    "hostChecks": 160,
+    "openCloseCyclesPerFixture": 20,
+    "originalDefectDetectedByNegativeControl": true,
+    "reportSHA256": "620d66903e78cc37a6bc0005de0ec7392ebc91a4035ac008d25e1d1ed73bf1c6",
+    "rendererAndMachSenderAreFakes": true
+  },
+  "nativeInputRegression": {
+    "passed": true,
+    "cases": 13,
+    "gameOrAccountOrGPUUsed": false
+  },
+  "actualCyberpunk": {
+    "launch": "CLI with --host-game-gpu-blur and Metal HUD",
+    "firstThreeOpeningEpochsPresented": [
+      1,
+      3,
+      5
+    ],
+    "closeEpochsDisarmed": [
+      2,
+      4
+    ],
+    "events": [
+      {
+        "phase": "overlay-state",
+        "reason": "opened",
+        "overlayEpoch": 1
+      },
+      {
+        "phase": "overlay-gpu-blur-ready",
+        "reason": "first-presented-frame",
+        "overlayEpoch": 1
+      },
+      {
+        "phase": "overlay-state",
+        "reason": "closed",
+        "overlayEpoch": 2
+      },
+      {
+        "phase": "overlay-state",
+        "reason": "opened",
+        "overlayEpoch": 3
+      },
+      {
+        "phase": "overlay-gpu-blur-ready",
+        "reason": "first-presented-frame",
+        "overlayEpoch": 3
+      },
+      {
+        "phase": "overlay-state",
+        "reason": "closed",
+        "overlayEpoch": 4
+      },
+      {
+        "phase": "overlay-state",
+        "reason": "opened",
+        "overlayEpoch": 5
+      },
+      {
+        "phase": "overlay-gpu-blur-ready",
+        "reason": "first-presented-frame",
+        "overlayEpoch": 5
+      }
+    ],
+    "screenCaptureUsed": false,
+    "fpsOrFrameTimeBenchmarked": false,
+    "inputMethod": "Ready keyboard shortcut via computer-use keyboard and AX only"
+  },
+  "build": "Release bundle and universal shim built successfully; strict signature verification passed.",
+  "limits": [
+    "Repeated real-game frame acknowledgements demonstrate activation, not pixel inspection or performance parity.",
+    "Live GPU blur remains an optional Metal 3 experiment; Metal 4 and other games remain unverified."
+  ]
+}

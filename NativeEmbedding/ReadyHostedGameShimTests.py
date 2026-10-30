@@ -237,7 +237,7 @@ void RHGFixtureOriginalMouseControl(BOOL enable){
  driver=run/'driver.m';driver.write_text(DRIVER);library=run/'shim.dylib'
  bundle=run/'HostedGuestFixture.app';contents=bundle/'Contents';macos=contents/'MacOS';macos.mkdir(parents=True,mode=0o700);binary=macos/'driver'
  (contents/'Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable':'driver','CFBundleIdentifier':'local.ready.hosted.fixture.'+uuid.uuid4().hex,'CFBundlePackageType':'APPL','LSUIElement':True,'NSHighResolutionCapable':True}))
- flags=['/usr/bin/clang','-fobjc-arc','-fblocks','-std=gnu11','-O1','-Wall','-Wextra','-Wno-deprecated-declarations','-I',str(include),'-framework','Cocoa','-framework','Metal','-framework','QuartzCore','-framework','IOSurface','-framework','CoreGraphics']
+ flags=['/usr/bin/clang','-fobjc-arc','-fblocks','-std=gnu11','-O1','-Wall','-Wextra','-Wno-deprecated-declarations','-I',str(include),'-framework','Cocoa','-framework','Metal','-framework','MetalPerformanceShaders','-framework','QuartzCore','-framework','IOSurface','-framework','CoreGraphics']
  for source,output,extra in [(testedShim,library,['-dynamiclib']),(driver,binary,[])]:
   result=subprocess.run([*flags,*extra,str(source),'-o',str(output)],capture_output=True,text=True)
   (run/(output.name+'.build.log')).write_text(result.stdout+result.stderr)

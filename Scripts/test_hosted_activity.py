@@ -7,7 +7,7 @@ def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  run=pathlib.Path(tempfile.mkdtemp(prefix='hosted-activity-',dir=WORK/'tests'));run.chmod(0o700);shim=ROOT/'NativeEmbedding/ReadyHostedGameShim.m';fixture=ROOT/'Synthetic/ReadyHostedActivityProbe.m';source=shim.read_text();marker='__attribute__((constructor))static void rhgInstall(void)';assert source.count(marker)==1
  generated=run/'activity.m';generated.write_text(source.replace(marker,'static void rhgInstall(void)')+'\n'+fixture.read_text());binary=run/'probe';include=ROOT/'Sources/ReadyHostedView/include'
- flags=['xcrun','clang','-fobjc-arc','-fblocks','-std=gnu11','-O1','-Wno-deprecated-declarations','-I',str(include),'-I',str(ROOT/'NativeEmbedding'),str(generated),'-framework','Cocoa','-framework','Metal','-framework','QuartzCore','-framework','IOSurface','-framework','CoreGraphics','-o',str(binary)]
+ flags=['xcrun','clang','-fobjc-arc','-fblocks','-std=gnu11','-O1','-Wno-deprecated-declarations','-I',str(include),'-I',str(ROOT/'NativeEmbedding'),str(generated),'-framework','Cocoa','-framework','Metal','-framework','MetalPerformanceShaders','-framework','QuartzCore','-framework','IOSurface','-framework','CoreGraphics','-o',str(binary)]
  r=subprocess.run(flags,capture_output=True,text=True,timeout=90);(run/'build.log').write_text(r.stdout+r.stderr)
  if r.returncode:raise RuntimeError('Activity compile failed '+str(run)+' '+r.stderr[-2000:])
  env={k:v for k,v in os.environ.items()if not k.startswith(('DYLD_','READY_','Steam','STEAM','RHG_','MTL_'))};env['TMPDIR']=str(WORK/'tmp')+'/'

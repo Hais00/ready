@@ -40,6 +40,8 @@ The [unified in-game interface checkpoint](Validation/unified-game-interface-che
 
 An optional `--host-game-gpu-blur` experiment now applies a low-resolution MPS blur to the native Metal drawable only while the in-game interface is open. It has rendered one presented blurred frame in Cyberpunk; no FPS or frame-time result is claimed. See [the scoped live-blur checkpoint](Validation/live-gpu-blur-checkpoint.json) and [overlay details](Docs/OVERLAY.md#optional-live-gpu-blur-experiment).
 
+The [reopen regression checkpoint](Validation/gpu-blur-reopen-checkpoint.json) fixes hook reinstallation after closing the overlay and scopes presented-frame acknowledgements to each opening. Twenty-cycle CPU fixtures detect the original defect, and three consecutive openings in Cyberpunk received separate presented-frame acknowledgements. No new FPS result is claimed.
+
 ## Build and test
 
 The frontend build targets macOS 14+ and Swift 5.10+; current runtime validation is on macOS 27.0.1. The currently built Wine/Vulkan payload declares macOS 27 as its minimum OS. Metal4/GPTK4 testing requires a compatible newer SDK/OS and Apple Silicon. The native group-lifetime checks have not been run on macOS 14/15.

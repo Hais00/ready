@@ -159,6 +159,16 @@ or Metal presentation APIs. Unsupported/non-readable drawables keep the dark
 placeholder and skip the GPU pass. The default path remains the one-shot static
 backdrop.
 
+Repeated openings reinstall restored command-buffer hooks while retaining the
+true original implementations. Each overlay edge carries a monotonically
+increasing epoch; the presented-frame acknowledgement must match the current
+host epoch. Pending configurations, old command buffers and old presented
+callbacks cannot activate or uncover a later opening. A dropped presentation
+allows another frame to provide the acknowledgement. The CPU regression in
+`Scripts/test_gpu_blur_reopen.py` exercises twenty open/close cycles through
+actual Objective-C method dispatch and detects the original install-once defect
+with a negative control; its renderer and Mach sender are fakes.
+
 ### Games using the injected overlay
 
 - Ctrl+Shift+Space toggles the overlay inside the game process.

@@ -36,6 +36,7 @@ static RHGWindowMetadata rhgMetadata;
 // experiments can stay dormant for the entire normal gameplay session.
 static _Atomic bool rhgOverlayRequested;
 static _Atomic bool rhgOverlayGPUBlurRequested;
+static _Atomic uint64_t rhgOverlayEpoch;
 static os_unfair_lock rhgMetadataLock=OS_UNFAIR_LOCK_INIT;
 static uint64_t rhgMetadataRequestID;
 static RHGWindowMetadata rhgMetadataSnapshot(void){os_unfair_lock_lock(&rhgMetadataLock);RHGWindowMetadata value=rhgMetadata;os_unfair_lock_unlock(&rhgMetadataLock);return value;}
@@ -45,7 +46,8 @@ static BOOL rhgRemoteLayerMode(void);
 static BOOL rhgRemoteTraceEnabled(void);
 static void rhgInstallRemoteLayer(void);
 static void rhgStopRenderActivity(void);
-static void rhgConfigureOverlayGPUBlur(BOOL enabled);
+static void rhgConfigureOverlayGPUBlur(BOOL enabled,uint64_t epoch);
+static void rhgReceiveOverlayState(RHGInput input);
 static IMP rhgOriginal(id object,SEL selector);
 static void rhgHook(Class type,SEL selector,IMP hook);
 static void rhgNoGestureProvider(void) {
@@ -648,7 +650,7 @@ static NSPoint rhgEventLocation(id event,SEL selector){RHGInput input;if(rhgRead
 static id rhgEventWindow(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input))return rhgWindow;return ((id(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
 static NSInteger rhgEventWindowNumber(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input))return rhgMetadataSnapshot().window;return ((NSInteger(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
 static void rhgDeliverInput(RHGInput input) {
-    if(input.type==RHG_OVERLAY_STATE){if(input.keyCode>1||input.button>1)rhgFail(@"invalid-overlay-state");atomic_store_explicit(&rhgOverlayRequested,input.keyCode!=0,memory_order_release);atomic_store_explicit(&rhgOverlayGPUBlurRequested,input.keyCode!=0&&input.button==1,memory_order_release);rhgConfigureOverlayGPUBlur(input.keyCode!=0&&input.button==1);return;}
+    if(input.type==RHG_OVERLAY_STATE){rhgReceiveOverlayState(input);return;}
     RHGLogicalWindow *window=rhgWindow;if(!window)return;
     if(input.type==RHG_FOCUS){
         if(!input.keyCode){
@@ -733,11 +735,7 @@ static void rhgConnect(void) {
                 // loading may block Main and the logical window may not exist.
                 for(unsigned i=0;i<reply.eventCount;i++){
                     if(reply.events[i].type==RHG_OVERLAY_STATE){
-                        if(reply.events[i].keyCode>1||reply.events[i].button>1)rhgFail(@"invalid-overlay-state");
-                        atomic_store_explicit(&rhgOverlayRequested,reply.events[i].keyCode!=0,memory_order_release);
-                        BOOL gpuBlur=reply.events[i].keyCode!=0&&reply.events[i].button==1;
-                        atomic_store_explicit(&rhgOverlayGPUBlurRequested,gpuBlur,memory_order_release);
-                        dispatch_async(dispatch_get_main_queue(),^{rhgConfigureOverlayGPUBlur(gpuBlur);});
+                        rhgReceiveOverlayState(reply.events[i]);
                         // This control event is consumed here; it is never
                         // synthesized as guest keyboard or Cocoa input.
                         reply.events[i].type=0;
@@ -843,8 +841,14 @@ static void rhgHook(Class type,SEL selector,IMP hook) {
     [rhgHookLock lock];Method method=class_getInstanceMethod(type,selector);
     if(method && method_getImplementation(method)!=hook) {
         NSString *key=[NSString stringWithFormat:@"%p:%s",type,sel_getName(selector)];
-        if(!rhgOriginals[key]){
-            rhgOriginals[key]=[NSValue valueWithPointer:method_getImplementation(method)];
+        IMP current=method_getImplementation(method);
+        IMP original=[rhgOriginals[key] pointerValue];
+        if(!original){
+            original=current;rhgOriginals[key]=[NSValue valueWithPointer:original];
+        }
+        // A previous overlay may have restored this method. Reinstall our
+        // wrapper without replacing the saved original or another interceptor.
+        if(current==original){
             if(!class_addMethod(type,selector,hook,method_getTypeEncoding(method)))method_setImplementation(class_getInstanceMethod(type,selector),hook);
         }
     }
@@ -1198,8 +1202,8 @@ static IMP rhgRemoteOriginalNext,rhgRemoteOriginalUpdate,rhgRemoteOriginalInit;
 @class RHGOverlayBlurRenderer;
 static _Atomic bool rhgRemoteFirstArmed,rhgRemoteFirstSent;
 
-static _Atomic bool rhgOverlayBlurAckSent,rhgOverlayBlurAckHookArmed;
 static char rhgOverlayBlurDrawablesKey;
+static char rhgOverlayBlurCommandEpochKey;
 static Class rhgOverlayBlurCommandClass;
 static RHGOverlayBlurRenderer *rhgOverlayBlurRenderer;
 static id<MTLCommandQueue> rhgOverlayBlurProbeQueue;
@@ -1207,7 +1211,10 @@ static void rhgOverlayBlurPresent(id,SEL,id);
 static void rhgOverlayBlurPresentTimed(id,SEL,id,double);
 static void rhgOverlayBlurCommit(id,SEL);
 
-@interface RHGOverlayBlurRenderer:NSObject
+@interface RHGOverlayBlurRenderer:NSObject {
+@public _Atomic bool ackSent,ackHookArmed;
+}
+@property(nonatomic)uint64_t overlayEpoch;
 @property(nonatomic,strong)id<MTLDevice> device;
 @property(nonatomic,strong)MPSImageBilinearScale *scale;
 @property(nonatomic,strong)MPSImageGaussianBlur *blur;
@@ -1272,9 +1279,14 @@ static void rhgOverlayBlurCommit(id,SEL);
 }
 @end
 
-static void rhgOverlayBlurAcknowledge(uint32_t contextID){
+static BOOL rhgOverlayBlurEpochIsCurrent(uint64_t epoch){
+    return epoch&&atomic_load_explicit(&rhgOverlayEpoch,memory_order_acquire)==epoch
+        &&atomic_load_explicit(&rhgOverlayGPUBlurRequested,memory_order_acquire);
+}
+static void rhgOverlayBlurAcknowledge(uint32_t contextID,uint64_t epoch){
     dispatch_async(rhgGPUCompletionWorker(),^{
-        RHGReply reply=rhgExchange(RHG_REMOTE_BLUR_READY,(RHGRequest){.surfaceID=contextID});
+        if(!rhgOverlayBlurEpochIsCurrent(epoch))return;
+        RHGReply reply=rhgExchange(RHG_REMOTE_BLUR_READY,(RHGRequest){.surfaceID=contextID,.frameID=epoch});
         if(reply.status!=RHG_OK&&reply.status!=RHG_REJECTED)fprintf(stderr,"{\"type\":\"ready-gpu-blur-ack\",\"accepted\":false}\n");
     });
 }
@@ -1284,6 +1296,11 @@ static NSMutableArray *rhgOverlayBlurDrawables(id<MTLCommandBuffer> command,BOOL
 }
 static void rhgOverlayBlurRecord(id<MTLCommandBuffer> command,id<CAMetalDrawable> drawable){
     if(!atomic_load_explicit(&rhgOverlayGPUBlurRequested,memory_order_acquire)||!drawable)return;
+    uint64_t epoch=atomic_load_explicit(&rhgOverlayEpoch,memory_order_acquire);
+    if([objc_getAssociatedObject(command,&rhgOverlayBlurCommandEpochKey) unsignedLongLongValue]!=epoch){
+        objc_setAssociatedObject(command,&rhgOverlayBlurDrawablesKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(command,&rhgOverlayBlurCommandEpochKey,@(epoch),OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
     NSMutableArray *items=rhgOverlayBlurDrawables(command,YES);for(id<CAMetalDrawable> existing in items)if(existing==drawable)return;
     if(items.count<4)[items addObject:drawable];
 }
@@ -1294,18 +1311,24 @@ static void rhgOverlayBlurPresentTimed(id command,SEL selector,id drawable,doubl
     rhgOverlayBlurRecord(command,drawable);IMP original=rhgOriginal(command,selector);if(original)((void(*)(id,SEL,id,double))original)(command,selector,drawable,time);
 }
 static void rhgOverlayBlurCommit(id command,SEL selector){
+    uint64_t commandEpoch=[objc_getAssociatedObject(command,&rhgOverlayBlurCommandEpochKey) unsignedLongLongValue];
+    objc_setAssociatedObject(command,&rhgOverlayBlurCommandEpochKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     NSArray<id<CAMetalDrawable>> *items=[rhgOverlayBlurDrawables(command,NO) copy];objc_setAssociatedObject(command,&rhgOverlayBlurDrawablesKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    RHGOverlayBlurRenderer *renderer=rhgOverlayBlurRenderer;
-    if(atomic_load_explicit(&rhgOverlayGPUBlurRequested,memory_order_acquire)&&renderer){
+    [rhgHookLock lock];RHGOverlayBlurRenderer *renderer=rhgOverlayBlurRenderer;[rhgHookLock unlock];
+    if(renderer&&commandEpoch==renderer.overlayEpoch&&rhgOverlayBlurEpochIsCurrent(renderer.overlayEpoch)){
         for(id<CAMetalDrawable> drawable in items){
             BOOL encoded=[renderer encodeOn:command drawable:drawable];
             if(encoded){
                 static _Atomic bool logged;
                 bool expected=false;if(atomic_compare_exchange_strong(&logged,&expected,true))fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"encoded\",\"kernel\":\"MPS-low-resolution\"}\n");
-                if(!atomic_exchange(&rhgOverlayBlurAckHookArmed,true)){
+                if(!atomic_exchange(&renderer->ackHookArmed,true)){
                     uint32_t contextID=rhgRemoteContext.contextId;
+                    uint64_t epoch=renderer.overlayEpoch;
                     [drawable addPresentedHandler:^(id<MTLDrawable> presented){
-                        if(presented.presentedTime>0&&!atomic_exchange(&rhgOverlayBlurAckSent,true))rhgOverlayBlurAcknowledge(contextID);
+                        if(!rhgOverlayBlurEpochIsCurrent(epoch))return;
+                        double time=presented.presentedTime;
+                        if(!isfinite(time)||time<=0){atomic_store(&renderer->ackHookArmed,false);return;}
+                        if(!atomic_exchange(&renderer->ackSent,true))rhgOverlayBlurAcknowledge(contextID,epoch);
                     }];
                 }
             }else{
@@ -1322,23 +1345,44 @@ static void rhgRestoreOverlayBlurHooks(void){
     [rhgHookLock lock];for(unsigned i=0;i<sizeof(hooks)/sizeof(hooks[0]);i++){
         NSString *key=[NSString stringWithFormat:@"%p:%s",type,sel_getName(hooks[i].selector)];IMP original=[rhgOriginals[key] pointerValue];Method method=class_getInstanceMethod(type,hooks[i].selector);
         if(original&&method&&method_getImplementation(method)==hooks[i].implementation)method_setImplementation(method,original);
-    }[rhgHookLock unlock];rhgOverlayBlurCommandClass=nil;rhgOverlayBlurProbeQueue=nil;rhgOverlayBlurRenderer=nil;
+    }rhgOverlayBlurCommandClass=nil;rhgOverlayBlurProbeQueue=nil;rhgOverlayBlurRenderer=nil;[rhgHookLock unlock];
 }
-static void rhgConfigureOverlayGPUBlur(BOOL enabled){
-    if(!enabled){rhgRestoreOverlayBlurHooks();return;}
-    if(!atomic_load(&rhgOverlayGPUBlurRequested)||!rhgRemoteLayerMode()||!rhgGameLayer)return;
+static BOOL rhgArmOverlayBlurHooks(Class type){
+    struct Hook{SEL selector;IMP implementation;} hooks[]={{@selector(presentDrawable:),(IMP)rhgOverlayBlurPresent},{@selector(presentDrawable:atTime:),(IMP)rhgOverlayBlurPresentTimed},{@selector(presentDrawable:afterMinimumDuration:),(IMP)rhgOverlayBlurPresentTimed},{@selector(commit),(IMP)rhgOverlayBlurCommit}};
+    rhgOverlayBlurCommandClass=type;
+    for(unsigned i=0;i<sizeof(hooks)/sizeof(hooks[0]);i++)rhgHook(type,hooks[i].selector,hooks[i].implementation);
+    for(unsigned i=0;i<sizeof(hooks)/sizeof(hooks[0]);i++){
+        Method method=class_getInstanceMethod(type,hooks[i].selector);
+        if(!method||method_getImplementation(method)!=hooks[i].implementation){rhgRestoreOverlayBlurHooks();return NO;}
+    }
+    return YES;
+}
+static void rhgReceiveOverlayState(RHGInput input){
+    if(input.keyCode>1||input.button>1||!input.modifiers)rhgFail(@"invalid-overlay-state");
+    uint64_t epoch=input.modifiers;
+    if(epoch<=atomic_load_explicit(&rhgOverlayEpoch,memory_order_acquire))return;
+    atomic_store_explicit(&rhgOverlayEpoch,epoch,memory_order_release);
+    atomic_store_explicit(&rhgOverlayRequested,input.keyCode!=0,memory_order_release);
+    BOOL enabled=input.keyCode!=0&&input.button==1;
+    atomic_store_explicit(&rhgOverlayGPUBlurRequested,enabled,memory_order_release);
+    dispatch_async(dispatch_get_main_queue(),^{rhgConfigureOverlayGPUBlur(enabled,epoch);});
+}
+static void rhgConfigureOverlayGPUBlur(BOOL enabled,uint64_t epoch){
+    if(epoch!=atomic_load_explicit(&rhgOverlayEpoch,memory_order_acquire))return;
+    if(!enabled){BOOL wasArmed=rhgOverlayBlurCommandClass!=Nil;rhgRestoreOverlayBlurHooks();if(wasArmed)fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"disarmed\",\"epoch\":%llu}\n",(unsigned long long)epoch);return;}
+    if(!rhgOverlayBlurEpochIsCurrent(epoch)||!rhgRemoteLayerMode()||!rhgGameLayer)return;
+    if(rhgOverlayBlurRenderer&&rhgOverlayBlurRenderer.overlayEpoch==epoch)return;
+    rhgRestoreOverlayBlurHooks();
     CAMetalLayer *layer=rhgGameLayer;id<MTLDevice> device=layer.device;
     if(!device||layer.framebufferOnly){fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"framebuffer-only\"}\n");return;}
     RHGOverlayBlurRenderer *renderer=[[RHGOverlayBlurRenderer alloc]initWithDevice:device format:layer.pixelFormat];
     id<MTLCommandQueue> queue=[device newCommandQueue];id<MTLCommandBuffer> probe=[queue commandBuffer];Class type=probe?object_getClass(probe):Nil;
     if(!renderer||!type){fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"renderer-unavailable\"}\n");return;}
-    rhgOverlayBlurRenderer=renderer;rhgOverlayBlurProbeQueue=queue;rhgOverlayBlurCommandClass=type;
-    rhgHook(type,@selector(presentDrawable:),(IMP)rhgOverlayBlurPresent);
-    rhgHook(type,@selector(presentDrawable:atTime:),(IMP)rhgOverlayBlurPresentTimed);
-    rhgHook(type,@selector(presentDrawable:afterMinimumDuration:),(IMP)rhgOverlayBlurPresentTimed);
-    rhgHook(type,@selector(commit),(IMP)rhgOverlayBlurCommit);
-    atomic_store(&rhgOverlayBlurAckSent,false);atomic_store(&rhgOverlayBlurAckHookArmed,false);
-    fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"armed\",\"sampleSize\":\"at-most-640px\"}\n");
+    if(!rhgOverlayBlurEpochIsCurrent(epoch))return;
+    renderer.overlayEpoch=epoch;
+    [rhgHookLock lock];rhgOverlayBlurRenderer=renderer;rhgOverlayBlurProbeQueue=queue;[rhgHookLock unlock];
+    if(!rhgArmOverlayBlurHooks(type)){fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"hooks-unavailable\"}\n");return;}
+    fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"armed\",\"epoch\":%llu,\"sampleSize\":\"at-most-640px\"}\n",(unsigned long long)epoch);
 }
 enum {RHG_REMOTE_STARTUP_LIMIT=128,RHG_REMOTE_STARTUP_SECONDS=15,RHG_REMOTE_TRACE_LIMIT=8};
 static _Atomic unsigned rhgRemoteObserved,rhgRemoteCallbacks;
