@@ -919,12 +919,14 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
             var entitled=new HashSet<uint>();
             foreach(var chunk in licenseList.LicenseList.Chunk(100))
             {
-                var packages=await apps.PICSGetProductInfo(Array.Empty<SteamApps.PICSRequest>(),chunk.Select(x=>new SteamApps.PICSRequest(x.PackageID,x.AccessToken))).ToTask().WaitAsync(budget.Token);
-                if(!packages.Complete||packages.Failed||packages.Results is null)return SteamInstallSizes.Unknown(request,"ownership_unavailable");
+                var missingTokens=chunk.Where(x=>x.AccessToken==0).Select(x=>x.PackageID).Distinct().ToArray();
+                var refreshed=missingTokens.Length==0?null:await apps.PICSGetAccessTokens(Array.Empty<uint>(),missingTokens).ToTask().WaitAsync(budget.Token);
+                var packages=await apps.PICSGetProductInfo(Array.Empty<SteamApps.PICSRequest>(),chunk.Select(x=>new SteamApps.PICSRequest(x.PackageID,x.AccessToken!=0?x.AccessToken:refreshed?.PackageTokens.GetValueOrDefault(x.PackageID)??0))).ToTask().WaitAsync(budget.Token);
+                if(!packages.Complete||packages.Failed||packages.Results is null)return SteamInstallSizes.Unknown(request,"ownership_package_response_incomplete");
                 var packageValues=new Dictionary<uint,KeyValue>();
                 foreach(var result in packages.Results)foreach(var package in result.Packages.Values)if(package.KeyValues is{} values)packageValues[package.ID]=values;
-                var chunkEntitlements=SteamInstallSizes.PackageEntitlements(chunk.Select(x=>x.PackageID),packageValues);
-                if(chunkEntitlements is null)return SteamInstallSizes.Unknown(request,"ownership_unavailable");
+                var chunkEntitlements=SteamInstallSizes.PackageEntitlements(chunk.Select(x=>x.PackageID),packageValues,out string ownershipReason);
+                if(chunkEntitlements is null)return SteamInstallSizes.Unknown(request,ownershipReason);
                 entitled.UnionWith(chunkEntitlements);
             }
             var info=await SteamOwnedGamesCatalog.AppInfoAsync(apps,new[]{request.AppID},budget.Token);

@@ -33,17 +33,21 @@ static class SteamInstallSizes
 {
     internal static SteamSizePlan Unknown(SteamSizeRequest request,string reason)=>new(){Request=request,Reason=reason};
     internal static HashSet<uint>? PackageEntitlements(IEnumerable<uint> requested,IReadOnlyDictionary<uint,KeyValue> packages)
+        =>PackageEntitlements(requested,packages,out _);
+    internal static HashSet<uint>? PackageEntitlements(IEnumerable<uint> requested,IReadOnlyDictionary<uint,KeyValue> packages,out string reason)
     {
+        reason="ownership_package_missing";
         var result=new HashSet<uint>();
         foreach(uint id in requested.Distinct())
         {
             if(!packages.TryGetValue(id,out var values)||values==KeyValue.Invalid)return null;
             foreach(string section in new[]{"appids","depotids"})foreach(var item in values[section].Children)
             {
-                if(!uint.TryParse(item.Value,out uint depot)||depot==0)return null;
-                result.Add(depot);
+                if(!uint.TryParse(item.Value,out uint depot)){reason="ownership_package_invalid_id";return null;}
+                if(depot>0)result.Add(depot); // Zero is not an app/depot entitlement.
             }
         }
+        reason="";
         return result;
     }
 

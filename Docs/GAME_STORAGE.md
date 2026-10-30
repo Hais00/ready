@@ -42,6 +42,14 @@ still travel privately through the existing mechanism; a size plan does not
 replace Steam's license/depot-key checks. Paused jobs retain their pinned plan.
 Legacy queue files remain supported without being relabelled as managed plans.
 
+Package entitlement parsing ignores zero app/depot placeholders, which cannot
+grant access, and retrieves missing package access tokens through Steam's PICS
+API. Missing package responses and malformed nonzero identifiers still fail
+closed with a specific reason. A transient verification failure does not erase
+previous size estimates; it also cannot turn those estimates into an authorized
+installation plan. The interface distinguishes license-list failures, timeout,
+depot access and unsupported platforms from a genuinely missing size.
+
 ## What a size means
 
 - Installation payload: the selected uncompressed depot/manifest files. PICS
@@ -75,3 +83,6 @@ hidden UI/controller checks and live application inspection. No game install,
 uninstall or move is performed merely by configuring a library. Actual store/CDN
 installations, external-volume hot unplug and physical controller acceptance are
 separate from the controlled fixtures. Existing installs and saves are preserved.
+The [license/size follow-up](../Validation/steam-size-license-checkpoint.json)
+records two successful authenticated size queries and acceptance of their real
+plans by the pinned downloader validator, without creating download jobs.

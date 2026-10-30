@@ -147,6 +147,10 @@ static class SteamCatalogMetadataChecks
         var packageInfo=new KeyValue("package");var appSection=new KeyValue("appids");appSection.Children.Add(new KeyValue("0","10"));packageInfo.Children.Add(appSection);
         Check(SteamInstallSizes.PackageEntitlements(new uint[]{7,8},new Dictionary<uint,KeyValue>{{7,packageInfo}})is null,"size-missing-requested-package-cannot-certify-partial-entitlements");
         Check(SteamInstallSizes.PackageEntitlements(new uint[]{7,7},new Dictionary<uint,KeyValue>{{7,packageInfo}})!.SetEquals(new uint[]{10}),"size-complete-package-coverage-deduplicates-licenses-and-depot-access");
+        var zeroPackage=KeyValue.LoadFromString("\"package\" {\"appids\" {\"0\" \"0\" \"1\" \"10\"}}")!;
+        Check(SteamInstallSizes.PackageEntitlements(new uint[]{7},new Dictionary<uint,KeyValue>{{7,zeroPackage}})!.SetEquals(new uint[]{10}),"size-zero-app-placeholder-does-not-invalidate-every-game");
+        var malformedPackage=KeyValue.LoadFromString("\"package\" {\"depotids\" {\"0\" \"not-an-id\"}}")!;
+        Check(SteamInstallSizes.PackageEntitlements(new uint[]{7},new Dictionary<uint,KeyValue>{{7,malformedPackage}},out var packageReason)is null&&packageReason=="ownership_package_invalid_id","size-malformed-package-remains-fail-closed-with-specific-reason");
         Check(SteamInstallSizes.Build(new(1,"windows",Language:"italian"),products,new HashSet<uint>{10}).InstalledBytes is null,"size-unsupported-engine-language-cannot-certify-different-selection");
         var ownedPlan=SteamInstallSizes.Build(new(1,"windows"),products,new HashSet<uint>{10});Check(ownedPlan.InstalledBytes==100&&ownedPlan.Depots.Count==1,"size-ownership-excludes-unlicensed-depots");
         var missingSize=Product("\"10\" {\"manifests\" {\"public\" {\"gid\" \"1\"}}}");var unavailable=SteamInstallSizes.Build(new(1,"windows"),new Dictionary<uint,KeyValue>{{1,missingSize}});

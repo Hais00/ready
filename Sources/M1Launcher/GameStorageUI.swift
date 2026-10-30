@@ -11,13 +11,20 @@ extension AppDelegate {
         guard let self,self.state.activeProfile==profile else{return}
         guard ["result","error"].contains(event["type"]as?String ?? "")else{return}
         if let plan=event["plan"]as?[String:Any],let bytes=try?JSONSerialization.data(withJSONObject:plan),let metadata=try?JSONDecoder().decode([String:JSONValue].self,from:bytes){
-          let info=GameStorageInfo(metadata:metadata,platform:variant.platform)
-          if let index=self.state.games.firstIndex(where:{$0.id==game.id}){
+          var info=GameStorageInfo(metadata:metadata,platform:variant.platform)
+          if info.hasSize,let index=self.state.games.firstIndex(where:{$0.id==game.id}){
             var all=[String:JSONValue]();if case .object(let old)=self.state.games[index].metadata?["platformSizes"]{all=old}
             all[variant.platform.rawValue] = .object(metadata)
             if self.state.games[index].metadata==nil{self.state.games[index].metadata=[:]}
             self.state.games[index].metadata?["platformSizes"] = .object(all)
             self.repository.saveAsync(self.state){_ in}
+          }
+          // A transient authorization/metadata failure must not erase useful
+          // catalog estimates. Its status and verification remain failed.
+          if !info.hasSize{
+            let current=self.state.games.first(where:{$0.id==game.id}) ?? game
+            let cached=GameStorageInfo(metadata:current.metadata ?? [:],platform:variant.platform)
+            info.installedBytes=cached.installedBytes;info.downloadBytes=cached.downloadBytes;info.requiredBytes=cached.requiredBytes
           }
           completion(info,nil)
         }else{
@@ -71,7 +78,16 @@ extension AppDelegate {
         guard valid()else{return};loading=false;info=size;authRequired=["authentication_required","not_online","auth_required","credentials_missing"].contains(code ?? "")
         planUsable=code==nil && size.installedBytes != nil && size.verified && size.status=="available"
         if let code{message=authRequired ? "Accedi allo store per verificare dimensione e installazione.":"Dimensione non verificata: ricalcola quando lo store è disponibile (\(code))."}
-        else if !planUsable{message="Lo store non ha fornito una dimensione utilizzabile per questa versione. Nessun file viene scaricato durante il calcolo."}
+        else if !planUsable{
+          let reason=size.reason ?? size.status
+          switch reason{
+          case "ownership_unavailable","ownership_package_missing","ownership_package_invalid_id","ownership_package_response_incomplete":message="Steam non ha completato la lettura delle licenze. Questo non significa che il gioco non sia acquistato. Riprova il calcolo (\(reason))."
+          case "size_plan_timeout":message="Steam non ha completato il calcolo in tempo. Riprova quando la connessione è stabile."
+          case "depot_access_unconfirmed":message="Steam non ha confermato l’accesso ai contenuti di questa versione. Riprova il calcolo con l’account proprietario."
+          case "platform_unavailable":message="Lo store non pubblica questa versione per la piattaforma selezionata."
+          default:message="Il piano di installazione non è ancora verificato (\(reason)). Riprova il calcolo."
+          }
+        }
         render()
       }
     }
