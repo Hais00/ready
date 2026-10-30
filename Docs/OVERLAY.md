@@ -137,6 +137,28 @@ normal-key forwarding, window scope and reentrant shortcut callbacks. Its owned
 Metal pixel readback is not a screen capture. Historical panel receipts describe
 the earlier small menu, not the current unified interface.
 
+#### Optional live GPU blur experiment
+
+For an explicitly requested native-game trial, launch Ready with
+`--host-game-gpu-blur` alongside `--host-game-view <storeID>` and the
+`remote-layer` transport. The option is rejected for the surface transport. The
+authenticated overlay state edge arms the Metal 3 drawable hooks on open and
+restores the original command-buffer methods on close. With a shader-readable
+drawable, the guest downsamples to at most 640 pixels per dimension, applies
+`MPSImageGaussianBlur` (sigma 8), then draws the dimmed result back into that
+same drawable before commit. Ready removes its dark placeholder after the first
+blurred frame is actually presented. There is no screenshot, CPU pixel readback
+or extra presentation window in this path.
+
+This experiment has been run on the installed native Cyberpunk 2077 build: its
+first drawable reported `shader-readable`; the overlay logged `MPS-low-resolution`
+encoding and Ready received the first-presented-frame acknowledgement. This
+proves the path ran, not its FPS cost. The pass adds GPU work while the overlay
+is visible, and this trial has not measured frame time or validated other games
+or Metal presentation APIs. Unsupported/non-readable drawables keep the dark
+placeholder and skip the GPU pass. The default path remains the one-shot static
+backdrop.
+
 ### Games using the injected overlay
 
 - Ctrl+Shift+Space toggles the overlay inside the game process.

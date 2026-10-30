@@ -46,7 +46,10 @@ HOST=r'''#import <AppKit/AppKit.h>
 @property(strong)NSView *view;
 @property(assign)void *context;
 @property(assign)RHGHostFirstFrameCallback callback;
-@property BOOL stopped,overlayVisible;
+@property BOOL stopped,overlayVisible,gpuBlurEnabled;
+@property(assign)void *blurContext;
+@property(assign)RHGHostOverlayBlurReadyCallback blurCallback;
+@property(weak)NSView *blurPlaceholder;
 @end
 @implementation FixtureHost @end
 static FixtureHost *current;static int created,stops,pointerEnabled,transportMode,hudRequested,failCreate;static uint64_t remoteRegistryID;
@@ -69,6 +72,9 @@ const char *RHGHostNonce(RHGHostRef h){(void)h;return "0000000000000000000000000
 void RHGHostSetFirstFrameCallback(RHGHostRef h,void*c,RHGHostFirstFrameCallback f){FixtureHost*x=(__bridge FixtureHost*)h;x.context=c;x.callback=f;}
 void RHGHostSetPointerEnabled(RHGHostRef h,bool e){(void)h;pointerEnabled=e?1:0;}
 void RHGHostSetOverlayVisible(RHGHostRef h,bool e){((__bridge FixtureHost*)h).overlayVisible=e;}
+void RHGHostSetOverlayGPUBlurEnabled(RHGHostRef h,bool e){((__bridge FixtureHost*)h).gpuBlurEnabled=e;}
+void RHGHostSetOverlayBlurReadyCallback(RHGHostRef h,void*c,RHGHostOverlayBlurReadyCallback f){FixtureHost*x=(__bridge FixtureHost*)h;x.blurContext=c;x.blurCallback=f;}
+void RHGHostSetOverlayBlurPlaceholderView(RHGHostRef h,void*v){((__bridge FixtureHost*)h).blurPlaceholder=v?(__bridge NSView*)v:nil;}
 bool RHGHostPointerCaptured(RHGHostRef h){(void)h;return false;}
 void RHGHostStop(RHGHostRef h){FixtureHost*x=(__bridge FixtureHost*)h;if(!x.stopped){stops++;x.stopped=YES;}x.callback=NULL;x.context=NULL;}
 void RHGHostDestroy(RHGHostRef h){RHGHostStop(h);current=nil;CFRelease((CFTypeRef)h);}

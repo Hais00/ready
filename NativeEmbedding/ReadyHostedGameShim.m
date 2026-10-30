@@ -3,6 +3,7 @@
 // No real guest NSWindow initializer, copy fallback, or host compositor exists.
 #import <Cocoa/Cocoa.h>
 #import <Metal/Metal.h>
+#import <MetalPerformanceShaders/MetalPerformanceShaders.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <QuartzCore/CAMetalDisplayLink.h>
 #import <QuartzCore/CATransaction.h>
@@ -34,6 +35,7 @@ static RHGWindowMetadata rhgMetadata;
 // Updated only by Ready's nonce-authenticated overlay state event. Rendering
 // experiments can stay dormant for the entire normal gameplay session.
 static _Atomic bool rhgOverlayRequested;
+static _Atomic bool rhgOverlayGPUBlurRequested;
 static os_unfair_lock rhgMetadataLock=OS_UNFAIR_LOCK_INIT;
 static uint64_t rhgMetadataRequestID;
 static RHGWindowMetadata rhgMetadataSnapshot(void){os_unfair_lock_lock(&rhgMetadataLock);RHGWindowMetadata value=rhgMetadata;os_unfair_lock_unlock(&rhgMetadataLock);return value;}
@@ -43,6 +45,7 @@ static BOOL rhgRemoteLayerMode(void);
 static BOOL rhgRemoteTraceEnabled(void);
 static void rhgInstallRemoteLayer(void);
 static void rhgStopRenderActivity(void);
+static void rhgConfigureOverlayGPUBlur(BOOL enabled);
 static IMP rhgOriginal(id object,SEL selector);
 static void rhgHook(Class type,SEL selector,IMP hook);
 static void rhgNoGestureProvider(void) {
@@ -542,13 +545,13 @@ static RHGReply rhgExchangeLocked(uint32_t operation,RHGRequest fields,uint64_t 
        (reply.status!=RHG_OK && !(operation>=RHG_POINTER_ASSOCIATE&&operation<=RHG_POINTER_CURSOR))) {
         mach_msg_destroy(&received.message.h);rhgFail(@"host-rejected-request");
     }
-    BOOL complex=(reply.h.msgh_bits&MACH_MSGH_BITS_COMPLEX)!=0;
+    BOOL hasDescriptor=(reply.h.msgh_bits&MACH_MSGH_BITS_COMPLEX)!=0;
     if(operation==RHG_ACQUIRE) {
-        if(!complex || reply.body.msgh_descriptor_count!=1 || reply.port.type!=MACH_MSG_PORT_DESCRIPTOR ||
+        if(!hasDescriptor || reply.body.msgh_descriptor_count!=1 || reply.port.type!=MACH_MSG_PORT_DESCRIPTOR ||
            reply.port.name==MACH_PORT_NULL || reply.port.disposition!=MACH_MSG_TYPE_PORT_SEND) {
             mach_msg_destroy(&received.message.h);rhgFail(@"invalid-host-surface-descriptor");
         }
-    } else if(complex) {mach_msg_destroy(&received.message.h);rhgFail(@"unexpected-host-descriptor");}
+    } else if(hasDescriptor) {mach_msg_destroy(&received.message.h);rhgFail(@"unexpected-host-descriptor");}
     if(reply.status==RHG_OK){
         if(rhgRemoteLayerMode()&&reply.framesInFlight!=0)rhgFail(@"invalid-remote-frame-depth-ack");
         if(!rhgRemoteLayerMode()&&(reply.framesInFlight<1||reply.framesInFlight>RHG_MAX_FRAMES_IN_FLIGHT||!reply.configurationGeneration||(operation!=RHG_HELLO&&reply.framesInFlight!=rhgFrameDepth)))rhgFail(@"invalid-render-capability-ack");
@@ -645,7 +648,7 @@ static NSPoint rhgEventLocation(id event,SEL selector){RHGInput input;if(rhgRead
 static id rhgEventWindow(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input))return rhgWindow;return ((id(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
 static NSInteger rhgEventWindowNumber(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input))return rhgMetadataSnapshot().window;return ((NSInteger(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
 static void rhgDeliverInput(RHGInput input) {
-    if(input.type==RHG_OVERLAY_STATE){if(input.keyCode>1)rhgFail(@"invalid-overlay-state");atomic_store_explicit(&rhgOverlayRequested,input.keyCode!=0,memory_order_release);return;}
+    if(input.type==RHG_OVERLAY_STATE){if(input.keyCode>1||input.button>1)rhgFail(@"invalid-overlay-state");atomic_store_explicit(&rhgOverlayRequested,input.keyCode!=0,memory_order_release);atomic_store_explicit(&rhgOverlayGPUBlurRequested,input.keyCode!=0&&input.button==1,memory_order_release);rhgConfigureOverlayGPUBlur(input.keyCode!=0&&input.button==1);return;}
     RHGLogicalWindow *window=rhgWindow;if(!window)return;
     if(input.type==RHG_FOCUS){
         if(!input.keyCode){
@@ -730,8 +733,11 @@ static void rhgConnect(void) {
                 // loading may block Main and the logical window may not exist.
                 for(unsigned i=0;i<reply.eventCount;i++){
                     if(reply.events[i].type==RHG_OVERLAY_STATE){
-                        if(reply.events[i].keyCode>1)rhgFail(@"invalid-overlay-state");
+                        if(reply.events[i].keyCode>1||reply.events[i].button>1)rhgFail(@"invalid-overlay-state");
                         atomic_store_explicit(&rhgOverlayRequested,reply.events[i].keyCode!=0,memory_order_release);
+                        BOOL gpuBlur=reply.events[i].keyCode!=0&&reply.events[i].button==1;
+                        atomic_store_explicit(&rhgOverlayGPUBlurRequested,gpuBlur,memory_order_release);
+                        dispatch_async(dispatch_get_main_queue(),^{rhgConfigureOverlayGPUBlur(gpuBlur);});
                         // This control event is consumed here; it is never
                         // synthesized as guest keyboard or Cocoa input.
                         reply.events[i].type=0;
@@ -1189,7 +1195,151 @@ static id rhgNextDrawable(CAMetalLayer *layer,SEL selector) {
 static RHGRemoteContext *rhgRemoteContext;
 static NSRecursiveLock *rhgRemoteLock;
 static IMP rhgRemoteOriginalNext,rhgRemoteOriginalUpdate,rhgRemoteOriginalInit;
+@class RHGOverlayBlurRenderer;
 static _Atomic bool rhgRemoteFirstArmed,rhgRemoteFirstSent;
+
+static _Atomic bool rhgOverlayBlurAckSent,rhgOverlayBlurAckHookArmed;
+static char rhgOverlayBlurDrawablesKey;
+static Class rhgOverlayBlurCommandClass;
+static RHGOverlayBlurRenderer *rhgOverlayBlurRenderer;
+static id<MTLCommandQueue> rhgOverlayBlurProbeQueue;
+static void rhgOverlayBlurPresent(id,SEL,id);
+static void rhgOverlayBlurPresentTimed(id,SEL,id,double);
+static void rhgOverlayBlurCommit(id,SEL);
+
+@interface RHGOverlayBlurRenderer:NSObject
+@property(nonatomic,strong)id<MTLDevice> device;
+@property(nonatomic,strong)MPSImageBilinearScale *scale;
+@property(nonatomic,strong)MPSImageGaussianBlur *blur;
+@property(nonatomic,strong)id<MTLRenderPipelineState> pipeline;
+@property(nonatomic,strong)id<MTLTexture> reduced;
+@property(nonatomic,strong)id<MTLTexture> blurred;
+@property(nonatomic)MTLSize reducedSize;
+@property(nonatomic)MTLPixelFormat format;
+@property(nonatomic,strong)NSLock *lock;
+-(instancetype)initWithDevice:(id<MTLDevice>)device format:(MTLPixelFormat)format;
+-(BOOL)encodeOn:(id<MTLCommandBuffer>)command drawable:(id<CAMetalDrawable>)drawable;
+@end
+@implementation RHGOverlayBlurRenderer
+-(instancetype)initWithDevice:(id<MTLDevice>)device format:(MTLPixelFormat)format {
+    if((self=[super init])){
+        _device=device;_format=format;_lock=[NSLock new];
+        _scale=[[MPSImageBilinearScale alloc]initWithDevice:device];
+        _blur=[[MPSImageGaussianBlur alloc]initWithDevice:device sigma:8.0];
+        _blur.edgeMode=MPSImageEdgeModeClamp;
+        NSString *source=@"#include <metal_stdlib>\nusing namespace metal;\n"
+        "struct O{float4 p [[position]];float2 uv;};\n"
+        "vertex O rhg_blur_vertex(uint i [[vertex_id]]){float2 p[3]={float2(-1,-1),float2(3,-1),float2(-1,3)};O o;o.p=float4(p[i],0,1);o.uv=float2((p[i].x+1)*.5,1-(p[i].y+1)*.5);return o;}\n"
+        "fragment float4 rhg_blur_fragment(O v [[stage_in]],texture2d<float> t [[texture(0)]]){constexpr sampler s(filter::linear,address::clamp_to_edge);float3 c=t.sample(s,v.uv).rgb;return float4(c*.5,1);}";
+        NSError *error=nil;id<MTLLibrary> library=[device newLibraryWithSource:source options:nil error:&error];
+        MTLRenderPipelineDescriptor *descriptor=[MTLRenderPipelineDescriptor new];
+        descriptor.label=@"Ready opt-in hosted backdrop blur";descriptor.vertexFunction=[library newFunctionWithName:@"rhg_blur_vertex"];
+        descriptor.fragmentFunction=[library newFunctionWithName:@"rhg_blur_fragment"];descriptor.colorAttachments[0].pixelFormat=format;
+        _pipeline=library?[device newRenderPipelineStateWithDescriptor:descriptor error:&error]:nil;
+        if(!_scale||!_blur||!_pipeline)return nil;
+    }return self;
+}
+-(BOOL)ensureTexturesFor:(id<MTLTexture>)source {
+    CGFloat scale=MIN(1.0,MIN(640.0/source.width,640.0/source.height));
+    MTLSize size=MTLSizeMake(MAX(1,(NSUInteger)ceil(source.width*scale)),MAX(1,(NSUInteger)ceil(source.height*scale)),1);
+    if(_reduced&&_reducedSize.width==size.width&&_reducedSize.height==size.height&&_reduced.pixelFormat==source.pixelFormat)return YES;
+    MTLTextureDescriptor *descriptor=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:source.pixelFormat width:size.width height:size.height mipmapped:NO];
+    descriptor.usage=MTLTextureUsageShaderRead|MTLTextureUsageShaderWrite;descriptor.storageMode=MTLStorageModePrivate;
+    id<MTLTexture> reduced=[_device newTextureWithDescriptor:descriptor];id<MTLTexture> blurred=[_device newTextureWithDescriptor:descriptor];
+    if(!reduced||!blurred)return NO;reduced.label=@"Ready blur reduced source";blurred.label=@"Ready blur result";
+    _reduced=reduced;_blurred=blurred;_reducedSize=size;return YES;
+}
+-(BOOL)encodeOn:(id<MTLCommandBuffer>)command drawable:(id<CAMetalDrawable>)drawable {
+    id<MTLTexture> source=drawable.texture;
+    if(!source||!(source.usage&MTLTextureUsageShaderRead)||drawable.layer.framebufferOnly)return NO;
+    [_lock lock];BOOL success=NO;
+    if([self ensureTexturesFor:source]){
+        MPSScaleTransform transform={.scaleX=(double)_reducedSize.width/source.width,.scaleY=(double)_reducedSize.height/source.height,.translateX=0,.translateY=0};
+        _scale.scaleTransform=&transform;
+        [_scale encodeToCommandBuffer:command sourceTexture:source destinationTexture:_reduced];
+        _scale.scaleTransform=NULL;
+        [_blur encodeToCommandBuffer:command sourceTexture:_reduced destinationTexture:_blurred];
+        MTLRenderPassDescriptor *pass=[MTLRenderPassDescriptor renderPassDescriptor];
+        pass.colorAttachments[0].texture=source;pass.colorAttachments[0].loadAction=MTLLoadActionClear;
+        pass.colorAttachments[0].storeAction=MTLStoreActionStore;pass.colorAttachments[0].clearColor=MTLClearColorMake(0,0,0,1);
+        id<MTLRenderCommandEncoder> encoder=[command renderCommandEncoderWithDescriptor:pass];
+        if(encoder){encoder.label=@"Ready overlay-only GPU backdrop blur";[encoder setRenderPipelineState:_pipeline];
+            [encoder setFragmentTexture:_blurred atIndex:0];[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+            [encoder endEncoding];RHGOverlayBlurRenderer *keep=self;id<MTLTexture> keepImage=_blurred;
+            [command addCompletedHandler:^(id<MTLCommandBuffer> completed){(void)keep;(void)keepImage;(void)completed;}];success=YES;}
+    }
+    [_lock unlock];return success;
+}
+@end
+
+static void rhgOverlayBlurAcknowledge(uint32_t contextID){
+    dispatch_async(rhgGPUCompletionWorker(),^{
+        RHGReply reply=rhgExchange(RHG_REMOTE_BLUR_READY,(RHGRequest){.surfaceID=contextID});
+        if(reply.status!=RHG_OK&&reply.status!=RHG_REJECTED)fprintf(stderr,"{\"type\":\"ready-gpu-blur-ack\",\"accepted\":false}\n");
+    });
+}
+static NSMutableArray *rhgOverlayBlurDrawables(id<MTLCommandBuffer> command,BOOL create){
+    NSMutableArray *items=objc_getAssociatedObject(command,&rhgOverlayBlurDrawablesKey);
+    if(!items&&create){items=[NSMutableArray array];objc_setAssociatedObject(command,&rhgOverlayBlurDrawablesKey,items,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}return items;
+}
+static void rhgOverlayBlurRecord(id<MTLCommandBuffer> command,id<CAMetalDrawable> drawable){
+    if(!atomic_load_explicit(&rhgOverlayGPUBlurRequested,memory_order_acquire)||!drawable)return;
+    NSMutableArray *items=rhgOverlayBlurDrawables(command,YES);for(id<CAMetalDrawable> existing in items)if(existing==drawable)return;
+    if(items.count<4)[items addObject:drawable];
+}
+static void rhgOverlayBlurPresent(id command,SEL selector,id drawable){
+    rhgOverlayBlurRecord(command,drawable);IMP original=rhgOriginal(command,selector);if(original)((void(*)(id,SEL,id))original)(command,selector,drawable);
+}
+static void rhgOverlayBlurPresentTimed(id command,SEL selector,id drawable,double time){
+    rhgOverlayBlurRecord(command,drawable);IMP original=rhgOriginal(command,selector);if(original)((void(*)(id,SEL,id,double))original)(command,selector,drawable,time);
+}
+static void rhgOverlayBlurCommit(id command,SEL selector){
+    NSArray<id<CAMetalDrawable>> *items=[rhgOverlayBlurDrawables(command,NO) copy];objc_setAssociatedObject(command,&rhgOverlayBlurDrawablesKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    RHGOverlayBlurRenderer *renderer=rhgOverlayBlurRenderer;
+    if(atomic_load_explicit(&rhgOverlayGPUBlurRequested,memory_order_acquire)&&renderer){
+        for(id<CAMetalDrawable> drawable in items){
+            BOOL encoded=[renderer encodeOn:command drawable:drawable];
+            if(encoded){
+                static _Atomic bool logged;
+                bool expected=false;if(atomic_compare_exchange_strong(&logged,&expected,true))fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"encoded\",\"kernel\":\"MPS-low-resolution\"}\n");
+                if(!atomic_exchange(&rhgOverlayBlurAckHookArmed,true)){
+                    uint32_t contextID=rhgRemoteContext.contextId;
+                    [drawable addPresentedHandler:^(id<MTLDrawable> presented){
+                        if(presented.presentedTime>0&&!atomic_exchange(&rhgOverlayBlurAckSent,true))rhgOverlayBlurAcknowledge(contextID);
+                    }];
+                }
+            }else{
+                static _Atomic bool loggedUnavailable;
+                bool expected=false;if(atomic_compare_exchange_strong(&loggedUnavailable,&expected,true))fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"unsupported-drawable\"}\n");
+            }
+        }
+    }
+    IMP original=rhgOriginal(command,selector);if(original)((void(*)(id,SEL))original)(command,selector);
+}
+static void rhgRestoreOverlayBlurHooks(void){
+    Class type=rhgOverlayBlurCommandClass;if(!type)return;
+    struct Hook{SEL selector;IMP implementation;} hooks[]={{@selector(presentDrawable:),(IMP)rhgOverlayBlurPresent},{@selector(presentDrawable:atTime:),(IMP)rhgOverlayBlurPresentTimed},{@selector(presentDrawable:afterMinimumDuration:),(IMP)rhgOverlayBlurPresentTimed},{@selector(commit),(IMP)rhgOverlayBlurCommit}};
+    [rhgHookLock lock];for(unsigned i=0;i<sizeof(hooks)/sizeof(hooks[0]);i++){
+        NSString *key=[NSString stringWithFormat:@"%p:%s",type,sel_getName(hooks[i].selector)];IMP original=[rhgOriginals[key] pointerValue];Method method=class_getInstanceMethod(type,hooks[i].selector);
+        if(original&&method&&method_getImplementation(method)==hooks[i].implementation)method_setImplementation(method,original);
+    }[rhgHookLock unlock];rhgOverlayBlurCommandClass=nil;rhgOverlayBlurProbeQueue=nil;rhgOverlayBlurRenderer=nil;
+}
+static void rhgConfigureOverlayGPUBlur(BOOL enabled){
+    if(!enabled){rhgRestoreOverlayBlurHooks();return;}
+    if(!atomic_load(&rhgOverlayGPUBlurRequested)||!rhgRemoteLayerMode()||!rhgGameLayer)return;
+    CAMetalLayer *layer=rhgGameLayer;id<MTLDevice> device=layer.device;
+    if(!device||layer.framebufferOnly){fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"framebuffer-only\"}\n");return;}
+    RHGOverlayBlurRenderer *renderer=[[RHGOverlayBlurRenderer alloc]initWithDevice:device format:layer.pixelFormat];
+    id<MTLCommandQueue> queue=[device newCommandQueue];id<MTLCommandBuffer> probe=[queue commandBuffer];Class type=probe?object_getClass(probe):Nil;
+    if(!renderer||!type){fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"renderer-unavailable\"}\n");return;}
+    rhgOverlayBlurRenderer=renderer;rhgOverlayBlurProbeQueue=queue;rhgOverlayBlurCommandClass=type;
+    rhgHook(type,@selector(presentDrawable:),(IMP)rhgOverlayBlurPresent);
+    rhgHook(type,@selector(presentDrawable:atTime:),(IMP)rhgOverlayBlurPresentTimed);
+    rhgHook(type,@selector(presentDrawable:afterMinimumDuration:),(IMP)rhgOverlayBlurPresentTimed);
+    rhgHook(type,@selector(commit),(IMP)rhgOverlayBlurCommit);
+    atomic_store(&rhgOverlayBlurAckSent,false);atomic_store(&rhgOverlayBlurAckHookArmed,false);
+    fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"armed\",\"sampleSize\":\"at-most-640px\"}\n");
+}
 enum {RHG_REMOTE_STARTUP_LIMIT=128,RHG_REMOTE_STARTUP_SECONDS=15,RHG_REMOTE_TRACE_LIMIT=8};
 static _Atomic unsigned rhgRemoteObserved,rhgRemoteCallbacks;
 static char rhgRemoteDrawableMarker;
@@ -1274,7 +1424,10 @@ static void rhgRemoteObserveDrawable(id<CAMetalDrawable>drawable){
     });
     id<MTLTexture> texture=drawable.texture;
     if(!texture||!texture.width||!texture.height||texture.width>8192||texture.height>8192||!rhgFormat(texture.pixelFormat)||!texture.device.registryID)rhgFail(@"remote-layer-invalid-native-drawable");
-    RHGRequest first={.surfaceID=rhgRemoteContext.contextId,.width=(uint32_t)texture.width,.height=(uint32_t)texture.height,.pixelFormat=(uint32_t)texture.pixelFormat,.deviceRegistryID=texture.device.registryID};
+    uint32_t textureFlags=0;
+    if(texture.usage&MTLTextureUsageShaderRead)textureFlags|=RHG_REMOTE_TEXTURE_SHADER_READABLE;
+    if(rhgGameLayer.framebufferOnly)textureFlags|=RHG_REMOTE_TEXTURE_FRAMEBUFFER_ONLY;
+    RHGRequest first={.surfaceID=rhgRemoteContext.contextId,.width=(uint32_t)texture.width,.height=(uint32_t)texture.height,.pixelFormat=(uint32_t)texture.pixelFormat,.deviceRegistryID=texture.device.registryID,.remoteTextureFlags=textureFlags};
     if(count<RHG_REMOTE_TRACE_LIMIT)rhgRemoteWriteGeometry(rhgRemoteGeometry(count));
     [drawable addPresentedHandler:^(id<MTLDrawable>native){
         // A zero timestamp denotes a dropped/warmup frame. It must not uncover

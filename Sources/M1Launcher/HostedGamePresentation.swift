@@ -151,6 +151,7 @@ import QuartzCore
   private var backdropGeneration=UUID()
   private var backdropResolved=false
   private let captureBackdrop:(NSWindow,@escaping @MainActor(CGImage?)->Void)->Void
+  private let liveGPUBlur:Bool
   private var stopping=false
   private(set) var interfaceVisible=false
   private let onShowInterface:(()->Void)?
@@ -159,11 +160,12 @@ import QuartzCore
   private let onInterfaceConfirm:(()->Void)?
   private var onQuit:()->Void
   var active:Bool { handle != nil }
-  init(window:NSWindow,canvas:MetalCanvas,placement:HostedWindowPlacement,onFailure:((Error)->Void)?=nil,onFirstFrame:(()->Void)?=nil,onQuit:@escaping()->Void={},onShowInterface:(()->Void)?=nil,onHideInterface:(()->Void)?=nil,onInterfaceMove:((Int)->Void)?=nil,onInterfaceConfirm:(()->Void)?=nil,captureBackdrop:((NSWindow,@escaping @MainActor(CGImage?)->Void)->Void)?=nil){
+  init(window:NSWindow,canvas:MetalCanvas,placement:HostedWindowPlacement,onFailure:((Error)->Void)?=nil,onFirstFrame:(()->Void)?=nil,onQuit:@escaping()->Void={},onShowInterface:(()->Void)?=nil,onHideInterface:(()->Void)?=nil,onInterfaceMove:((Int)->Void)?=nil,onInterfaceConfirm:(()->Void)?=nil,captureBackdrop:((NSWindow,@escaping @MainActor(CGImage?)->Void)->Void)?=nil,liveGPUBlur:Bool=false){
     self.window=window;self.canvas=canvas;self.placement=placement;self.onFailure=onFailure;self.onFirstFrame=onFirstFrame
     self.onQuit=onQuit
     self.onShowInterface=onShowInterface;self.onHideInterface=onHideInterface
     self.onInterfaceMove=onInterfaceMove;self.onInterfaceConfirm=onInterfaceConfirm
+    self.liveGPUBlur=liveGPUBlur
     self.captureBackdrop=captureBackdrop ?? {window,completion in GameBackdropSnapshot.capture(window:window,completion:completion)}
   }
 
@@ -209,6 +211,13 @@ import QuartzCore
         self.finish(.failure(LauncherError.unavailable("La superficie diretta di Ready non è disponibile.")));return
       }
       self.handle=host
+      RHGHostSetOverlayGPUBlurEnabled(host,liveGPUBlur)
+      if liveGPUBlur {
+        RHGHostSetOverlayBlurReadyCallback(host,Unmanaged.passUnretained(self).toOpaque(),{context in
+          guard let context else{return}
+          MainActor.assumeIsolated{Unmanaged<HostedGamePresentationController>.fromOpaque(context).takeUnretainedValue().gpuBackdropReady()}
+        })
+      }
       self.armPointerObservers()
       RHGHostSetFirstFrameCallback(host,Unmanaged.passUnretained(self).toOpaque(),{context in
         guard let context else{return}
@@ -313,7 +322,7 @@ import QuartzCore
     }
     // Capture only our own window, before adding the UI. A bounded fallback
     // uses a cheap solid shade, never a continuously filtered live backdrop.
-    captureBackdrop(window,finish)
+    if liveGPUBlur{finish(nil)}else{captureBackdrop(window,finish)}
     DispatchQueue.main.asyncAfter(deadline:.now()+1.5){finish(nil)}
     return true
   }
@@ -332,6 +341,7 @@ import QuartzCore
     canvas.frame=container.bounds;canvas.autoresizingMask=[.width,.height]
     canvas.alphaValue=0;container.addSubview(canvas)
     interfaceContainer=container;interfaceBackdrop=backdrop
+    if liveGPUBlur,let handle{RHGHostSetOverlayBlurPlaceholderView(handle,Unmanaged.passUnretained(backdrop).toOpaque())}
     onShowInterface?()
     guard interfaceVisible,self.handle != nil,hostView===game else{return}
     window.makeFirstResponder(canvas)
@@ -345,6 +355,7 @@ import QuartzCore
   private func hideInterface(){
     guard interfaceVisible else{return};interfaceVisible=false
     backdropGeneration=UUID();backdropResolved=true
+    if let handle{RHGHostSetOverlayBlurPlaceholderView(handle,nil)}
     canvas?.layer?.removeAllAnimations();canvas?.alphaValue=1
     canvas?.removeFromSuperview()
     interfaceBackdrop?.layer?.contents=nil
@@ -359,6 +370,10 @@ import QuartzCore
     onHideInterface?()
     updatePointer()
   }
+  private func gpuBackdropReady(){
+    guard liveGPUBlur,interfaceVisible else{return}
+    interfaceBackdrop?.layer?.contents=nil;interfaceBackdrop=nil
+  }
   func fullscreenTransitionFailed(){
     fullscreenTransitioning=false
     updatePointer()
@@ -370,6 +385,7 @@ import QuartzCore
     placement.cancelPending(placementRequest);placementRequest=nil
     removePointerObservers()
     overlay?.stop();overlay=nil
+    if let handle{RHGHostSetOverlayBlurPlaceholderView(handle,nil);RHGHostSetOverlayBlurReadyCallback(handle,nil,nil)}
     restoreCanvasInteraction()
     if let canvas,canvas.superview === hostView{canvas.removeFromSuperview()}
     if let handle{
@@ -479,7 +495,8 @@ extension AppDelegate {
         onShowInterface:{[weak self]in self?.beginGameInterface(gameID:game.id)},
         onHideInterface:{[weak self]in self?.endGameInterface()},
         onInterfaceMove:{[weak self]delta in self?.moveGameInterfaceSelection(delta)},
-        onInterfaceConfirm:{[weak self]in self?.activateGameInterfaceSelection()})
+        onInterfaceConfirm:{[weak self]in self?.activateGameInterfaceSelection()},
+        liveGPUBlur:args.contains("--host-game-gpu-blur"))
       hostedPresentation=controller
       let shim:URL
       if let index=args.firstIndex(of:"--host-game-shim"),args.indices.contains(index+1),args[index+1].hasPrefix("/") {

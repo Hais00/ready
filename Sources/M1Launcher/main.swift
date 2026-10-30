@@ -1222,6 +1222,9 @@ if let index=args.firstIndex(of:"--host-game-view") {
 if args.contains("--exclusive-hosted-view"),!args.contains("--host-game-view") {
   FileHandle.standardError.write(Data("--exclusive-hosted-view requires --host-game-view.\n".utf8));exit(64)
 }
+if args.contains("--host-game-gpu-blur"),(!args.contains("--host-game-view") || !remoteLayerHUD){
+  FileHandle.standardError.write(Data("--host-game-gpu-blur requires the remote hosted-game view.\n".utf8));exit(64)
+}
 var dataPaths = LauncherPaths()
 if let index = args.firstIndex(of: "--data-root") {
   guard args.indices.contains(index + 1), args[index + 1].hasPrefix("/"), args[index + 1] != "/"

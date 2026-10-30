@@ -19,7 +19,7 @@ fingerprint_inputs > "$STAGE/inputs.before"
 xcrun clang -fobjc-arc -fblocks -std=gnu11 -O2 -dynamiclib \
   -arch arm64 -arch x86_64 -isysroot "$SDK" -mmacosx-version-min=14.0 \
   -Wno-deprecated-declarations \
-  -framework Cocoa -framework Metal -framework QuartzCore -framework IOSurface \
+  -framework Cocoa -framework Metal -framework MetalPerformanceShaders -framework QuartzCore -framework IOSurface \
   -framework CoreGraphics -I "$ROOT/Sources/ReadyHostedView/include" \
   -install_name @rpath/libReadyHostedGame.dylib \
   "$ROOT/NativeEmbedding/ReadyHostedGameShim.m" -o "$STAGE/libReadyHostedGame.dylib"

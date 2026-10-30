@@ -38,6 +38,8 @@ See [interface behavior and verification](Docs/INTERFACE.md), [local runtime ins
 
 The [unified in-game interface checkpoint](Validation/unified-game-interface-checkpoint.json) records actual-canvas routing, snapshot cancellation/resource cleanup, software filtering and an owned remote-Metal window capture fixture. The background is frozen while the interface is open. These checks do not establish commercial-game GPU cost or direct display with the UI visible.
 
+An optional `--host-game-gpu-blur` experiment now applies a low-resolution MPS blur to the native Metal drawable only while the in-game interface is open. It has rendered one presented blurred frame in Cyberpunk; no FPS or frame-time result is claimed. See [the scoped live-blur checkpoint](Validation/live-gpu-blur-checkpoint.json) and [overlay details](Docs/OVERLAY.md#optional-live-gpu-blur-experiment).
+
 ## Build and test
 
 The frontend build targets macOS 14+ and Swift 5.10+; current runtime validation is on macOS 27.0.1. The currently built Wine/Vulkan payload declares macOS 27 as its minimum OS. Metal4/GPTK4 testing requires a compatible newer SDK/OS and Apple Silicon. The native group-lifetime checks have not been run on macOS 14/15.

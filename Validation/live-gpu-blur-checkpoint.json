@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "verifiedAtUTC": "2026-10-30T18:34:50.893185+00:00",
+  "feature": "Optional Metal 3 GPU blur armed only after Ready requests the in-game overlay; disarmed on close.",
+  "realGameTrial": {
+    "game": "Cyberpunk 2077 native macOS build",
+    "launch": "CLI; no benchmark arguments",
+    "sourceTextureShaderReadable": true,
+    "gpuBlurPassEncoded": "MPS low-resolution",
+    "maximumFilterDimension": 640,
+    "blur": "MPSImageGaussianBlur sigma 8",
+    "result": "Ready received first-presented-frame acknowledgement and removed its dark placeholder",
+    "screenCaptureOrComputerUseDuringTrial": false,
+    "fpsOrFrameTimeMeasured": false
+  },
+  "sourceSHA256": {
+    "NativeEmbedding/ReadyHostedGameShim.m": "a5f0cef19bc0d239411b5d5623d19c2d1164ddc68aac4aa184ee20de64f3b9ad",
+    "Sources/ReadyHostedView/ReadyHostedView.m": "8abda4dea4762e3944e778c8b20ac20f978ca58d95b8ada4d667556fe8b22b19",
+    "Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h": "00ac51397dcde4a8e80315446a53137e09712fa26cf93210b0bf66d8777c9177",
+    "Sources/ReadyHostedView/include/ReadyHostedView.h": "b72bb2419e1be7197cb33a00dea2de3c315db272dc14d26679b3c1d021614236",
+    "Sources/M1Launcher/HostedGamePresentation.swift": "fb5e297bb0d681d5f73ab1ee1e2561b10c5d7c89521c550249b298e4fa2e50e3",
+    "Sources/M1Launcher/main.swift": "374fe4d7b45f31598bf6f5f4b8826538f0a67f262a661061b563a0c7efcb30f8",
+    "Scripts/build_hosted_game_shim.sh": "c416b3789fb463aece249aeed33cfe4e0d346b651efe7ddd92542d32883a219d"
+  },
+  "limitations": [
+    "The blur adds GPU work while visible; no zero-cost claim.",
+    "Verified only the installed Cyberpunk build using the Metal 3 present/commit path.",
+    "Other games, Metal 4 command queues and performance impact remain unverified.",
+    "The default background remains the one-shot static image."
+  ],
+  "build": "Scripts/build_app.sh passed; release bundle signature verified.",
+  "hostedInterfaceFixture": {
+    "passed": true,
+    "checks": 119,
+    "reportSHA256": "840efdadea0b124f8f4143eb05537f3dba664530ad068864c3393b7ecf9a0b66",
+    "fixtureOnly": true
+  }
+}
