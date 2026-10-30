@@ -4,6 +4,7 @@ import LauncherCore
 
 @MainActor final class StorageSettingsView:NSView,ReadyDialogContentSizing {
   var maximumViewportHeight:CGFloat{680}
+  var sessionReadOnly=false
   var onRename:((StorageLibraryRecord)->Void)?,onDefault:((StorageLibraryRecord)->Void)?,onRemove:((StorageLibraryRecord)->Void)?
   private let stack=NSStackView()
   override init(frame:NSRect){
@@ -43,7 +44,7 @@ import LauncherCore
       for (index,text) in ["Rinomina","Predefinita","Rimuovi voce"].enumerated(){
         let button=StorageRowButton(title:text,action:{[weak self]in
           if index==0{self?.onRename?(record)}else if index==1{self?.onDefault?(record)}else{self?.onRemove?(record)}
-        });button.isEnabled=index != 1 || !status.isDefault;buttons.addArrangedSubview(button)
+        });button.isEnabled = !sessionReadOnly && (index != 1 || !status.isDefault);buttons.addArrangedSubview(button)
       }
       for child in [title,path,description,bar,buttons]as[NSView]{row.addArrangedSubview(child)}
       stack.addArrangedSubview(row);row.widthAnchor.constraint(equalTo:stack.widthAnchor).isActive=true
@@ -63,7 +64,7 @@ import LauncherCore
 
 extension AppDelegate {
   @MainActor func showStorageSettings(returnToGameID:String?=nil,onReturn:(()->Void)?=nil){
-    guard !maintenanceInProgress,session?.running != true,pendingLaunch==nil else{return}
+    guard !maintenanceInProgress,canNavigateInterfaceWhilePlaying,pendingLaunch==nil else{return}
     beginSettingsSection(.storage)
     var returned=false
     let leave:()->Void = {[weak self]in
@@ -75,7 +76,7 @@ extension AppDelegate {
         ReadyPageTab(id:item.rawValue,title:item.title,action:{[weak self]in self?.openSettingsSection(item)})
       },selected:SettingsPageSection.storage.rawValue,onBack:leave)
     }
-    let view=StorageSettingsView(frame:NSRect(x:0,y:0,width:600,height:220))
+    let view=StorageSettingsView(frame:NSRect(x:0,y:0,width:600,height:220));view.sessionReadOnly=session.running
     let reload={ [weak self] in self?.showStorageSettings(returnToGameID:returnToGameID,onReturn:onReturn) }
     view.onRename={[weak self]record in
       guard let self else{return}
@@ -93,7 +94,7 @@ extension AppDelegate {
       }
     }
     let page=presentDialog(title:"Archiviazione",message:"I file dei giochi sono condivisi tra profili. Prefix Windows e salvataggi personali mantengono le proprie cartelle separate.",content:view,
-      actions:[.init("Aggiungi cartella…",role:.primary),.init("Indietro")]){[weak self]choice in
+      actions:[.init("Aggiungi cartella…",role:.primary),.init("Indietro",role:.cancel)]){[weak self]choice in
       guard let self else{return}
       if choice==0{
         self.selectLocalFile(title:"Aggiungi una cartella giochi",prompt:"Usa questa cartella",directory:FileManager.default.homeDirectoryForCurrentUser,mode:.directory){[weak self]root in

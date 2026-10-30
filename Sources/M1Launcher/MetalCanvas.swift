@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import AppKit
 import ImageIO
+import CoreImage
 import LauncherCore
 import Metal
 import QuartzCore
@@ -12,12 +13,13 @@ private final class CanvasRendererBuildTicket {
 }
 
 enum CanvasSection: Equatable, Sendable {
-  case library, settings, steamAccount, downloads, profiles, utility
+  case library, game, settings, steamAccount, downloads, profiles, utility
 }
 
 enum CanvasAction {
   case game(String)
   case gameOptions(String)
+  case resumeGame(String)
   case librarySection(Bool)
   case store(Store?)
   case profiles, importGame, settings, search, fullscreen, refresh, steamAccount, downloads
@@ -30,6 +32,7 @@ struct CanvasHit {
 
 final class MetalCanvas: NSView {
   let device: MTLDevice
+  private static let chromeBlurContext=CIContext(options:[.useSoftwareRenderer:true,.cacheIntermediates:false])
   private var shellRenderer:CanvasShellRenderer?
   private let returnRendererBuilder:(MTLDevice)throws->CanvasShellRenderer
   private var rendererBuild:CanvasRendererBuildTicket?,graphicsGeneration=UUID()
@@ -76,6 +79,7 @@ final class MetalCanvas: NSView {
       guard oldValue != section else { return }
       // Drop stale game targets immediately, including a mouse press started
       // before a page change. Keep navigation focus when it still applies.
+      pageTitle=nil
       gridSurface?.isHidden = section != .library
       hits.removeAll(); hoverID = nil; pressedID = nil
       if let id = focusID, !id.hasPrefix("nav.") && !id.hasPrefix("toolbar.") { focusID = nil }
@@ -93,7 +97,17 @@ final class MetalCanvas: NSView {
       }
     }
   }
-  var message = ""
+  var gameInterfaceMode=false{didSet{if oldValue != gameInterfaceMode{canvasLayer?.isOpaque = !gameInterfaceMode;lastChromeKey="";redraw()}}}
+  var currentGameName:String?
+  var currentGameID:String?
+  var message = ""{didSet{if oldValue != message{messageIsError=false}}}
+  var messageIsError=false
+  var pageTitle:String?
+  var runningGames=[ReadyShellRunningGame](){didSet{if oldValue != runningGames{lastChromeKey="";redraw()}}}
+  func showErrorNotice(_ value:String){message=value;messageIsError = !value.isEmpty}
+  func showStatus(_ value:String){message=value;messageIsError=false}
+  var shellSnapshot:ReadyShellSnapshot{ReadyShellSnapshot.make(section:shellDestination,header:section == .game ? currentGameName:pageTitle,profileName:state.profiles.first{$0.id==state.activeProfile}?.name ?? "Giocatore",runningGames:runningGames,error:messageIsError ? message:nil)}
+  private var shellDestination:ReadyShellDestination{switch section{case .library,.utility:return .library;case .game:return .game;case .steamAccount:return .friends;case .downloads:return .downloads;case .settings:return .settings;case .profiles:return .profiles}}
   var evaluationMode = false
   var steamStatus = "Steam"
   var steamOnline = false
@@ -148,7 +162,7 @@ final class MetalCanvas: NSView {
     l.developerHUDProperties = ["mode": "disabled"]
     l.device = device
     l.pixelFormat = .bgra8Unorm
-    l.isOpaque = true
+    l.isOpaque = !gameInterfaceMode
     l.framebufferOnly = true
     l.maximumDrawableCount = 2
     l.displaySyncEnabled = true
@@ -182,7 +196,7 @@ final class MetalCanvas: NSView {
   var allProfileGames:[Game]{
     if let cachedProfileGames{return cachedProfileGames}
     let result=state.games.map{state.configured($0)}.filter{
-      ($0.profileIDs==nil || $0.profileIDs!.contains(state.activeProfile)) && (filter==nil || $0.store==filter)
+      ($0.profileIDs==nil || $0.profileIDs!.contains(state.activeProfile))
         && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.storeID.localizedCaseInsensitiveContains(query))
     }.sorted{
       let a=$0.lastPlayed ?? .distantPast,b=$1.lastPlayed ?? .distantPast
@@ -194,7 +208,7 @@ final class MetalCanvas: NSView {
   private var categoryCounts:(games:Int,other:Int){if let cachedKindCounts{return cachedKindCounts};let total=allProfileGames.count,other=allProfileGames.filter{LibraryEntryPresentation.isOtherContent($0)}.count;let result=(games:total-other,other:other);cachedKindCounts=result;return result}
   var visibleGames:[Game]{
     if let cachedVisibleGames{return cachedVisibleGames}
-    let result=allProfileGames.filter{!query.isEmpty || LibraryEntryPresentation.isOtherContent($0)==showOtherContent}
+    let result=allProfileGames.filter{!LibraryEntryPresentation.isOtherContent($0)}
     cachedVisibleGames=result;return result
   }
   override func viewDidMoveToWindow() {
@@ -320,7 +334,7 @@ final class MetalCanvas: NSView {
   }
   private func updateGridGeometry(){
     let content=bounds.width-148,gap:CGFloat=18
-    libraryViewport=CGRect(x:105,y:180,width:content+14,height:max(0,bounds.height-236))
+    libraryViewport=CGRect(x:105,y:138,width:content+14,height:max(0,bounds.height-194))
     libraryGridColumns=max(1,Int((content+gap)/178))
     let cardWidth=floor((content-gap*CGFloat(libraryGridColumns-1))/CGFloat(libraryGridColumns)),cardHeight=cardWidth*LibraryCardMetrics.coverRatio+LibraryCardMetrics.titleHeight
     libraryCardStride=cardHeight+gap
@@ -334,7 +348,7 @@ final class MetalCanvas: NSView {
     let end=max(start,Int(ceil((libraryScroll+libraryViewport.height)/libraryCardStride))+(prefetch ? 1:0))
     return min(visibleGames.count,start*libraryGridColumns)..<min(visibleGames.count,end*libraryGridColumns)
   }
-  private func cardFrame(_ index:Int)->CGRect{CGRect(x:112+CGFloat(index%libraryGridColumns)*(cardSize.width+18),y:187+CGFloat(index/libraryGridColumns)*libraryCardStride-libraryScroll,width:cardSize.width,height:cardSize.height)}
+  private func cardFrame(_ index:Int)->CGRect{CGRect(x:112+CGFloat(index%libraryGridColumns)*(cardSize.width+18),y:145+CGFloat(index/libraryGridColumns)*libraryCardStride-libraryScroll,width:cardSize.width,height:cardSize.height)}
   private func rebuildInteractiveHits(){
     hits=cachedShellHits.filter{if case .librarySection=$0.action{return section == .library};return section == .library || !$0.id.hasPrefix("empty.")}
     guard section == .library else{return}
@@ -343,7 +357,7 @@ final class MetalCanvas: NSView {
   }
   private func chromeKey()->String{
     let minute=Int(Date().timeIntervalSince1970/60),profile=state.profiles.first{$0.id==state.activeProfile}?.name ?? ""
-    return [String(describing:bounds.size),String(describing:section),filter?.rawValue ?? "",query,profile,message,steamStatus,String(steamOnline),String(evaluationMode),String(visibleGames.count),String(showOtherContent),String(allProfileGames.count),String(categoryCounts.games),String(categoryCounts.other),String(minute)].joined(separator:"|_|")
+    return [String(describing:bounds.size),String(describing:section),query,profile,messageIsError ? message:"",pageTitle ?? "",runningGames.map{$0.id+":"+$0.title}.joined(separator:"|"),steamStatus,String(steamOnline),String(evaluationMode),String(gameInterfaceMode),currentGameName ?? "",String(visibleGames.count),String(showOtherContent),String(allProfileGames.count),String(categoryCounts.games),String(categoryCounts.other),String(minute)].joined(separator:"|_|")
   }
   /// Called by CADisplayLink on Main. Hidden fixtures call this same entry point.
   func renderDisplayTick(){
@@ -503,6 +517,9 @@ final class MetalCanvas: NSView {
     hits.removeAll()
     let width = bounds.width
     let height = bounds.height
+    if gameInterfaceMode {
+      cg.clear(bounds)
+    }else{
     cg.setFillColor(color(0x101315).cgColor)
     cg.fill(bounds)
     let colors =
@@ -513,27 +530,35 @@ final class MetalCanvas: NSView {
       cg.drawLinearGradient(
         g, start: .init(x: 60, y: 0), end: .init(x: width, y: height), options: [])
     }
-    cg.setFillColor(color(0x1b2226, 0.9).cgColor)
-    cg.fill(CGRect(x: 0, y: 0, width: 70, height: height))
-    icon("gamecontroller.fill", CGRect(x: 23, y: 23, width: 24, height: 24), tint: color(0x95edb4))
-    button(
-      CGRect(x: 12, y: 71, width: 46, height: 46), "house.fill", .store(nil), id: "nav.home", active: section == .library && filter == nil)
-    let symbols = ["s.circle", "e.circle", "g.circle", "a.circle"]
-    for (i, s) in [Store.steam, .epic, .gog, .amazon].enumerated() {
-      let r = CGRect(x: 12, y: 132 + CGFloat(i) * 57, width: 46, height: 46)
-      button(r, symbols[i], .store(s), id: "nav.store." + s.rawValue, active: section == .library && filter == s)
     }
-    button(CGRect(x: 12, y: height - 174, width: 46, height: 46), "person.2", .profiles, id: "nav.profiles", active: section == .profiles)
-    button(CGRect(x:12,y:height-232,width:46,height:46),"arrow.down.circle",.downloads,id:"nav.downloads",active:section == .downloads)
-    button(CGRect(x: 12, y: height - 116, width: 46, height: 46), "plus", .importGame, id: "nav.import")
-    button(CGRect(x: 12, y: height - 58, width: 46, height: 46), "gearshape", .settings, id: "nav.settings", active: section == .settings)
-    let left: CGFloat = 112
-    let content = width - left - 36
-    button(CGRect(x: left, y: 22, width: 37, height: 37), "arrow.clockwise", .refresh, id: "toolbar.refresh")
-    text(
-      evaluationMode ? "READY · VALUTAZIONE" : "READY",
-      CGRect(x: left + 54, y: 32, width: 200, height: 22), size: 12, bold: true,
-      color: color(evaluationMode ? 0xe8b76d : 0xb2c2c1))
+    cg.setFillColor(color(0x1b2226, 0.9).cgColor)
+    cg.fill(CGRect(x: 0, y: 0, width: 72, height: height))
+    // One unified library; store backends never occupy persistent dock slots.
+    icon("gamecontroller.fill", CGRect(x:24,y:24,width:24,height:24),tint:color(0x95edb4))
+    button(CGRect(x:13,y:72,width:46,height:46),"books.vertical.fill",.store(nil),id:"nav.library",active:section == .library)
+    let dockBottom=height-232
+    for (index,game) in runningGames.enumerated(){
+      let y=132+CGFloat(index)*57
+      guard y+46<dockBottom else{break}
+      let rect=CGRect(x:13,y:y,width:46,height:46)
+      round(rect,color(section == .game && currentGameID==game.id ? 0x2a443b:0x20302c),radius:12)
+      if let model=state.games.first(where:{$0.id==game.id}),let image=art.image(for:state.configured(model),role:.icon,refresh:{[weak self]in self?.lastChromeKey="";self?.redraw()}){
+        NSGraphicsContext.current?.cgContext.saveGState();NSBezierPath(roundedRect:rect.insetBy(dx:5,dy:5),xRadius:8,yRadius:8).addClip()
+        NSGraphicsContext.current?.cgContext.draw(image,in:CanvasGeometry.aspectFit(CGSize(width:image.width,height:image.height),in:rect.insetBy(dx:5,dy:5)));NSGraphicsContext.current?.cgContext.restoreGState()
+      }else if let model=state.games.first(where:{$0.id==game.id}),let appIcon=ReadyActiveGameIcon.image(forExecutable:model.currentVariant?.executable){
+        appIcon.draw(in:rect.insetBy(dx:5,dy:5),from:.zero,operation:.sourceOver,fraction:1,respectFlipped:true,hints:[.interpolation:NSImageInterpolation.high])
+      }else{icon("gamecontroller.fill",rect.insetBy(dx:12,dy:12),tint:color(0xb5ffd0))}
+      registerHit(rect,id:"nav.running."+game.id,action:.resumeGame(game.id))
+    }
+    button(CGRect(x:13,y:height-232,width:46,height:46),"person.2",.steamAccount,id:"nav.friends",active:section == .steamAccount)
+    button(CGRect(x:13,y:height-174,width:46,height:46),"arrow.down.circle",.downloads,id:"nav.downloads",active:section == .downloads)
+    button(CGRect(x:13,y:height-116,width:46,height:46),"plus",.importGame,id:"nav.import")
+    button(CGRect(x:13,y:height-58,width:46,height:46),"gearshape",.settings,id:"nav.settings",active:section == .settings)
+    let left:CGFloat=112
+    let content=width-left-36
+    drawSoftChrome(cg,rect:CGRect(x:72,y:0,width:width-72,height:84),top:true)
+    cg.saveGState();cg.setShadow(offset:CGSize(width:0,height:2),blur:10,color:color(0x000000,0.45).cgColor)
+    text(shellSnapshot.header,CGRect(x:left,y:25,width:content-345,height:34),size:23,bold:true,color:color(0xe9f3ee));cg.restoreGState()
     let profile = state.profiles.first { $0.id == state.activeProfile }?.name ?? "Giocatore"
     text(profile, CGRect(x: width - 330, y: 29, width: 180, height: 27), size: 14, bold: true)
     button(CGRect(x:width - 148,y:21,width:38,height:38),steamOnline ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.exclamationmark",.steamAccount,id:"toolbar.steam.account",active:section == .steamAccount)
@@ -548,16 +573,11 @@ final class MetalCanvas: NSView {
       finishScene(left: left, content: content, height: height, libraryHelp: false)
       return
     }
-    text(query.isEmpty ? (filter.map{$0.title+" · Libreria"} ?? "La tua libreria") : "Risultati per “\(query)”",
-      CGRect(x:left,y:91,width:content-110,height:36),size:25,bold:true)
+    if !query.isEmpty{text("Risultati per “\(query)”",CGRect(x:left,y:99,width:content-110,height:27),size:18,bold:true)}
     let games=visibleGames
-    text("\(games.count) \(showOtherContent || !query.isEmpty ? "contenuti":"giochi")",CGRect(x:width-137,y:102,width:100,height:22),size:12,color:color(0xafc1bc))
-    let gamesCount=categoryCounts.games,otherCount=categoryCounts.other
-    for (index,entry) in [(false,"Giochi · \(gamesCount)"),(true,"Altri contenuti · \(otherCount)")].enumerated(){
-      let rect=CGRect(x:left+CGFloat(index)*180,y:139,width:170,height:31);round(rect,color(showOtherContent==entry.0 ? 0x2a443b:0x202b2e),radius:8);text(entry.1,rect.insetBy(dx:12,dy:8),size:12,bold:true,color:color(0xc9dfd5));registerHit(rect,id:"library.section.\(index)",action:.librarySection(entry.0))
-    }
+    text("\(games.count) giochi",CGRect(x:width-137,y:104,width:100,height:22),size:12,color:color(0xafc1bc))
     let gap:CGFloat=18
-    libraryViewport=CGRect(x:left-7,y:180,width:content+14,height:max(0,height-236))
+    libraryViewport=CGRect(x:left-7,y:138,width:content+14,height:max(0,height-194))
     libraryGridColumns=max(1,Int((content+gap)/178))
     let cardWidth=floor((content-gap*CGFloat(libraryGridColumns-1))/CGFloat(libraryGridColumns))
     let coverHeight=cardWidth*LibraryCardMetrics.coverRatio,cardHeight=coverHeight+LibraryCardMetrics.titleHeight
@@ -570,7 +590,7 @@ final class MetalCanvas: NSView {
     let firstRow=max(0,Int(floor(libraryScroll/libraryCardStride))),lastRow=Int(ceil((libraryScroll+libraryViewport.height)/libraryCardStride))
     for i in min(games.count,firstRow*libraryGridColumns)..<min(games.count,lastRow*libraryGridColumns){
       let game=games[i]
-      let r=CGRect(x:left+CGFloat(i%libraryGridColumns)*(cardWidth+gap),y:187+CGFloat(i/libraryGridColumns)*libraryCardStride-libraryScroll,width:cardWidth,height:cardHeight)
+      let r=CGRect(x:left+CGFloat(i%libraryGridColumns)*(cardWidth+gap),y:145+CGFloat(i/libraryGridColumns)*libraryCardStride-libraryScroll,width:cardWidth,height:cardHeight)
       guard r.intersects(libraryViewport)else{continue}
       drawCard(cg,game:game,rect:r)
       if i==selected{let outline=NSBezierPath(roundedRect:r.insetBy(dx:-3,dy:-3),xRadius:13,yRadius:13);color(0xb5ffd0).setStroke();outline.lineWidth=2;outline.stroke()}
@@ -584,14 +604,31 @@ final class MetalCanvas: NSView {
       round(CGRect(x:track.minX,y:track.minY+(track.height-thumbHeight)*libraryScroll/libraryMaximumScroll,width:3,height:thumbHeight),color(0x9bd2b6,0.65),radius:2)
     }
     if games.isEmpty{
-      let r=CGRect(x:left,y:187,width:content,height:220);round(r,color(0x222b30))
-      icon("gamecontroller",CGRect(x:left+24,y:215,width:38,height:38),tint:color(0xa2eec2))
-      text(showOtherContent ? "Nessun altro contenuto":(!query.isEmpty ? "Nessun risultato":"La tua libreria comincia qui"),CGRect(x:left+82,y:214,width:content-104,height:32),size:22,bold:true)
-      text(showOtherContent ? "DLC, strumenti e licenze aggiuntive rimangono accessibili in questa sezione.":(!query.isEmpty ? "Prova un titolo o un ID differente.":"Collega uno store per vedere tutti i giochi posseduti, oppure importa un gioco installato."),CGRect(x:left+24,y:279,width:content-48,height:65),size:15,color:color(0xb5c2c7))
-      if !showOtherContent && query.isEmpty{registerHit(r,id:"empty.import",action:.importGame)}
+      let r=CGRect(x:left,y:145,width:content,height:220);round(r,color(0x222b30))
+      icon("gamecontroller",CGRect(x:left+24,y:173,width:38,height:38),tint:color(0xa2eec2))
+      text(!query.isEmpty ? "Nessun risultato":"La tua libreria comincia qui",CGRect(x:left+82,y:172,width:content-104,height:32),size:22,bold:true)
+      text(!query.isEmpty ? "Prova un titolo o un ID differente.":"Collega uno store per vedere tutti i giochi posseduti, oppure importa un gioco installato.",CGRect(x:left+24,y:237,width:content-48,height:65),size:15,color:color(0xb5c2c7))
+      if query.isEmpty{registerHit(r,id:"empty.import",action:.importGame)}
     }
     finishScene(left: left, content: content, height: height, libraryHelp: true)
   }
+  private func drawSoftChrome(_ cg:CGContext,rect:CGRect,top:Bool){
+    // Blur only our existing UI raster on rare chrome updates. This is not a
+    // screenshot or game-frame readback; the suspended canvas never runs it.
+    let scale=max(1,abs(cg.ctm.a)),deviceRect=CGRect(x:rect.minX*scale,y:rect.minY*scale,width:rect.width*scale,height:rect.height*scale).integral
+    if let ownRaster=cg.makeImage(),let crop=ownRaster.cropping(to:deviceRect){
+      let input=CIImage(cgImage:crop),blurred=input.clampedToExtent().applyingFilter("CIGaussianBlur",parameters:[kCIInputRadiusKey:12*scale]).cropped(to:input.extent)
+      let mask=CIFilter(name:"CILinearGradient",parameters:["inputPoint0":CIVector(x:0,y:0),"inputPoint1":CIVector(x:0,y:input.extent.height),"inputColor0":CIColor(red:top ? 0:0.5,green:top ? 0:0.5,blue:top ? 0:0.5),"inputColor1":CIColor(red:top ? 0.5:0,green:top ? 0.5:0,blue:top ? 0.5:0)])?.outputImage?.cropped(to:input.extent)
+      let softened=mask.map{blurred.applyingFilter("CIBlendWithMask",parameters:[kCIInputBackgroundImageKey:input,kCIInputMaskImageKey:$0])} ?? input
+      if let output=Self.chromeBlurContext.createCGImage(softened,from:input.extent){
+        cg.saveGState();cg.clip(to:rect);cg.translateBy(x:rect.minX,y:rect.maxY);cg.scaleBy(x:1,y:-1);cg.draw(output,in:CGRect(origin:.zero,size:rect.size));cg.restoreGState()
+      }
+    }
+    let colors=[color(0x0c1114,top ? 0.50:0.0).cgColor,color(0x101719,0.24).cgColor,color(0x0c1114,top ? 0.0:0.50).cgColor] as CFArray
+    guard let gradient=CGGradient(colorsSpace:CGColorSpaceCreateDeviceRGB(),colors:colors,locations:[0,0.5,1])else{return}
+    cg.saveGState();cg.clip(to:rect);cg.drawLinearGradient(gradient,start:CGPoint(x:rect.midX,y:rect.minY),end:CGPoint(x:rect.midX,y:rect.maxY),options:[]);cg.restoreGState()
+  }
+
   private func finishScene(left: CGFloat, content: CGFloat, height: CGFloat, libraryHelp: Bool) {
     let nextHover = drawingChrome ? hoverID:pointerLocation.flatMap { hit(at: $0)?.id }
     if nextHover != hoverID {
@@ -604,13 +641,11 @@ final class MetalCanvas: NSView {
         }
       }
     }
-    if libraryHelp || !message.isEmpty {
-      text(
-        message.isEmpty
-          ? "↑ ↓ ← →  Esplora     Invio  Dettagli     Spazio  Opzioni     ⌘F  Cerca"
-          : message,
-        CGRect(x: left, y: height - (libraryHelp ? 38 : 21), width: content, height: libraryHelp ? 25 : 18),
-        size: libraryHelp ? 12 : 11, color: color(0xaebcba))
+    let footer=messageIsError ? message:""
+    if !footer.isEmpty {
+      drawSoftChrome(NSGraphicsContext.current!.cgContext,rect:CGRect(x:72,y:height-55,width:bounds.width-72,height:55),top:false)
+      NSGraphicsContext.current?.cgContext.saveGState();NSGraphicsContext.current?.cgContext.setShadow(offset:CGSize(width:0,height:1),blur:8,color:color(0x000000,0.45).cgColor)
+      text(footer,CGRect(x:left,y:height-36,width:content,height:25),size:12,color:color(0xf1b5a6));NSGraphicsContext.current?.cgContext.restoreGState()
     }
   }
   // Controller focus on the persistent shell must never activate hidden games.

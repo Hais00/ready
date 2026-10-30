@@ -22,6 +22,7 @@ let package = Package(
       linkerSettings: [
         .linkedFramework("AppKit"), .linkedFramework("Metal"), .linkedFramework("QuartzCore"),
         .linkedFramework("GameController"), .linkedFramework("Security"),
+        .linkedFramework("ScreenCaptureKit"),
       ]),
     .target(name: "LauncherChecks", dependencies: ["LauncherCore"], path: "Tests/Checks"),
     .executableTarget(

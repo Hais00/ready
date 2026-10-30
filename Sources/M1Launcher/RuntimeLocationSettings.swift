@@ -9,8 +9,8 @@ extension AppDelegate {
     else { throw LauncherError.busy }
   }
   @objc func runtimeLocationSettings() {
-    guard !maintenanceInProgress, !session.running, pendingLaunch == nil,
-      authenticationSession == nil, !storeClient.hasActiveRequests
+    guard !maintenanceInProgress, canNavigateInterfaceWhilePlaying, pendingLaunch == nil,
+      authenticationSession == nil, (!storeClient.hasActiveRequests || gameInterfaceVisible)
     else {
       showError(
         LauncherError.unavailable(

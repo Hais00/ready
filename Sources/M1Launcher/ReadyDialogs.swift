@@ -457,9 +457,15 @@ extension AppDelegate {
     title: String, message: String, content: NSView? = nil, actions: [ReadyDialogAction],
     onCancel: (() -> Void)? = nil, completion: @escaping (Int) -> Void
   ) -> UUID {
-    if canvas != nil, session?.running != true {
+    if canvas != nil, canNavigateInterfaceWhilePlaying {
       if canvas.section == .library { beginPage(.utility) }
-      return pages.present(title:title,message:message,content:content,actions:actions,
+      var displayedActions=actions
+      if session?.running==true,(canvas.section == .settings || canvas.section == .profiles) {
+        displayedActions=actions.map{var action=$0;if action.role != .cancel{action.enabled=false};return action}
+        func protect(_ view:NSView){if let control=view as?NSControl{control.isEnabled=false};view.subviews.forEach(protect)}
+        if let content{protect(content)}
+      }
+      return pages.present(title:title,message:message,content:content,actions:displayedActions,
         onCancel:onCancel,completion:completion)
     }
     return dialogs.present(

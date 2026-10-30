@@ -99,7 +99,7 @@ extension AppDelegate {
     }
   }
   @objc func dataMaintenance() {
-    guard canMaintainData() else { return }
+    guard (session.running ? (gameInterfaceVisible && !maintenanceInProgress && pendingLaunch==nil):canMaintainData()) else { return }
     beginSettingsSection(.data)
     if LegacyMigration.requiresRecovery(paths: paths) {
       let restoringRollback = LegacyMigration.recoveryKind(paths: paths) == "rollback"

@@ -15,6 +15,13 @@ final class SteamAccountView: NSView, ReadyDialogContentSizing {
   var onLogout: (() -> Void)?
   var onDisplayName: ((String)->Void)?
   var onFriendAction: ((String,String)->Void)?
+  private var sessionProtected=false
+  func protectDuringGame(_ value:Bool){sessionProtected=value;applySessionProtection()}
+  private func applySessionProtection(){
+    let blocked:Set<Selector>=[#selector(qrLogin),#selector(passwordLogin),#selector(sendGuard),#selector(reconnect),#selector(offline),#selector(logout)]
+    func apply(_ view:NSView){if let button=view as?NSButton,let action=button.action,blocked.contains(action){button.isEnabled = !sessionProtected};view.subviews.forEach(apply)}
+    apply(self);account.isEnabled = !sessionProtected;password.isEnabled = !sessionProtected;guardCode.isEnabled = !sessionProtected
+  }
   private let identity = NSTextField(labelWithString: "Steam")
   private let status = NSTextField(wrappingLabelWithString: "Non connesso")
   private let account = NSTextField()
@@ -175,7 +182,7 @@ final class SteamAccountView: NSView, ReadyDialogContentSizing {
     }.joined(separator:"\n")
     if !state.online && !state.friends.isEmpty {friendText.string="Ultimo stato noto · connessione Steam non attiva\n\n"+friendText.string}
     if state.friends.isEmpty { friendText.string = state.online ? "Nessun amico disponibile." : "Gli amici saranno aggiornati quando Steam sarà connesso." }
-    resizeDialogContent()
+    applySessionProtection();resizeDialogContent()
   }
   func authenticationEvent(_ event: [String: Any]) {
     switch event["type"] as? String {

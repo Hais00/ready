@@ -146,11 +146,25 @@ import QuartzCore
   private var previousCanvasAlpha:CGFloat?
   private var previousCanvasLayerOpacity:Float?
   private var overlay:HostedGameOverlay?
+  private var interfaceContainer:NSView?
+  private var interfaceBackdrop:NSView?
+  private var backdropGeneration=UUID()
+  private var backdropResolved=false
+  private let captureBackdrop:(NSWindow,@escaping @MainActor(CGImage?)->Void)->Void
+  private var stopping=false
+  private(set) var interfaceVisible=false
+  private let onShowInterface:(()->Void)?
+  private let onHideInterface:(()->Void)?
+  private let onInterfaceMove:((Int)->Void)?
+  private let onInterfaceConfirm:(()->Void)?
   private var onQuit:()->Void
   var active:Bool { handle != nil }
-  init(window:NSWindow,canvas:MetalCanvas,placement:HostedWindowPlacement,onFailure:((Error)->Void)?=nil,onFirstFrame:(()->Void)?=nil,onQuit:@escaping()->Void={}){
+  init(window:NSWindow,canvas:MetalCanvas,placement:HostedWindowPlacement,onFailure:((Error)->Void)?=nil,onFirstFrame:(()->Void)?=nil,onQuit:@escaping()->Void={},onShowInterface:(()->Void)?=nil,onHideInterface:(()->Void)?=nil,onInterfaceMove:((Int)->Void)?=nil,onInterfaceConfirm:(()->Void)?=nil,captureBackdrop:((NSWindow,@escaping @MainActor(CGImage?)->Void)->Void)?=nil){
     self.window=window;self.canvas=canvas;self.placement=placement;self.onFailure=onFailure;self.onFirstFrame=onFirstFrame
     self.onQuit=onQuit
+    self.onShowInterface=onShowInterface;self.onHideInterface=onHideInterface
+    self.onInterfaceMove=onInterfaceMove;self.onInterfaceConfirm=onInterfaceConfirm
+    self.captureBackdrop=captureBackdrop ?? {window,completion in GameBackdropSnapshot.capture(window:window,completion:completion)}
   }
 
   func prepare(executable:URL,shim:URL,diagnostics:URL,metalHUD:Bool,exclusive:Bool=false,remoteLayer:Bool=false,
@@ -264,19 +278,16 @@ import QuartzCore
     if let previousCanvasLayerOpacity{canvas?.layer?.opacity=previousCanvasLayerOpacity;self.previousCanvasLayerOpacity=nil}
     if let hostView{window?.makeFirstResponder(hostView)}
     if let window,let hostView {
-      overlay=HostedGameOverlay(window:window,container:hostView,gameResponder:hostView,
-        capture:{[weak self]visible in
-          guard let self,let handle=self.handle else{return}
-          RHGHostSetOverlayVisible(handle,visible)
-          self.updatePointer()
-        },quit:{[weak self]in self?.onQuit()})
+      overlay=HostedGameOverlay(window:window,show:{[weak self]in self?.showInterface() ?? false},
+        hide:{[weak self]in self?.hideInterface()},move:{[weak self]in self?.onInterfaceMove?($0)},
+        confirm:{[weak self]in self?.onInterfaceConfirm?()})
     }
     let generation=transitionGeneration
     DispatchQueue.main.async{[weak self] in
       guard let self,self.transitionGeneration==generation,self.handle != nil,!self.isLoading else{return}
       // The C CATransaction has now committed. releaseGraphics may wait for the
       // old canvas command buffer, so it deliberately runs outside that commit.
-      self.canvas?.releaseGraphics()
+      if !self.interfaceVisible{self.canvas?.releaseGraphics()}
       self.captureFacts["firstValidPresentReceived"]=true
       self.recordCapture(phase:"first-valid-present")
       self.updatePointer()
@@ -289,11 +300,71 @@ import QuartzCore
     if let handle{RHGHostSetPointerEnabled(handle,false)}
     placement.restore()
   }
+  private func showInterface()->Bool {
+    guard !isLoading,!interfaceVisible,let window,let game=hostView,let canvas,let handle else{return false}
+    interfaceVisible=true
+    RHGHostSetOverlayVisible(handle,true)
+    let generation=UUID();backdropGeneration=generation;backdropResolved=false
+    let finish:@MainActor(CGImage?)->Void = { [weak self,weak window,weak game,weak canvas] image in
+      guard let self,let window,let game,let canvas,self.interfaceVisible,
+        self.backdropGeneration==generation,!self.backdropResolved,self.handle==handle else{return}
+      self.backdropResolved=true
+      self.mountInterface(window:window,game:game,canvas:canvas,image:image)
+    }
+    // Capture only our own window, before adding the UI. A bounded fallback
+    // uses a cheap solid shade, never a continuously filtered live backdrop.
+    captureBackdrop(window,finish)
+    DispatchQueue.main.asyncAfter(deadline:.now()+1.5){finish(nil)}
+    return true
+  }
+  private func mountInterface(window:NSWindow,game:NSView,canvas:MetalCanvas,image:CGImage?){
+    let bounds=game.bounds
+    let container=NSView(frame:bounds);container.autoresizingMask=[.width,.height]
+    game.removeFromSuperview();window.contentView=container
+    game.frame=container.bounds;game.autoresizingMask=[.width,.height];container.addSubview(game)
+    let backdrop=NSView(frame:container.bounds)
+    backdrop.autoresizingMask=[.width,.height];backdrop.wantsLayer=true
+    backdrop.layer?.backgroundColor=NSColor.black.withAlphaComponent(image==nil ? 0.55:1).cgColor
+    backdrop.layer?.contents=image;backdrop.layer?.contentsGravity = .resizeAspectFill
+    backdrop.layer?.minificationFilter = .linear;backdrop.layer?.magnificationFilter = .linear
+    backdrop.alphaValue=0
+    container.addSubview(backdrop)
+    canvas.frame=container.bounds;canvas.autoresizingMask=[.width,.height]
+    canvas.alphaValue=0;container.addSubview(canvas)
+    interfaceContainer=container;interfaceBackdrop=backdrop
+    onShowInterface?()
+    guard interfaceVisible,self.handle != nil,hostView===game else{return}
+    window.makeFirstResponder(canvas)
+    container.layoutSubtreeIfNeeded()
+    NSAnimationContext.runAnimationGroup{context in
+      context.duration=0.18
+      canvas.animator().alphaValue=1
+      backdrop.animator().alphaValue=1
+    }
+  }
+  private func hideInterface(){
+    guard interfaceVisible else{return};interfaceVisible=false
+    backdropGeneration=UUID();backdropResolved=true
+    canvas?.layer?.removeAllAnimations();canvas?.alphaValue=1
+    canvas?.removeFromSuperview()
+    interfaceBackdrop?.layer?.contents=nil
+    interfaceBackdrop?.removeFromSuperview();interfaceBackdrop=nil
+    if let game=hostView,let window {
+      game.removeFromSuperview();window.contentView=game
+      game.frame=window.contentLayoutRect;game.autoresizingMask=[.width,.height]
+      window.makeFirstResponder(game)
+    }
+    interfaceContainer=nil
+    if let handle{RHGHostSetOverlayVisible(handle,false)}
+    onHideInterface?()
+    updatePointer()
+  }
   func fullscreenTransitionFailed(){
     fullscreenTransitioning=false
     updatePointer()
   }
   func stop(preserveFullscreen:Bool=true){
+    guard !stopping else{return};stopping=true
     transitionGeneration=UUID()
     fullscreenTransitioning=true
     placement.cancelPending(placementRequest);placementRequest=nil
@@ -404,7 +475,11 @@ extension AppDelegate {
       hostedWindowPlacement=placement
       let controller=HostedGamePresentationController(window:window,canvas:canvas,placement:placement,
         onFailure:{[weak self] error in self?.showError(error);self?.session?.quit()},
-        onFirstFrame:{[weak self]in self?.finishLaunchSplash()},onQuit:{[weak self]in self?.session?.quit()})
+        onFirstFrame:{[weak self]in self?.finishLaunchSplash()},onQuit:{[weak self]in self?.session?.quit()},
+        onShowInterface:{[weak self]in self?.beginGameInterface(gameID:game.id)},
+        onHideInterface:{[weak self]in self?.endGameInterface()},
+        onInterfaceMove:{[weak self]delta in self?.moveGameInterfaceSelection(delta)},
+        onInterfaceConfirm:{[weak self]in self?.activateGameInterfaceSelection()})
       hostedPresentation=controller
       let shim:URL
       if let index=args.firstIndex(of:"--host-game-shim"),args.indices.contains(index+1),args[index+1].hasPrefix("/") {

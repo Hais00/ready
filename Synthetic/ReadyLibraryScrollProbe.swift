@@ -27,8 +27,8 @@ private final class ScrollFixtureWindow:NSWindow {
     canvas.refresh();for _ in 0..<100{canvas.renderDisplayTick();pump()}
     var checks=[String:Bool]();func check(_ name:String,_ value:Bool){checks[name]=value}
     check("all-profile-owned-records-preserved",canvas.allProfileGames.count==(config["expectedCount"]as?Int))
-    let gamesCount=canvas.visibleGames.count;canvas.showOtherContent=true;canvas.renderDisplayTick();let otherCount=canvas.visibleGames.count
-    check("game-and-other-categories-cover-owned-records",gamesCount+otherCount==canvas.allProfileGames.count)
+    let gamesCount=canvas.visibleGames.count;let otherCount=canvas.allProfileGames.filter{LibraryEntryPresentation.isOtherContent($0)}.count
+    check("unified-game-view-excludes-preserved-other-records",gamesCount+otherCount==canvas.allProfileGames.count)
     canvas.showOtherContent=false;canvas.refresh();for _ in 0..<50{canvas.renderDisplayTick();pump()}
     try canvas.writePreview(root.appendingPathComponent("reference.png"));try canvas.writeNativeGridPreview(root.appendingPathComponent("native.png"))
     let reference=NSBitmapImageRep(data:try Data(contentsOf:root.appendingPathComponent("reference.png")))!,native=NSBitmapImageRep(data:try Data(contentsOf:root.appendingPathComponent("native.png")))!

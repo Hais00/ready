@@ -8,8 +8,8 @@ extension AppDelegate {
       FrontendSupportPaths.configuration(paths: paths, runtimeRoot: runtimeRoot))
   }
   @objc func evaluationSettings() {
-    guard !maintenanceInProgress, !session.running, pendingLaunch == nil,
-      authenticationSession == nil, !storeClient.hasActiveRequests
+    guard !maintenanceInProgress, canNavigateInterfaceWhilePlaying, pendingLaunch == nil,
+      authenticationSession == nil, (!storeClient.hasActiveRequests || gameInterfaceVisible)
     else {
       showError(
         LauncherError.unavailable(

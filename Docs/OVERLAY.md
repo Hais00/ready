@@ -89,30 +89,48 @@ event-driven and periodically sampled, rather than written every frame.
 ### Hosted native games
 
 The hosted path deliberately omits `libReadyOverlay.dylib` from the guest's
-injection list. Its overlay is instead `HostedGameOverlay.swift`, an AppKit
-subview above Ready's existing hosted Metal surface in the same NSWindow.
-Ctrl+Shift+Space is consumed by a window-scoped local event monitor before the
-host forwards input to the game. The panel provides **Riprendi gioco** and
-**Esci dal gioco**; arrows/Tab, Enter, Escape and native buttons use those same
-actions. `SessionGamePresentation.overlay` routes session/controller commands to
-this panel rather than to the guest overlay's control file.
+injection list. `HostedGameOverlay.swift` handles the window-scoped shortcut;
+`HostedGamePresentation.swift` mounts the actual Ready canvas and navigation
+pages above the game in the same NSWindow. This is the same interface, geometry
+and backing scale as the launcher, without a second rasterized shell. The game
+page is the default; the dock opens the real library, friends and settings, and
+the running-game icon resumes play. State-changing settings remain protected
+while a session is running.
 
-Opening the panel calls `RHGHostSetOverlayVisible`, which suspends guest input and
-physical pointer ownership. Hiding restores the host responder; the host's
+Ctrl+Shift+Space opens/closes the interface and Escape resumes the game. Opening
+calls `RHGHostSetOverlayVisible`, suspending guest input and pointer ownership.
+Ordinary UI keys reach the actual controls. Closing restores the game responder;
 foreground, active Space and console checks still decide pointer eligibility.
-The panel is removed on hide/stop, with no overlay timer, frame observer,
-offscreen launcher rendering, extra Metal command buffer or game-image copy.
-AppKit/WindowServer composition while visible is separate from the in-drawable
-overlay described below; direct display eligibility is not asserted.
 
-`Scripts/test_hosted_overlay.py` verifies the actual local event monitor and
-AppKit panel in a finite owned Metal application, including GPU render/present
-and readback, same-window composition, native button/keyboard actions and
-cleanup. `Evidence/hosted-overlay-tests.json` records 17 checks. The controlled
-fullscreen lifecycle suite records 47 checks in
-`Evidence/hosted-fullscreen-tests.json`. Neither receipt proves the commercial
-game or a physical controller: the actual hosted-game shortcut/input check is a
-separate integration gate.
+The background is a single image of Ready's own window taken before mounting
+the UI, bounded to 640 pixels per dimension. A CPU software Gaussian blur and
+50% black tint in the output bitmap are applied once; the displayed background is frozen while
+navigating. There is no continuously filtered backdrop or capture stream. The
+actual UI keeps its native resolution. On macOS 14.4+, capture uses only
+`SCShareableContent.currentProcess`, matching Ready's PID and exact window ID;
+it does not enumerate other applications, request screen permission, save an
+image or start recording. Unsupported systems, errors and a 1.5-second timeout
+fall back to a plain 55% black shade.
+
+Closing invalidates pending captures, clears the image, detaches the actual UI
+and releases its graphics/artwork. The game view becomes the sole window content
+again. The UI is composited while open, so zero GPU overhead or direct display
+with the UI visible is not claimed. The native closed-UI rendering path is
+unchanged; the cost of the static composite and real UI is distinct from live
+blur cost.
+
+`Scripts/test_hosted_fullscreen.py` covers 119 controlled lifecycle checks,
+including same-canvas/window geometry, input routing, capture failure/timeout,
+cancel/reopen races and image release. `Scripts/test_backdrop_cpu.py` checks the
+actual software filter and completion gate. The separate owned two-process
+Metal fixture confirms that the own-window snapshot includes a remote hosted
+Metal layer. Synthetic checks do not certify a commercial game's frame times
+or physical-controller behavior.
+
+`Scripts/test_hosted_overlay.py` adds 28 checks of the actual local event monitor,
+normal-key forwarding, window scope and reentrant shortcut callbacks. Its owned
+Metal pixel readback is not a screen capture. Historical panel receipts describe
+the earlier small menu, not the current unified interface.
 
 ### Games using the injected overlay
 

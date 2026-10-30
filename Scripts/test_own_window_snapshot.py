@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Authorized own two-process Metal/window one-shot; never a user game/display."""
+import hashlib,json,os,pathlib,plistlib,subprocess,tempfile,uuid
+ROOT=pathlib.Path(__file__).resolve().parents[1];WORK=pathlib.Path('/Volumes/Dati APFS/Codex-ready-01a17e79')
+def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+def main():
+ run=pathlib.Path(tempfile.mkdtemp(prefix='own-window-snapshot-',dir=WORK/'tests'));run.chmod(0o700);source=ROOT/'Synthetic/ReadyOwnWindowSnapshotProbe.m';files=[source,pathlib.Path(__file__).resolve()];before={str(p.relative_to(ROOT)):sha(p)for p in files};bundle=run/'ReadyOwnWindowSnapshotProbe.app/Contents';(bundle/'MacOS').mkdir(parents=True);binary=bundle/'MacOS/probe';(bundle/'Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable':'probe','CFBundleIdentifier':'local.ready.own-window-snapshot.'+uuid.uuid4().hex,'CFBundlePackageType':'APPL','NSHighResolutionCapable':True}));env={k:v for k,v in os.environ.items()if not k.startswith(('DYLD_','RHG_','READY_','Steam','STEAM','MTL_'))};env.update(TMPDIR=str(WORK/'tmp')+'/',CLANG_MODULE_CACHE_PATH=str(WORK/'cache/own-window-snapshot'),MTL_HUD_ENABLED='0');flags=['xcrun','clang','-fobjc-arc','-fblocks','-std=gnu11','-O1','-Wno-deprecated-declarations','-framework','Cocoa','-framework','Metal','-framework','QuartzCore','-framework','ScreenCaptureKit','-framework','ImageIO','-framework','CoreGraphics'];p=subprocess.run([*flags,str(source),'-o',str(binary)],env=env,capture_output=True,text=True,timeout=90);(run/'build.log').write_text(p.stdout+p.stderr)
+ if p.returncode:raise RuntimeError('Own capture probe compile failed '+str(run)+'\n'+p.stderr[-2000:])
+ subprocess.run(['/usr/bin/codesign','--force','--sign','-',str(bundle.parent)],env=env,capture_output=True,text=True,check=True);cases={}
+ for mode in ['empty-control','error-control','capture']:
+  p=subprocess.run([str(binary),mode,str(run),str(binary)],env=env,capture_output=True,text=True,timeout=25);(run/(mode+'.stdout.json')).write_text(p.stdout);(run/(mode+'.stderr.log')).write_text(p.stderr);rows=[json.loads(x)for x in p.stdout.splitlines()if x.startswith('{')];cases[mode]=rows[-1]if rows else{'passed':False,'exitStatus':p.returncode};cases[mode]['exitStatus']=p.returncode
+ assert before=={str(p.relative_to(ROOT)):sha(p)for p in files};report={'passed':all(c.get('passed')for c in cases.values()),'cases':cases,'sourceHashes':before,'ownArtificialWindowOnly':True,'noUserGameOrDesktopCapture':True,'productionFilesModified':False,'freshAdHocBundleIdentity':True,'priorTCCStateNotQueried':True};raw=run/'report.json';raw.write_text(json.dumps(report,indent=2)+'\n');raw.chmod(0o600);pointer={**report,'retainedReport':str(raw),'retainedReportSHA256':sha(raw)};(ROOT/'Evidence/own-window-snapshot-tests.json').write_text(json.dumps(pointer,indent=2)+'\n');print(json.dumps(pointer,indent=2))
+if __name__=='__main__':main()

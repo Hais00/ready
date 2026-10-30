@@ -96,7 +96,7 @@ private final class HiddenLibraryWindow:NSWindow {
     canvas.selected=0;canvas.moveLibrarySelection(.down)
     check("grid-controller-down-moves-one-row",canvas.selected==canvas.libraryLayoutSnapshot.columns)
     canvas.moveLibrarySelection(.up);check("grid-controller-up-restores-first-card",canvas.selected==0 && canvas.libraryLayoutSnapshot.offset==0)
-    canvas.filter = .steam;try preview("library-steam");check("store-filter-preserves-all-owned-matching-games",canvas.visibleGames.count==15)
+    canvas.filter = .steam;try preview("library-unified");check("legacy-store-filter-does-not-hide-games-from-unified-library",canvas.visibleGames.count==60)
     canvas.filter=nil;canvas.query="Fixture Game 059";try preview("library-search");check("search-has-no-stale-scrolled-targets",canvas.visibleGames.count==1 && canvas.libraryLayoutSnapshot.visibleIDs==["fixture-59"] && canvas.libraryLayoutSnapshot.offset==0)
     canvas.query="";canvas.section = .utility;try preview("library-hidden");check("detail-shell-cannot-click-hidden-library-games",!canvas.interactionSnapshot.hits.contains{$0.id.hasPrefix("game.")})
     check("unknown-mac-not-labelled-apple-silicon",MetalCanvas.platformLabels(games[1])==["Mac","Windows"])
@@ -171,7 +171,20 @@ private final class HiddenLibraryWindow:NSWindow {
     let oldProfile=delegate.state.activeProfile;delegate.state.activeProfile=UUID()
     presented.onPlay?(games[0].variants[0]);presented.onInstall?(games[0].variants[1]);check("stale-profile-cannot-play-or-install",delegate.plays.count==1 && delegate.installs.count==1)
     delegate.refreshGameDetails();check("profile-switch-clears-detail-page",delegate.gameDetailView==nil && delegate.gameDetailID==nil)
-    delegate.state.activeProfile=oldProfile;viewWindow.close()
+    delegate.state.activeProfile=oldProfile
+    delegate.session.running=true;delegate.canvas.currentGameID=games[0].id
+    delegate.showGameDetails(id:games[0].id)
+    check("closed-game-interface-rejects-detail-navigation",delegate.gameDetailView==nil)
+    delegate.gameInterfaceVisible=true;delegate.canvas.gameInterfaceMode=true
+    delegate.showGameDetails(id:games[0].id);let liveDetail=delegate.gameDetailView!
+    check("running-game-reuses-real-detail-with-resume",liveDetail.detailSnapshot.primaryTitle=="Riprendi gioco" && liveDetail.detailSnapshot.primaryEnabled && !liveDetail.subviews.compactMap{$0 as?NSPopUpButton}.first!.isEnabled)
+    liveDetail.onPlay?(games[0].variants[0]);liveDetail.onInstall?(games[0].variants[1]);liveDetail.onOptions?()
+    check("running-game-detail-resumes-and-closes-only-current-session",delegate.session.resumes==1 && delegate.session.quits==1 && delegate.plays.count==1 && delegate.installs.count==1)
+    delegate.showGameDetails(id:games[1].id);let otherDetail=delegate.gameDetailView!
+    otherDetail.onPlay?(games[1].variants[0]);otherDetail.onOptions?()
+    check("other-game-details-browse-without-second-launch-or-session-quit",otherDetail.detailSnapshot.primaryTitle=="Altro gioco in esecuzione" && !otherDetail.detailSnapshot.primaryEnabled && delegate.session.resumes==1 && delegate.session.quits==1 && delegate.plays.count==1)
+    delegate.refreshGameDetails();check("real-detail-refresh-remains-active-in-game-interface",delegate.gameDetailView===otherDetail)
+    viewWindow.close()
     let report:[String:Any]=["passed":checks.values.allSatisfy{$0},"count":checks.count,"checks":checks,"fixtureOnly":true,"actualAccountsKeychainOrGamesUsed":false,"globalInputInjected":false,"windowActivated":false,"externalNetworkUsed":false,"previewRoot":root.path]
     FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject:report,options:[.sortedKeys,.prettyPrinted]));if !checks.values.allSatisfy({$0}){exit(1)}
   }

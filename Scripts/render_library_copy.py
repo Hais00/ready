@@ -46,7 +46,7 @@ def main():
     (overlay/(hashlib.sha256(('1024:'+address).encode()).hexdigest()+'.png')).unlink(missing_ok=True)
  config={'libraryCopy':str(a.library_copy),'librarySHA256':a.library_sha256,'output':str(run),'artworkCache':str(cache),'detailStoreID':a.detail_store_id,'expectedCount':a.expected_count,'allowPublicArtwork':a.allow_public_artwork,'detailArtworkOnly':a.detail_artwork_only}
  config_path=run/'private-config.json';config_path.write_text(json.dumps(config)+'\n');config_path.chmod(0o600)
- names=['CanvasDrawing.swift','ControllerNavigation.swift','LibraryEntryPresentation.swift','ArtworkIndexStore.swift','CanvasShellRenderer.swift','LibraryGridSurface.swift','GameArtwork.swift','ArtworkCache.swift','MetalCanvas.swift','GameDetailView.swift']
+ names=['CanvasDrawing.swift','ControllerNavigation.swift','LibraryEntryPresentation.swift','ArtworkIndexStore.swift','CanvasShellRenderer.swift','LibraryGridSurface.swift','GameArtwork.swift','ArtworkCache.swift','ReadyShellModel.swift','MetalCanvas.swift','GameDetailView.swift']
  files=[*[ROOT/'Sources/M1Launcher'/n for n in names],ROOT/'Synthetic/ReadyLibraryCopyPreview.swift',pathlib.Path(__file__).resolve()];before={str(p.relative_to(ROOT)):sha(p)for p in files}
  jobs=(ROOT/'Sources/M1Launcher/SteamDownloads.swift').read_text().split('@MainActor\nfinal class SteamDownloads',1)[0]
  (run/'Definitions.swift').write_text(jobs+'\nimport AppKit\nprotocol ReadyDialogContentSizing {var maximumViewportHeight:CGFloat{get}}\nextension Notification.Name{static let readyDialogContentLayoutChanged=Notification.Name("ready.dialog.content-layout-changed")}\n')

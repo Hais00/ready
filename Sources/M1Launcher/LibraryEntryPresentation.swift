@@ -3,7 +3,8 @@ import Foundation
 import LauncherCore
 
 /// Presentation never turns an opaque package entitlement into a named game.
-/// Existing records and installation data are retained in the content section.
+/// Non-game records and installation data remain in the repository; the unified
+/// games view excludes them without deleting entitlement or storage data.
 enum LibraryEntryPresentation {
   static func kind(_ game:Game)->String? {
     guard game.store == .steam else{return nil}

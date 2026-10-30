@@ -9,7 +9,7 @@ CORE=r'''import Foundation
 public enum LauncherError:Error {case busy,unavailable(String),failed(String)}
 public enum GamePlatform {case macOS,windows}
 public struct GameVariant {public let platform:GamePlatform;public let executable:String?}
-public struct Game {public let storeID:String}
+public struct Game {public let storeID:String;public var id:String{storeID}}
 public struct LauncherPaths {public init(){};public var logs:URL{URL(fileURLWithPath:"/")}}
 public enum NativeBinaryProbe {public static func applicationExecutable(_ url:URL)throws->URL{url}}
 public enum AtomicFile {public static func writePrivate(_ data:Data,to url:URL)throws{try data.write(to:url);try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:url.path)}}
@@ -19,34 +19,48 @@ import LauncherCore
 // Scalar fixture identity only: never creates a Metal device or GPU resource.
 struct FixtureCanvasDevice {let registryID:UInt64=42}
 final class MetalCanvas:NSView {
- let device=FixtureCanvasDevice();var interactionEnabled=true;var releases=0
+ let device=FixtureCanvasDevice();var interactionEnabled=true;var releases=0;var resumes=0;var renderResourcesActive=true;var gameInterfaceMode=false;var interfaceMoves=[Int]();var interfaceConfirms=0
+ override var acceptsFirstResponder:Bool{interactionEnabled && renderResourcesActive}
  override init(frame:NSRect){super.init(frame:frame);wantsLayer=true}
  required init?(coder:NSCoder){fatalError("Unused fixture coder")}
- func releaseGraphics(){releases+=1}
+ func releaseGraphics(){releases+=1;renderResourcesActive=false}
+ func resumeGraphics(){resumes+=1;renderResourcesActive=true}
+}
+// The production helper is deliberately not compiled into this CPU fixture.
+// Default capture resolves nil synchronously and never calls ScreenCaptureKit.
+enum GameBackdropSnapshot {
+ @MainActor static var calls=0
+ @MainActor static func capture(window:NSWindow,completion:@escaping @MainActor(CGImage?)->Void){calls+=1;completion(nil)}
 }
 final class SessionManager {func quit(){}}
-final class AppDelegate:NSObject {var window:NSWindow!;var canvas:MetalCanvas!;var hostedWindowPlacement:HostedWindowPlacement?;var hostedPresentation:HostedGamePresentationController?;var paths=LauncherPaths();var project=URL(fileURLWithPath:"/");var session:SessionManager?;func showError(_ error:Error){};func finishLaunchSplash(){}}
+final class AppDelegate:NSObject {var window:NSWindow!;var canvas:MetalCanvas!;var hostedWindowPlacement:HostedWindowPlacement?;var hostedPresentation:HostedGamePresentationController?;var paths=LauncherPaths();var project=URL(fileURLWithPath:"/");var session:SessionManager?;func showError(_ error:Error){};func finishLaunchSplash(){};func beginGameInterface(gameID:String){canvas.gameInterfaceMode=true;canvas.interactionEnabled=true;canvas.resumeGraphics()};func endGameInterface(){canvas.releaseGraphics();canvas.gameInterfaceMode=false};func moveGameInterfaceSelection(_ delta:Int){canvas.interfaceMoves.append(delta)};func activateGameInterfaceSelection(){canvas.interfaceConfirms+=1}}
 '''
 HOST=r'''#import <AppKit/AppKit.h>
 #include "FixtureBridge.h"
+@interface FixtureGameView:NSView @end
+@implementation FixtureGameView
+-(BOOL)acceptsFirstResponder{return YES;}
+-(BOOL)isFlipped{return YES;}
+@end
 @interface FixtureHost:NSObject
 @property(strong)NSView *view;
 @property(assign)void *context;
 @property(assign)RHGHostFirstFrameCallback callback;
-@property BOOL stopped;
+@property BOOL stopped,overlayVisible;
 @end
 @implementation FixtureHost @end
 static FixtureHost *current;static int created,stops,pointerEnabled,transportMode,hudRequested,failCreate;static uint64_t remoteRegistryID;
 void RHGFixtureReset(void){if(current)abort();created=stops=pointerEnabled=transportMode=hudRequested=failCreate=0;remoteRegistryID=0;}
 int RHGFixtureCreateCount(void){return created;}
 int RHGFixtureStopCount(void){return stops;}
-int RHGFixturePointerEnabled(void){return pointerEnabled;}
+int RHGFixturePointerEnabled(void){return current.overlayVisible?0:pointerEnabled;}
+int RHGFixtureOverlayGate(void){return current.overlayVisible?1:0;}
 int RHGFixtureTransportMode(void){return transportMode;}
 uint64_t RHGFixtureDeviceRegistryID(void){return remoteRegistryID;}
 int RHGFixtureHUDRequested(void){return hudRequested;}
 void RHGFixtureSetFailCreate(int fail){failCreate=fail;}
 void RHGFixturePresent(void){if(current.callback)current.callback(current.context);}
-static RHGHostRef fixtureCreate(void*w){created++;if(failCreate)return NULL;FixtureHost*h=[FixtureHost new];h.view=[[NSView alloc]initWithFrame:((__bridge NSWindow*)w).contentView.bounds];current=h;return (__bridge_retained RHGHostRef)h;}
+static RHGHostRef fixtureCreate(void*w){created++;if(failCreate)return NULL;FixtureHost*h=[FixtureHost new];h.view=[[FixtureGameView alloc]initWithFrame:((__bridge NSWindow*)w).contentView.bounds];current=h;return (__bridge_retained RHGHostRef)h;}
 RHGHostRef RHGHostCreate(void*w,bool hud,const char*e,const char*d){(void)e;(void)d;transportMode=0;hudRequested=hud?1:0;remoteRegistryID=0;return fixtureCreate(w);}
 RHGHostRef RHGHostCreateRemote(void*w,uint64_t registryID,const char*e,const char*d){(void)e;(void)d;transportMode=1;remoteRegistryID=registryID;hudRequested=0;return fixtureCreate(w);}
 void *RHGHostGetView(RHGHostRef h){return (__bridge void*)((__bridge FixtureHost*)h).view;}
@@ -54,7 +68,7 @@ const char *RHGHostService(RHGHostRef h){(void)h;return "app.ready.owned-fixture
 const char *RHGHostNonce(RHGHostRef h){(void)h;return "0000000000000000000000000000000000000000000000000000000000000000";}
 void RHGHostSetFirstFrameCallback(RHGHostRef h,void*c,RHGHostFirstFrameCallback f){FixtureHost*x=(__bridge FixtureHost*)h;x.context=c;x.callback=f;}
 void RHGHostSetPointerEnabled(RHGHostRef h,bool e){(void)h;pointerEnabled=e?1:0;}
-void RHGHostSetOverlayVisible(RHGHostRef h,bool e){(void)h;(void)e;}
+void RHGHostSetOverlayVisible(RHGHostRef h,bool e){((__bridge FixtureHost*)h).overlayVisible=e;}
 bool RHGHostPointerCaptured(RHGHostRef h){(void)h;return false;}
 void RHGHostStop(RHGHostRef h){FixtureHost*x=(__bridge FixtureHost*)h;if(!x.stopped){stops++;x.stopped=YES;}x.callback=NULL;x.context=NULL;}
 void RHGHostDestroy(RHGHostRef h){RHGHostStop(h);current=nil;CFRelease((CFTypeRef)h);}

@@ -20,7 +20,7 @@ extension AppDelegate {
       guard let self,let downloads,self.steamDownloads===downloads,self.state.activeProfile==profile else{return}
       self.handleStorageDownloadProgress(jobs,profile:profile)
       self.steamDownloadsView?.update(jobs)
-      if !self.session.running { self.refreshGameDetails() }
+      if self.canNavigateInterfaceWhilePlaying { self.refreshGameDetails() }
     }
     downloads.onError = {[weak self] message in self?.showError(LauncherError.failed(message))}
     downloads.onInstalled = {[weak self] job in self?.acceptSteamInstallation(job,profile:profile)}
@@ -35,16 +35,16 @@ extension AppDelegate {
       guard let self, let library, self.steamLibrary === library, self.state.activeProfile == profile else { return }
       SteamLibraryMerge.clearOtherAccountMembership(in: &self.state, profile: profile, account: account)
       try? self.persist()
-      if !self.session.running { self.refreshGameDetails() }
+      if self.canNavigateInterfaceWhilePlaying { self.refreshGameDetails() }
     }
     library.onGames = { [weak self, weak library] games, account in
       guard let self, let library, self.steamLibrary === library, self.state.activeProfile == profile,
         network.state.online, network.state.steamID == account else { return }
       SteamLibraryMerge.apply(games, to: &self.state, profile: profile, account: account, retainMissing: !library.lastMembershipComplete)
-      self.canvas.message = "\(games.count) contenuti sincronizzati da Steam"
+      self.canvas.showStatus("")
       do { try self.persist() } catch { self.showError(error) }
       self.repairSteamLibraryCache()
-      if !self.session.running { self.refreshGameDetails() }
+      if self.canNavigateInterfaceWhilePlaying { self.refreshGameDetails() }
     }
     library.onScopeChanged = {[weak self,weak library] in
       guard let self,let library,self.steamLibrary===library,self.state.activeProfile==profile else{return}
@@ -52,8 +52,8 @@ extension AppDelegate {
     }
     library.onError = { [weak self, weak library] message in
       guard let self, let library, self.steamLibrary === library, self.state.activeProfile == profile else { return }
-      self.canvas.message = message
-      if !self.session.running { self.canvas.refresh() }
+      self.canvas.showErrorNotice(message)
+      if self.canNavigateInterfaceWhilePlaying { self.canvas.refresh() }
     }
     network.onChange = { [weak self, weak network] status in
       guard let self, let network, self.steamNetwork === network, self.state.activeProfile == profile else { return }
@@ -80,7 +80,7 @@ extension AppDelegate {
       self.steamAccountView?.update(status)
       self.canvas?.steamStatus = status.online ? (status.displayName.isEmpty ? "Steam online" : status.displayName) : "Steam · " + status.connection
       self.canvas?.steamOnline = status.online
-      if !self.session.running { self.canvas?.refresh() }
+      if self.canNavigateInterfaceWhilePlaying { self.canvas?.refresh() }
       self.steamLibrary?.observe(status)
       if becameOnline{self.steamDownloads?.resumeAfterAuthorization()}
       if let continuation = self.steamLaunchContinuation, self.steamAccountReady(network) {
@@ -108,7 +108,8 @@ extension AppDelegate {
   }
   @MainActor func showSteamDownloads() {
     if canvas.section == .downloads, steamDownloadsView != nil, pages.isPresenting { return }
-    if steamDownloads==nil{configureSteamNetwork()}
+    guard canNavigateInterfaceWhilePlaying else{return}
+    if steamDownloads==nil{guard !session.running else{return};configureSteamNetwork()}
     guard let downloads=steamDownloads else{return}
     beginPage(.downloads)
     let view=SteamDownloadsView(frame:NSRect(x:0,y:0,width:670,height:430));steamDownloadsView=view
@@ -130,24 +131,24 @@ extension AppDelegate {
   }
   @MainActor func showSteamAccount() {
     if pendingLaunch != nil { suspendLaunchSplashForAccount() }
-    guard !session.running, !maintenanceInProgress else { return }
+    guard canNavigateInterfaceWhilePlaying, !maintenanceInProgress else { return }
     if canvas.section == .steamAccount, steamAccountView != nil, pages.isPresenting { return }
-    if steamNetwork == nil { configureSteamNetwork() }
+    if steamNetwork == nil { guard !session.running else{return};configureSteamNetwork() }
     guard let network = steamNetwork else {
       showError(LauncherError.unavailable("Installa il servizio Steam centrale prima di collegare l’account.")); return
     }
     beginPage(.steamAccount)
     let profile = state.activeProfile
     let view = SteamAccountView(frame:NSRect(x:0,y:0,width:660,height:710))
-    steamAccountView = view; view.update(network.state)
-    view.onQRLogin = { [weak self,weak network] in self?.steamGuardChallenge=nil;network?.authenticate() }
-    view.onPasswordLogin = { [weak self,weak network] name, password in self?.steamGuardChallenge=nil;network?.authenticate(method:"password",username:name,password:password) }
+    steamAccountView = view; view.update(network.state);view.protectDuringGame(session.running)
+    view.onQRLogin = { [weak self,weak network] in guard self?.session.running != true else{return};self?.steamGuardChallenge=nil;network?.authenticate() }
+    view.onPasswordLogin = { [weak self,weak network] name, password in guard self?.session.running != true else{return};self?.steamGuardChallenge=nil;network?.authenticate(method:"password",username:name,password:password) }
     view.onGuard = { [weak self, weak network] code in
-      guard let challenge = self?.steamGuardChallenge else { return }; network?.submitGuard(challengeID:challenge,code:code)
+      guard self?.session.running != true,let challenge = self?.steamGuardChallenge else { return }; network?.submitGuard(challengeID:challenge,code:code)
     }
     view.onPresence = { [weak network] in network?.setPresence($0) }
-    view.onReconnect = { [weak network] in network?.reconnect() }
-    view.onOffline = { [weak network] in network?.goOffline() }
+    view.onReconnect = { [weak self,weak network] in guard self?.session.running != true else{return};network?.reconnect() }
+    view.onOffline = { [weak self,weak network] in guard self?.session.running != true else{return};network?.goOffline() }
     view.onDisplayName = {[weak self,weak network]name in network?.request("set_persona_name",options:["displayName":name]){event in self?.steamAccountView?.actionEvent(event)}}
     view.onFriendAction = {[weak self,weak network]operation,id in
       guard let self,self.state.activeProfile==profile,UInt64(id) != nil else{return}
@@ -156,7 +157,7 @@ extension AppDelegate {
       }
     }
     view.onLogout = { [weak self, weak network] in
-      guard let self, self.state.activeProfile == profile else { return }
+      guard let self, self.state.activeProfile == profile,!self.session.running else { return }
       self.pendingLaunch=nil
       self.cancelSteamGamePreparation(); self.finishLaunchSplash()
       self.steamGameAuthorization?.cancel(); self.steamNativeGame?.stop()
@@ -180,16 +181,16 @@ extension AppDelegate {
   @MainActor func requestSteamLibrary(profile:UUID, event:@escaping ([String:Any])->Void) {
     guard profile == state.activeProfile else { return }
     guard !canvas.artworkCache.maintenanceSuspended else{event(["type":"error","code":"maintenance_suspended"]);return}
-    if steamNetwork == nil { configureSteamNetwork() }
+    if steamNetwork == nil { guard !session.running else{return};configureSteamNetwork() }
     guard let network = steamNetwork else { event(["type":"error","message":"Servizio Steam non installato."]); return }
     network.request("library",event:event)
   }
   @MainActor func syncSteamLibrary() {
-    if steamNetwork == nil { configureSteamNetwork() }
+    if steamNetwork == nil { guard !session.running else{return};configureSteamNetwork() }
     steamLibrary?.sync()
   }
   @MainActor func requestSteamGameDetails(gameID: String, refresh: Bool = false, completion: @escaping ([String:Any]) -> Void) {
-    if steamNetwork == nil { configureSteamNetwork() }
+    if steamNetwork == nil { guard !session.running else{return};configureSteamNetwork() }
     let profile = state.activeProfile
     guard let library = steamLibrary, let network = steamNetwork else {
       completion(["type":"error", "code":"service_unavailable"]); return
@@ -245,7 +246,7 @@ extension AppDelegate {
       guard !self.canvas.artworkCache.maintenanceSuspended else{return}
       let snapshot=self.state
       self.repository.saveAsync(snapshot){[weak self]result in
-        if case .failure = result{self?.canvas.message="Impossibile salvare la cache della libreria."}
+        if case .failure = result{self?.canvas.showErrorNotice("Impossibile salvare la cache della libreria.")}
       }
       self.canvas.state=snapshot
       if !self.session.running{self.canvas.refresh()}

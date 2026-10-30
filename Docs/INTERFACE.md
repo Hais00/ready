@@ -6,6 +6,20 @@ and keyboard/controller focus states. Every interactive canvas region has its ow
 including repeated import actions. Pointer tracking and cursor rectangles update
 when layout changes; dragging outside a pressed target does not activate it.
 
+The library combines games from all enabled stores. Non-game content and the
+Games/Other selector are excluded. The header names the current section, and
+the footer appears only for errors. Header/footer text uses soft gradient strips
+and shadows rather than hard glass panels. The dock has a Library icon and
+icons for actual running sessions instead of separate store libraries.
+
+During hosted native play, Ctrl+Shift+Space mounts this same canvas and the same
+navigation pages in the existing game window, at its actual backing scale. The
+initial game page leaves its center clear; library, friends and settings remain
+navigable. Selecting the running-game icon or pressing Escape returns to play.
+Runtime/profile/storage/authentication changes are guarded while playing. See
+[hosted overlay behavior](OVERLAY.md#hosted-native-games) for the static blurred
+background, fallback and resource cleanup.
+
 Symbols fit their intrinsic aspect ratio. Artwork fills its card while retaining
 its ratio and clipping the overflow. The CPU bitmap and Metal texture now share
 an explicit sRGB BGRA8 contract. The prior NSBitmapImageRep path returned ARGB

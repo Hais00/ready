@@ -19,7 +19,7 @@ sys.dont_write_bytecode=True
 from swift_probe_support import prepare_core
 ROOT=Path(__file__).resolve().parents[1]
 DEFAULT_WORK=Path('/Volumes/Dati APFS/Codex-ready-01a17e79')
-SOURCES=['Sources/M1Launcher/MetalCanvas.swift','Sources/M1Launcher/ArtworkCache.swift','Sources/M1Launcher/LibraryEntryPresentation.swift','Sources/M1Launcher/ArtworkIndexStore.swift','Sources/M1Launcher/CanvasShellRenderer.swift','Sources/M1Launcher/LibraryGridSurface.swift','Sources/M1Launcher/GameArtwork.swift','Sources/M1Launcher/CanvasDrawing.swift','Sources/M1Launcher/ControllerNavigation.swift','Synthetic/ReadyCanvasSectionsProbe.swift']
+SOURCES=['Sources/M1Launcher/ReadyShellModel.swift','Sources/M1Launcher/MetalCanvas.swift','Sources/M1Launcher/ArtworkCache.swift','Sources/M1Launcher/LibraryEntryPresentation.swift','Sources/M1Launcher/ArtworkIndexStore.swift','Sources/M1Launcher/CanvasShellRenderer.swift','Sources/M1Launcher/LibraryGridSurface.swift','Sources/M1Launcher/GameArtwork.swift','Sources/M1Launcher/CanvasDrawing.swift','Sources/M1Launcher/ControllerNavigation.swift','Synthetic/ReadyCanvasSectionsProbe.swift']
 def sha(path):
     with Path(path).open('rb')as f:return hashlib.file_digest(f,'sha256').hexdigest()
 def main():
@@ -50,5 +50,5 @@ def main():
     if report.get('passed')is not True or not all(report['checks'].values()):raise RuntimeError('Canvas section checks did not pass')
     report.update(sourceHashes=source_hashes,command=command,coreArchive=str(archive),coreArchiveSHA256=archive_hash,coreModuleSHA256=module_hashes,scriptSHA256=sha(Path(__file__)),binarySHA256=sha(run/'ReadyCanvasSectionsProbe'))
     path=run/'report.json';path.write_text(json.dumps(report,indent=2)+'\n');path.chmod(0o600)
-    print(json.dumps({'passed':True,'count':report['count'],'report':str(path),'reportSHA256':sha(path),'canvasSHA256':source_hashes[SOURCES[0]]}))
+    print(json.dumps({'passed':True,'count':report['count'],'report':str(path),'reportSHA256':sha(path),'canvasSHA256':source_hashes['Sources/M1Launcher/MetalCanvas.swift']}))
 if __name__=='__main__':main()

@@ -56,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     presenter.onNeedsLanding = { [weak self] in self?.pageNeedsLanding() }
     presenter.canNavigate = { [weak self] in
       guard let self else { return false }
-      return !self.maintenanceInProgress && self.session?.running != true && self.pendingLaunch == nil
+      return !self.maintenanceInProgress && self.canNavigateInterfaceWhilePlaying && self.pendingLaunch == nil
     }
     return presenter
   }()
@@ -333,6 +333,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       }
     }
     session.onFinish = { [weak self] message in
+      self?.canvas.runningGames=[]
       self?.steamNativeGame?.stop(); self?.steamNativeGame = nil
       self?.restoreLauncher(message)
       self?.dialogs.attach()
@@ -407,9 +408,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     switch action {
     case .game(let id): MainActor.assumeIsolated { showGameDetails(id: id) }
     case .gameOptions(let id): gameOptions(id)
-    case .librarySection(let other): canvas.showOtherContent=other;canvas.selected=0;canvas.refresh()
+    case .resumeGame(let id):
+      guard session.running,canvas.runningGames.contains(where:{$0.id==id}) else{return}
+      session.resume()
+    case .librarySection: canvas.showOtherContent=false;canvas.selected=0;canvas.refresh()
     case .store(let store):
-      navigateToLibrary(store: store)
+      navigateToLibrary()
     case .profiles: profiles()
     case .importGame: importGame()
     case .settings: settings()
@@ -458,7 +462,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       }
       try persist()
     } catch {
-      canvas.message = error.localizedDescription
+      canvas.showErrorNotice(error.localizedDescription)
       canvas.refresh()
     }
   }
@@ -522,7 +526,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
   }
   @objc func profiles() {
-    guard authenticationSession == nil, !session.running, pendingLaunch == nil,
+    guard authenticationSession == nil, canNavigateInterfaceWhilePlaying, pendingLaunch == nil,
       !maintenanceInProgress
     else {
       showError(
@@ -603,7 +607,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
   }
   func gameOptions(_ id: String, advanced: Bool = true) {
-    guard !maintenanceInProgress else { return }
+    guard !maintenanceInProgress,session?.running != true else { return }
     guard let index = state.games.firstIndex(where: { $0.id == id }) else { return }
     var game = state.configured(state.games[index])
     let preferenceKey = GamePreferences.key(profile: state.activeProfile, gameID: game.id)
@@ -750,7 +754,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
           MainActor.assumeIsolated {
             if self.hostedPresentation?.active != true { self.finishLaunchSplash() }
           }
-          self.canvas.message = "In esecuzione · " + game.title
+          self.canvas.runningGames=[ReadyShellRunningGame(id:game.id,title:LibraryEntryPresentation.title(game))]
+          self.canvas.showStatus("")
           // SessionManager already detached the canvas. Do not redraw it here.
           if let i = self.state.games.firstIndex(where: { $0.id == game.id }) {
             self.state.games[i].lastPlayed = Date()
@@ -806,7 +811,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
   }
   @objc func settings() {
-    guard !maintenanceInProgress, session?.running != true, pendingLaunch == nil else { return }
+    guard !maintenanceInProgress, canNavigateInterfaceWhilePlaying, pendingLaunch == nil else { return }
     beginSettingsSection(.overview)
     let cfg = activeRuntime()
     let detail =
@@ -827,7 +832,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     presentDialog(
       title: "Account degli store",
       message:
-        "Gli accessi appartengono solo al profilo selezionato e sono conservati nel Portachiavi.",
+        "Gli accessi appartengono solo al profilo selezionato. Il metodo di conservazione resta quello configurato per ciascuno store.",
       content: pick,
       actions: [
         .init("Accedi", role: .primary), .init("Sincronizza libreria"),
@@ -1041,7 +1046,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
           self.state.games.append(game)
         }
       }
-      self.canvas.message = "\(incoming.count) giochi sincronizzati da \(store.title)"
+      self.canvas.showStatus("")
       try? self.persist()
     }
     if store == .steam {
@@ -1060,6 +1065,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       var stick = ControllerNavigation.AxisGate()
       let route: (ControllerNavigation.Action) -> Void = { [weak self] action in
         guard let self else { return }
+        if self.gameInterfaceVisible {
+          MainActor.assumeIsolated { _ = self.handleGameInterfaceController(action) };return
+        }
         if self.dialogs.isPresenting {
           guard !self.session.running, NSApp.isActive else { return }
           self.dialogs.handleController(action)
@@ -1105,19 +1113,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
           self.canvas.refresh()
         case .profiles: self.profiles()
         case .previousStore, .nextStore:
-          let stores: [Store?] = [nil] + Store.allCases.map { Optional($0) }
-          let current = stores.firstIndex { $0 == self.canvas.filter } ?? 0
-          let delta = action == .previousStore ? -1 : 1
-          self.canvas.filter =
-            stores[
-              ControllerNavigation.wrappedIndex(
-                current, count: stores.count, delta: delta)]
-          self.canvas.selected = 0
+          // The unified library has no hidden store filter to cycle through.
+          self.canvas.filter=nil
           self.canvas.refresh()
         }
       }
       gamepad.dpad.valueChangedHandler = { _, x, y in
-        guard !parentSession.running else { return }
+        guard !parentSession.running || self.gameInterfaceVisible else { return }
         ControllerNavigation.enqueue {
           if let direction = dpad.update(x: x, y: y, now: ProcessInfo.processInfo.systemUptime) {
             route(.move(direction))
@@ -1125,7 +1127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
       }
       gamepad.leftThumbstick.valueChangedHandler = { _, x, y in
-        guard !parentSession.running else { return }
+        guard !parentSession.running || self.gameInterfaceVisible else { return }
         ControllerNavigation.enqueue {
           if let direction = stick.update(x: x, y: y, now: ProcessInfo.processInfo.systemUptime) {
             route(.move(direction))
@@ -1133,23 +1135,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
       }
       gamepad.buttonA.pressedChangedHandler = { _, _, pressed in
-        guard !parentSession.running else { return }
+        guard !parentSession.running || self.gameInterfaceVisible else { return }
         if pressed { ControllerNavigation.enqueue { route(.activate) } }
       }
       gamepad.buttonB.pressedChangedHandler = { _, _, pressed in
-        guard !parentSession.running else { return }
+        guard !parentSession.running || self.gameInterfaceVisible else { return }
         if pressed { ControllerNavigation.enqueue { route(.cancel) } }
       }
       gamepad.buttonMenu.pressedChangedHandler = { _, _, pressed in
-        guard !parentSession.running else { return }
+        if parentSession.running {if pressed,NSApp.isActive,self.window.isKeyWindow,self.window.isOnActiveSpace{ControllerNavigation.enqueue{parentSession.overlayToggle()}};return}
         if pressed { ControllerNavigation.enqueue { route(.profiles) } }
       }
       gamepad.leftShoulder.pressedChangedHandler = { _, _, pressed in
-        guard !parentSession.running else { return }
+        guard !parentSession.running || self.gameInterfaceVisible else { return }
         if pressed { ControllerNavigation.enqueue { route(.previousStore) } }
       }
       gamepad.rightShoulder.pressedChangedHandler = { _, _, pressed in
-        guard !parentSession.running else { return }
+        guard !parentSession.running || self.gameInterfaceVisible else { return }
         if pressed { ControllerNavigation.enqueue { route(.nextStore) } }
       }
     }
@@ -1161,7 +1163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
   func showError(_ error: Error) {
     // A background store callback must not recreate a composited dialog or steal
     // focus while the game owns presentation and the launcher has released its GPU work.
-    if session?.running == true {
+    if session?.running == true && !gameInterfaceVisible {
       let message = error.localizedDescription
       if !backgroundNotices.contains(message) {
         backgroundNotices.append(message)
@@ -1169,6 +1171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
       }
       return
     }
+    canvas?.showErrorNotice(error.localizedDescription)
     if let splash = launchSplash {
       MainActor.assumeIsolated { resumeLaunchSplash() }
       splash.showError(error.localizedDescription)

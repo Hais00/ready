@@ -47,6 +47,7 @@ private final class OffscreenCanvasWindow: NSWindow {
       switch action {
       case .game(let id):return "game:"+id
       case .gameOptions(let id):return "options:"+id
+      case .resumeGame(let id):return "resume:"+id
       case .librarySection(let flag):return "section:"+String(flag)
       case .store(let store):return "store:"+(store?.rawValue ?? "all")
       case .profiles:return "profiles"
@@ -60,8 +61,44 @@ private final class OffscreenCanvasWindow: NSWindow {
       }
     }
     var checks=[String:Bool]();let library=try preview("library")
+    try require(!canvas.interactionSnapshot.hits.contains{$0.id=="toolbar.refresh" || $0.id.hasPrefix("nav.store.") || $0.id.hasPrefix("library.section.")},"ObsoleteStoreOrContentOrRefreshTargetsRemain")
+    checks["unifiedShellOmitsStoreSelectorsContentTabsAndRefresh"]=true
+    var extraGame=Game(id:"other-store",store:.epic,storeID:"fixture-c",title:"Fixture C")
+    var dlc=Game(id:"dlc",store:.steam,storeID:"fixture-dlc",title:"Fixture DLC");dlc.metadata=["libraryKind":.string("dlc")]
+    canvas.state.games += [extraGame,dlc];canvas.query="Fixture";canvas.filter = .steam
+    try require(canvas.visibleGames.count==3 && !canvas.visibleGames.contains{$0.id=="dlc"},"UnifiedGameOnlyFilterBroken")
+    canvas.query="DLC";try require(canvas.visibleGames.isEmpty,"SearchReintroducesDLC")
+    canvas.query="Fixture";canvas.state.games.removeAll{$0.id=="dlc" || $0.id=="other-store"}
+    checks["allStoreGamesStayUnifiedAndSearchExcludesOtherContent"]=true
+    canvas.runningGames=[ReadyShellRunningGame(id:"section-a",title:"Fixture A")];_ = try preview("running-game-dock")
+    try require(canvas.interactionSnapshot.hits.contains{if case .resumeGame("section-a")=$0.action{return true};return false},"ActualRunningGameMissingFromDock")
+    let model=canvas.shellSnapshot
+    try require(model.activeGameIds==["section-a"] && model.resumeActionId=="resume:section-a" && model.boundedJSONData() != nil,"InjectedShellModelMismatch")
+    canvas.runningGames=[];_ = try preview("no-running-game-dock")
+    try require(!canvas.interactionSnapshot.hits.contains{if case .resumeGame=$0.action{return true};return false},"ClosedGameRetainedInDock")
+    checks["runningDockUsesExplicitLifecycleAndBoundedMetadataSnapshot"]=true
+    canvas.runningGames=[ReadyShellRunningGame(id:"section-a",title:"Fixture A")]
+    canvas.gameInterfaceMode=true;canvas.currentGameID="section-a";canvas.currentGameName="Fixture A";canvas.section = .game
+    let gameInterface=try preview("actual-game-interface")
+    try require(gameInterface.colorAt(x:620,y:380)!.alphaComponent==0,"GameInterfacePaintedOverLiveGameCenter")
+    try require(!canvas.interactionSnapshot.hits.contains{isGame($0.action)} && canvas.interactionSnapshot.hits.contains{if case .resumeGame("section-a")=$0.action{return true};return false},"GameInterfaceDidNotReuseActualDock")
+    try require(canvas.shellSnapshot.title=="Fixture A","GameInterfaceHeaderLostActualGameName")
+    checks["actualGameInterfaceUsesTransparentCenterAndSameDock"]=true
+    canvas.section = .library
+    let gameLibrary=try preview("actual-game-interface-library")
+    try require(canvas.interactionSnapshot.hits.contains{isGame($0.action)} && gameLibrary.pixelsWide==1240 && gameLibrary.pixelsHigh==760,"GameInterfaceLibraryDidNotUseActualGridAtWindowResolution")
+    checks["actualGameInterfaceLibraryUsesRealGridAndResolution"]=true
+    canvas.gameInterfaceMode=false;canvas.currentGameID=nil;canvas.currentGameName=nil;canvas.runningGames=[]
+    canvas.showStatus("123 contenuti sincronizzati da Steam");let normalStatus=try preview("normal-status-suppressed")
+    canvas.showStatus("");let quietStatus=try preview("quiet-status")
+    func footerBytes(_ image:NSBitmapImageRep)->Data {let crop=image.cgImage!.cropping(to:CGRect(x:112,y:705,width:1092,height:55))!;let raster=CanvasRaster(width:1092,height:55)!;raster.context.draw(crop,in:CGRect(x:0,y:0,width:1092,height:55));return Data(bytes:raster.data,count:raster.bytesPerRow*raster.height)}
+    try require(footerBytes(normalStatus)==footerBytes(quietStatus),"InformationalFooterStillDrawn")
+    canvas.showErrorNotice("Errore di prova");let errorStatus=try preview("error-status")
+    try require(footerBytes(errorStatus) != footerBytes(quietStatus),"ErrorFooterNotVisible")
+    canvas.showStatus("");checks["footerOnlyRendersErrors"]=true
+    _ = try preview("library-reset")
     let original=canvas.interactionSnapshot.hits
-    let inactiveRGB=rgb(library,original.first{$0.id=="nav.home"}!)
+    let inactiveRGB=rgb(library,original.first{$0.id=="nav.settings"}!)
     let gameHit=original.first{if case .game=$0.action{return true};return false}!
     let gamePoint=CGPoint(x:gameHit.rect.midX,y:gameHit.rect.midY)
     canvas.mouseDown(with:mouse(.leftMouseDown,gamePoint))
@@ -69,7 +106,7 @@ private final class OffscreenCanvasWindow: NSWindow {
     canvas.mouseUp(with:mouse(.leftMouseUp,gamePoint))
     try require(actions.isEmpty,"StaleLibraryPressActivatedAfterPageChange");checks["pageChangeCancelsInFlightGamePress"]=true
     var firstPage:Data?
-    let pages:[(CanvasSection,String,String?)]=[(.settings,"settings","nav.settings"),(.steamAccount,"steamAccount","toolbar.steam.account"),(.downloads,"downloads","nav.downloads"),(.profiles,"profiles","nav.profiles"),(.utility,"utility",nil)]
+    let pages:[(CanvasSection,String,String?)]=[(.settings,"settings","nav.settings"),(.steamAccount,"steamAccount","nav.friends"),(.downloads,"downloads","nav.downloads"),(.profiles,"profiles",nil),(.utility,"utility",nil)]
     for(section,name,active)in pages {
       canvas.section = .library;canvas.selected=1;canvas.section=section;canvas.selected=0
       let image=try preview(name);let hits=canvas.interactionSnapshot.hits
@@ -101,10 +138,10 @@ private final class OffscreenCanvasWindow: NSWindow {
       key(48);key(36)
       try require(actions.count==before+1 && !isGame(actions.last!),"PageTabNavigationCannotActivate:"+name)
       key(48,.shift);key(49);try require(actions.count==before+2 && !isGame(actions.last!),"PageSpaceCannotActivateNavigation:"+name)
-      let refresh=hits.first{$0.id=="toolbar.refresh"}!,point=CGPoint(x:refresh.rect.midX,y:refresh.rect.midY)
-      canvas.mouseDown(with:mouse(.leftMouseDown,point));canvas.mouseUp(with:mouse(.leftMouseUp,point));if case .refresh=actions.last! {}else{throw NSError(domain:"RefreshMissing",code:1)}
+      let account=hits.first{$0.id=="toolbar.steam.account"}!,point=CGPoint(x:account.rect.midX,y:account.rect.midY)
+      canvas.mouseDown(with:mouse(.leftMouseDown,point));canvas.mouseUp(with:mouse(.leftMouseUp,point));if case .steamAccount=actions.last! {}else{throw NSError(domain:"AccountMissing",code:1)}
       // Pixel-check active fills outside glyphs, using the same production scene.
-      for hit in hits where hit.id=="nav.home"||hit.id.hasPrefix("nav.store.")||["nav.settings","nav.profiles","nav.downloads","toolbar.steam.account"].contains(hit.id) {
+      for hit in hits where hit.id=="nav.library"||["nav.settings","nav.downloads","nav.friends"].contains(hit.id) {
         let actual=rgb(image,hit)
         let matchesInactive=zip(actual,inactiveRGB).allSatisfy{abs($0.0-$0.1)<=2}
         try require(hit.id==active ? (!matchesInactive && actual[1]>actual[0]+15):matchesInactive,"WrongSectionHighlight:"+name+":"+hit.id+":"+String(describing:actual))
@@ -113,7 +150,7 @@ private final class OffscreenCanvasWindow: NSWindow {
       // Clear focus through a real page transition before the next nil-focus test.
       canvas.section = .library
     }
-    canvas.section = .utility;canvas.filter=nil;let utility=try preview("utility-no-filter");let home=canvas.interactionSnapshot.hits.first{$0.id=="nav.home"}!
+    canvas.section = .utility;canvas.filter=nil;let utility=try preview("utility-no-filter");let home=canvas.interactionSnapshot.hits.first{$0.id=="nav.library"}!
     try require(zip(rgb(utility,home),inactiveRGB).allSatisfy{abs($0.0-$0.1)<=2},"UtilityHomeStillActive");checks["utilityNeverHighlightsLibraryEvenWithoutFilter"]=true
     canvas.section = .library;canvas.filter = .steam;canvas.selected=1;_ = try preview("library-return")
     try require(canvas.interactionSnapshot.hits.contains{isGame($0.action)},"LibraryTargetsNotRestored");let before=actions.count;key(36);try require(actions.count==before+1&&isGame(actions.last!),"LibraryReturnKeyNoLongerLaunches")

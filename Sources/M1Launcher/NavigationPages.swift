@@ -18,13 +18,14 @@ enum SettingsPageSection: String {
 
 extension AppDelegate {
   func beginPage(_ section: CanvasSection) {
-    guard canvas != nil else { return }
+    guard canvas != nil,canNavigateInterfaceWhilePlaying else { return }
     let previousTransition = pageNavigationTransition
     pageNavigationTransition = true
     pages.cancelCurrent()
     if authenticationSession != nil { cancelAuthentication() }
     pageNavigationTransition = previousTransition
     canvas.section = section
+    canvas.pageTitle = section == .steamAccount ? "Amici" : nil
     let back: () -> Void = { [weak self] in self?.navigateToLibrary() }
     switch section {
     case .settings:
@@ -32,7 +33,7 @@ extension AppDelegate {
         ReadyPageTab(id: item.rawValue, title: item.title, action: { [weak self] in self?.openSettingsSection(item) })
       }, selected: settingsPageSection.rawValue, onBack: back)
     case .steamAccount:
-      pages.configureNavigation(title: "Steam", tabs: [
+      pages.configureNavigation(title: "Amici", tabs: [
         ReadyPageTab(id: "library", title: "Libreria", action: { [weak self] in self?.navigateToLibrary(store: .steam) }),
         ReadyPageTab(id: "account", title: "Account e amici", action: { [weak self] in MainActor.assumeIsolated { self?.showSteamAccount() } }),
         ReadyPageTab(id: "downloads", title: "Download", action: { [weak self] in MainActor.assumeIsolated { self?.showSteamDownloads() } }),
@@ -43,7 +44,7 @@ extension AppDelegate {
       pages.configureNavigation(title: "Profili", tabs: [], selected: nil, onBack: back)
     case .utility:
       pages.configureNavigation(title: "Libreria", tabs: [], selected: nil, onBack: back)
-    case .library: break
+    case .library,.game: break
     }
     canvas.refresh()
   }
@@ -52,7 +53,7 @@ extension AppDelegate {
     beginPage(.settings)
   }
   func openSettingsSection(_ section: SettingsPageSection) {
-    guard !maintenanceInProgress, session?.running != true, pendingLaunch == nil else { return }
+    guard !maintenanceInProgress, canNavigateInterfaceWhilePlaying, pendingLaunch == nil else { return }
     switch section {
     case .overview: settings()
     case .accounts: connectStore()
@@ -63,20 +64,21 @@ extension AppDelegate {
     }
   }
   func navigateToLibrary(store: Store? = nil, preservingSelection: Bool = false) {
-    guard canvas != nil else { return }
+    guard canvas != nil,canNavigateInterfaceWhilePlaying else { return }
     pageNavigationTransition = true
     pages.cancelCurrent()
     _ = pages.detachForSession()
     cancelAuthentication()
     pageNavigationTransition = false
     canvas.section = .library
-    canvas.filter = store
+    canvas.filter = nil
+    canvas.pageTitle=nil
     if !preservingSelection { canvas.selected = 0 }
     window?.makeFirstResponder(canvas)
     canvas.refresh()
   }
   func pageNeedsLanding() {
-    guard !pageNavigationTransition, canvas != nil, session?.running != true,
+    guard !pageNavigationTransition, canvas != nil, canNavigateInterfaceWhilePlaying,
       !maintenanceInProgress, !pages.isPresenting else { return }
     if canvas.section == .settings { settings() }
     else { navigateToLibrary(store: canvas.filter, preservingSelection: true) }

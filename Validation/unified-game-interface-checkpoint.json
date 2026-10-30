@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "dateUTC": "2026-10-30T18:01:43.838912+00:00",
+  "behavior": "Actual Ready interface in same hosted game window. One bounded own-window snapshot, software Gaussian14 and output black50%; frozen background while UI visible. No continuous live blur or capture stream. Clear image and release UI graphics on close.",
+  "sourceSHA256": {
+    "Sources/M1Launcher/GameBackdropSnapshot.swift": "0fc6df907b230782e1acc63709b695ce7d30df762b298cb7004d5124f0094013",
+    "Sources/M1Launcher/HostedGamePresentation.swift": "ee84c1910f70be258e3787898491134f807e52b914d50f505c9de08b476d4014",
+    "Sources/M1Launcher/HostedGameOverlay.swift": "73296dd1dd61dca703801048d3dfe98f77fc7fbf1f15c1e81cfea92007841c5e",
+    "Sources/M1Launcher/GameInterface.swift": "dcc69848183968adbe6b6862175e113236bcf80508b064ac567fdeb7559f5979",
+    "Sources/M1Launcher/MetalCanvas.swift": "d0aa1a79e710b39dcb5140bc9a707aac6dcf064aa31b95388e7c0f34443c30c4"
+  },
+  "verification": {
+    "hostedLifecycle": {
+      "passed": true,
+      "reportSHA256": "3e5568163de0e185220f28648dfaa0dc2e74cdd26d37276f53f9bdd9200c3d00",
+      "retainedReport": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/hosted-fullscreen-64mo56gn/report.json",
+      "checkCount": 119
+    },
+    "hostedShortcut": {
+      "passed": true,
+      "reportSHA256": "61b7e3543ed0363f76849cde8da29d3b20e13f02c2ed9fed5faec8b7c070c7ce",
+      "retainedReport": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/hosted-overlay-k40lctni/report.json",
+      "checkCount": 28
+    },
+    "backdropSoftwareFilter": {
+      "passed": true,
+      "reportSHA256": "4f684e6ec49dcc077a6aebfc7f5c8eec577811301a85c7bb869f51264d1d56cc",
+      "retainedReport": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/backdrop-cpu-2iwhxm0r/report.json",
+      "checkCount": null,
+      "outputOpaque": true,
+      "postGaussianBlackAlpha": 0.5,
+      "CPUFilterMilliseconds": 54.66103553771973,
+      "timingScope": "one procedural 640x400 CPU filter; not a game or GPU benchmark"
+    },
+    "ownRemoteMetalWindowSnapshot": {
+      "passed": true,
+      "reportSHA256": "97ad1c43732641ac6db28d18bc4717b61772cc028e242616d8606ae48b122db1",
+      "retainedReport": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/own-window-snapshot-o7xriwnd/report.json",
+      "checkCount": null
+    },
+    "realCanvasSections": {
+      "passed": true,
+      "reportSHA256": "74a8f7e163ccd0a4c58866b1da9279120aaf912107a2ab0e4cb96b2978ec20e2",
+      "retainedReport": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/canvas-sections-muxt___f/report.json",
+      "checkCount": 24
+    },
+    "realLibraryDetail": {
+      "passed": true,
+      "reportSHA256": "cc23d6c0572318d2de1c4b6806dd94c758a8504aa7b1908f6364dcb48f447271",
+      "retainedReport": "/Volumes/Dati APFS/Codex-ready-01a17e79/tests/library-detail-ui-8f4nwhds/report.json",
+      "checkCount": 52
+    }
+  },
+  "releaseBuild": "Scripts/build_app.sh passed, exact compiled inputs verified by frontend snapshot v2 and strict code signatures",
+  "realGameUserReport": "User confirmed unified interface works before this static-background optimization.",
+  "limits": [
+    "This checkpoint has no new commercial-game GPU/FPS benchmark or direct-display observation.",
+    "Static background freezes its displayed image while UI is open; game process remains open.",
+    "Actual UI still incurs composition cost while visible; zero GPU overhead is not claimed.",
+    "Own-window remote Metal capture proof uses an artificial two-process fixture, not Cyberpunk.",
+    "No physical controller validation in this checkpoint."
+  ],
+  "privacy": "Production capture matches only current-process Ready PID/window ID, memory-only; no desktop enumeration, permission request, stream or persistent screenshot."
+}

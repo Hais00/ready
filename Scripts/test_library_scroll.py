@@ -22,7 +22,7 @@ def main():
    shutil.copyfile(p,target/name);(target/name).chmod(0o600);copied+=s.st_size
  config={'libraryCopy':str(COPY),'librarySHA256':COPY_SHA,'artworkCache':str(cache),'output':str(run),'expectedCount':495}
  (run/'config.json').write_text(json.dumps(config)+'\n');(run/'config.json').chmod(0o600)
- names=['CanvasDrawing.swift','ControllerNavigation.swift','LibraryEntryPresentation.swift','GameArtwork.swift','ArtworkIndexStore.swift','ArtworkCache.swift','CanvasShellRenderer.swift','LibraryGridSurface.swift','MetalCanvas.swift']
+ names=['CanvasDrawing.swift','ControllerNavigation.swift','LibraryEntryPresentation.swift','GameArtwork.swift','ArtworkIndexStore.swift','ArtworkCache.swift','CanvasShellRenderer.swift','LibraryGridSurface.swift','ReadyShellModel.swift','MetalCanvas.swift']
  core=sorted((ROOT/'Sources/LauncherCore').glob('*.swift'));files=[*[ROOT/'Sources/M1Launcher'/n for n in names],ROOT/'Synthetic/ReadyLibraryScrollProbe.swift',pathlib.Path(__file__).resolve()]
  before={str(p.relative_to(ROOT)):sha(p)for p in core+files}
  env={k:v for k,v in os.environ.items()if k in ['PATH','HOME','USER','LOGNAME','LANG','LC_ALL','DEVELOPER_DIR']};env.update(TMPDIR=str(WORK/'tmp')+'/',CLANG_MODULE_CACHE_PATH=str(WORK/'cache/library-scroll-swift'))

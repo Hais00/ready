@@ -11,10 +11,12 @@ protocol ReadyDialogContentSizing{var maximumViewportHeight:CGFloat{get}}
 extension Notification.Name{static let readyDialogContentLayoutChanged=Notification.Name("ready.dialog.content-layout-changed")}
 enum ReadyDialogRole{case normal,primary,cancel,destructive}
 struct ReadyDialogAction{var title:String;var role:ReadyDialogRole;var enabled:Bool}
-final class TestSession{var running=false}
+final class TestSession{var running=false;var resumes=0;var quits=0;func resume(){resumes+=1};func quit(){quits+=1}}
 @MainActor final class TestDownloads{var profile=UUID();var snapshot=[SteamDownloadJob]();func control(_ id:String,action:String){}}
 final class AppDelegate:NSObject{
- var maintenanceInProgress=false;var session:TestSession?;var pendingLaunch:UUID?;var state=LibraryState.initial();var canvas:MetalCanvas!;var window:NSWindow!
+ var maintenanceInProgress=false;var session:TestSession!=TestSession();var pendingLaunch:UUID?;var state=LibraryState.initial();var canvas:MetalCanvas!;var window:NSWindow!
+ var gameInterfaceVisible=false;var canNavigateInterfaceWhilePlaying:Bool{!session.running || gameInterfaceVisible}
+ var installationPickerView:NSView?;var installationPickerID:String?
  var gameDetailView:GameDetailView?;var gameDetailID:String?;var steamDownloads:TestDownloads?
  var plays=[String](),installs=[String]()
  lazy var pages=ReadyPagePresenter(window:{[weak self]in self?.window},host:{[weak self]in self?.canvas})
@@ -24,13 +26,14 @@ final class AppDelegate:NSObject{
  func installGame(index:Int,variant:GameVariant,showDownloads:Bool=true){installs.append(state.games[index].id+":"+variant.id+":"+String(showDownloads))}
  func gameOptions(_ id:String,advanced:Bool=true){}
  func requestSteamGameDetails(gameID:String,refresh:Bool=false,completion:@escaping([String:Any])->Void){}
+ func refreshGameStorageDetails(){}
 }
 '''
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--core-root',type=pathlib.Path);args=parser.parse_args()
  run=pathlib.Path(tempfile.mkdtemp(prefix='library-detail-ui-',dir=WORK/'tests'));run.chmod(0o700)
- names=['CanvasDrawing.swift','ControllerNavigation.swift','LibraryEntryPresentation.swift','ArtworkIndexStore.swift','CanvasShellRenderer.swift','LibraryGridSurface.swift','GameArtwork.swift','ArtworkCache.swift','MetalCanvas.swift','ReadyPagePresenter.swift','GameDetailView.swift','GameDetailUI.swift']
+ names=['ReadyShellModel.swift','CanvasDrawing.swift','ControllerNavigation.swift','LibraryEntryPresentation.swift','ArtworkIndexStore.swift','CanvasShellRenderer.swift','LibraryGridSurface.swift','GameArtwork.swift','ArtworkCache.swift','MetalCanvas.swift','ReadyPagePresenter.swift','GameStorageDisplayCache.swift','GameDetailView.swift','GameDetailUI.swift']
  files=[*[ROOT/'Sources/M1Launcher'/n for n in names],ROOT/'Synthetic/ReadyLibraryDetailProbe.swift',pathlib.Path(__file__).resolve()]
  core=sorted((ROOT/'Sources/LauncherCore').glob('*.swift'));before={str(p.relative_to(ROOT)):sha(p)for p in files+core}
  jobs=(ROOT/'Sources/M1Launcher/SteamDownloads.swift').read_text().split('@MainActor\nfinal class SteamDownloads',1)[0]

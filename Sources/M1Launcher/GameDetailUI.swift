@@ -6,7 +6,7 @@ extension GameDetailView:ReadyPageTransparentContent {}
 
 extension AppDelegate {
   @MainActor func showGameDetails(id:String){
-    guard !maintenanceInProgress,session?.running != true,pendingLaunch==nil,
+    guard !maintenanceInProgress,canNavigateInterfaceWhilePlaying,pendingLaunch==nil,
       let stored=state.games.first(where:{$0.id==id}),stored.profileIDs==nil || stored.profileIDs!.contains(state.activeProfile)else{return}
     installationPickerView=nil;installationPickerID=nil
     let game=state.configured(stored),profile=state.activeProfile
@@ -16,6 +16,10 @@ extension AppDelegate {
     view.onBack={[weak self]in self?.navigateToLibrary(store:self?.canvas.filter,preservingSelection:true)}
     view.onVariantChanged={[weak self] _ in self?.refreshGameStorageDetails()}
     view.onPlay={[weak self,weak view] variant in
+      if let self,self.session.running {
+        guard self.gameInterfaceVisible,self.gameDetailView===view,id==self.canvas.currentGameID else{return}
+        self.session.resume();return
+      }
       guard let self,let view,self.gameDetailView===view,self.state.activeProfile==profile,
         !self.maintenanceInProgress,self.session?.running != true,self.pendingLaunch==nil,
         let stored=self.state.games.first(where:{$0.id==id}),stored.profileIDs==nil || stored.profileIDs!.contains(profile)else{return}
@@ -34,6 +38,9 @@ extension AppDelegate {
     }
     view.onOptions={[weak self,weak view]in
       guard let self,let view,self.gameDetailView===view,self.state.activeProfile==profile else{return}
+      if self.session.running {
+        guard self.gameInterfaceVisible,id==self.canvas.currentGameID else{return};self.session.quit();return
+      }
       self.gameOptions(id)
     }
     view.onDownloadControl={[weak self,weak view]jobID,action in
@@ -50,6 +57,7 @@ extension AppDelegate {
       guard let self,self.gameDetailView===view else{return};self.gameDetailView=nil;self.gameDetailID=nil
     }){_ in}
     view.update(game:game,jobs:steamDownloads?.snapshot ?? [])
+    view.protectDuringGame(runningGameID:session.running ? canvas.currentGameID:nil)
     refreshGameStorageDetails()
     canvas.artworkCache.prefetch(game:game)
     if game.store == .steam {
@@ -65,11 +73,12 @@ extension AppDelegate {
     }
   }
   @MainActor func refreshGameDetails(){
-    guard let view=gameDetailView,let id=gameDetailID,session?.running != true,pendingLaunch==nil else{return}
+    guard let view=gameDetailView,let id=gameDetailID,canNavigateInterfaceWhilePlaying,pendingLaunch==nil else{return}
     guard view.profile==state.activeProfile,let game=state.games.first(where:{$0.id==id}),game.profileIDs==nil || game.profileIDs!.contains(state.activeProfile)else{
       navigateToLibrary(store:canvas.filter,preservingSelection:true);return
     }
     view.update(game:state.configured(game),jobs:steamDownloads?.snapshot ?? [])
+    view.protectDuringGame(runningGameID:session.running ? canvas.currentGameID:nil)
     if let variant=view.selectedVariant{
       let info=GameStorageDisplayCache.info(metadata:game.metadata ?? [:],platform:variant.platform)
       if !variant.installed{view.updateStorage(variantID:variant.id,installedBytes:info.installedBytes,downloadBytes:info.downloadBytes,requiredBytes:info.requiredBytes)}

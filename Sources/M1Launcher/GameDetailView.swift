@@ -58,6 +58,8 @@ private final class GameHeroView:NSView {
   private let artwork:ArtworkCache
   let profile:UUID
   private var game:Game
+  private var runningGameID:String?
+  func protectDuringGame(runningGameID:String?){self.runningGameID=runningGameID;render()}
   private var jobs=[SteamDownloadJob]()
   private var selectedID:String?
   private var userSelectedID:String?
@@ -241,7 +243,14 @@ private final class GameHeroView:NSView {
     play.title=installed ? "Gioca":job==nil ? "Installa":["paused","interrupted"].contains(job!.state) ? "Riprendi":["failed","retry_wait"].contains(job!.state) ? "Riprova":"Download in corso"
     play.isEnabled=variant != nil && (installed || job==nil || ["paused","interrupted","failed","retry_wait"].contains(job!.state))
     if external != nil{play.title="Download in corso";play.isEnabled=false}
-    options.isEnabled=variant != nil
+    options.isEnabled=variant != nil;options.title="Opzioni"
+    if let runningGameID {
+      picker.isEnabled=false
+      play.title=game.id==runningGameID ? "Riprendi gioco":"Altro gioco in esecuzione"
+      play.isEnabled=game.id==runningGameID
+      options.title=game.id==runningGameID ? "Chiudi gioco":"Opzioni"
+      options.isEnabled=game.id==runningGameID
+    }
     progress.isHidden=job==nil && external==nil;control.isHidden=job==nil
     if let job{
       let names=["queued":"In coda","preparing":"Preparazione","running":"Download in corso","downloading":"Download in corso","verifying":"Verifica dei file","paused":"In pausa","interrupted":"Interrotto","failed":"Download non riuscito","retry_wait":"Attesa della rete","authorization_required":"Accedi a Steam per continuare"]
