@@ -144,7 +144,8 @@ private final class OffscreenCanvasWindow: NSWindow {
       for hit in hits where hit.id=="nav.library"||["nav.settings","nav.downloads","nav.friends"].contains(hit.id) {
         let actual=rgb(image,hit)
         let matchesInactive=zip(actual,inactiveRGB).allSatisfy{abs($0.0-$0.1)<=2}
-        try require(hit.id==active ? (!matchesInactive && actual[1]>actual[0]+15):matchesInactive,"WrongSectionHighlight:"+name+":"+hit.id+":"+String(describing:actual))
+        let neutral=abs(actual[0]-actual[1])<=2 && abs(actual[1]-actual[2])<=2
+        try require(hit.id==active ? (neutral && !matchesInactive && actual[0]>inactiveRGB[0]+10):matchesInactive,"WrongSectionHighlight:"+name+":"+hit.id+":"+String(describing:actual))
       }
       checks[name+"ShellBodyHitsKeyboardAndHighlights"]=true
       // Clear focus through a real page transition before the next nil-focus test.

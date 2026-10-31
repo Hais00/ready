@@ -3,6 +3,10 @@ import AppKit
 import CoreGraphics
 
 enum CanvasGeometry {
+  static func drawUpright(_ image:CGImage,in rect:CGRect,context:CGContext){
+    context.saveGState();context.translateBy(x:rect.minX,y:rect.maxY);context.scaleBy(x:1,y:-1)
+    context.draw(image,in:CGRect(origin:.zero,size:rect.size));context.restoreGState()
+  }
   static func aspectFit(_ size: CGSize, in rect: CGRect) -> CGRect {
     scaled(size, in: rect, fill: false)
   }

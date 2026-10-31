@@ -11,7 +11,8 @@ struct ReadyPageTab {
   init(id:String,title:String,action:@escaping()->Void){self.id=id;self.title=title;self.action=action}
 }
 private func pageColor(_ hex:Int)->NSColor {
-  NSColor(srgbRed:CGFloat((hex>>16)&255)/255,green:CGFloat((hex>>8)&255)/255,blue:CGFloat(hex&255)/255,alpha:1)
+  let gray=(0.2126*CGFloat((hex>>16)&255)+0.7152*CGFloat((hex>>8)&255)+0.0722*CGFloat(hex&255))/255
+  return NSColor(srgbRed:gray,green:gray,blue:gray,alpha:1)
 }
 private final class PageSurface:NSView {
   var changed:(()->Void)?

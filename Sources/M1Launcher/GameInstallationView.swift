@@ -21,7 +21,7 @@ struct GameInstallationOption {
     super.init(frame:NSRect(x:0,y:0,width:600,height:430));heading.stringValue=LibraryEntryPresentation.title(game);heading.font = .systemFont(ofSize:25,weight:.bold)
     version.stringValue=variant.platform == .macOS ? "Versione macOS":"Versione Windows";version.font = .systemFont(ofSize:14,weight:.semibold)
     for label in [size,path,status]{label.font = .systemFont(ofSize:13);label.textColor = .secondaryLabelColor}
-    path.isSelectable=true;status.textColor = .systemOrange
+    path.isSelectable=true;status.textColor = .secondaryLabelColor
     picker.target=self;picker.action=#selector(changed);picker.font = .systemFont(ofSize:14)
     install=action("Installa",#selector(start));manage=action("Gestisci cartelle…",#selector(manageLibraries));cancel=action("Indietro",#selector(back));plan=action("Ricalcola dimensione",#selector(replan))
     install.isEnabled=false

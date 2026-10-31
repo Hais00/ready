@@ -6,6 +6,20 @@ and keyboard/controller focus states. Every interactive canvas region has its ow
 including repeated import actions. Pointer tracking and cursor rectangles update
 when layout changes; dragging outside a pressed target does not activate it.
 
+Ready's surfaces, buttons, focus rings and text use a monochrome palette. Artwork,
+avatars and game icons retain their source colors. The dock starts with Library
+at the top, with no separate controller brand above it. Cached CGImage running-game
+icons use the same upright image convention as game cards. The library header has
+no game-count row.
+
+The catalog's native scroll viewport spans the complete window height. Initial
+top spacing belongs to the scroll document, so covers pass behind the persistent
+header as the document moves. Chrome is drawn transparently above card layers;
+the background and native scroll view remain layer-backed AppKit views. The footer
+has no reserved layout band: only a nonempty error draws a soft fade and text above
+the cards. Header controls keep priority over covered card targets. Controller
+navigation reveals cards below the header and returns the first row to offset zero.
+
 The library combines games from all enabled stores. Non-game content and the
 Games/Other selector are excluded. The header names the current section, and
 the footer appears only for errors. Header/footer text uses soft gradient strips

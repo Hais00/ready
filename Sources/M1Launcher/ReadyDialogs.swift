@@ -22,9 +22,8 @@ extension Notification.Name {
   static let readyDialogContentLayoutChanged=Notification.Name("ready.dialog.content-layout-changed")
 }
 private func dialogColor(_ hex: Int, alpha: CGFloat = 1) -> NSColor {
-  NSColor(
-    srgbRed: CGFloat((hex >> 16) & 255) / 255, green: CGFloat((hex >> 8) & 255) / 255,
-    blue: CGFloat(hex & 255) / 255, alpha: alpha)
+  let gray=(0.2126*CGFloat((hex>>16)&255)+0.7152*CGFloat((hex>>8)&255)+0.0722*CGFloat(hex&255))/255
+  return NSColor(srgbRed:gray,green:gray,blue:gray,alpha:alpha)
 }
 private final class DialogShade: NSView {
   override func mouseDown(with event: NSEvent) {}

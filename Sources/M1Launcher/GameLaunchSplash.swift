@@ -23,7 +23,7 @@ private final class LaunchActionButton:NSButton {
   override func resetCursorRects(){super.resetCursorRects();addCursorRect(bounds,cursor:.pointingHand)}
   override func draw(_ dirtyRect:NSRect){
     let fill:CGFloat=isHighlighted ? 0.38:hovered ? 0.3:0.22
-    (primary ? NSColor(srgbRed:0.64,green:0.94,blue:0.76,alpha:1):NSColor(white:fill,alpha:0.9)).setFill()
+    (primary ? NSColor.white:NSColor(white:fill,alpha:0.9)).setFill()
     NSBezierPath(roundedRect:bounds.insetBy(dx:1,dy:1),xRadius:9,yRadius:9).fill()
     let p=NSMutableParagraphStyle();p.alignment = .center
     let text=NSAttributedString(string:title,attributes:[.font:NSFont.systemFont(ofSize:14,weight:.semibold),.foregroundColor:primary ? NSColor.black:.white,.paragraphStyle:p])
@@ -61,13 +61,13 @@ final class GameLaunchSplash:NSView {
     layer?.addSublayer(shade)
     placeholder.image=NSImage(systemSymbolName:"gamecontroller.fill",accessibilityDescription:"Gioco")
     placeholder.imageScaling = .scaleProportionallyUpOrDown
-    placeholder.contentTintColor=NSColor(srgbRed:0.64,green:0.94,blue:0.76,alpha:1)
+    placeholder.contentTintColor = .white
     addSubview(placeholder)
     for label in [titleLabel,loadingLabel,errorLabel]{label.textColor = .white;label.alignment = .center;label.isSelectable=false;addSubview(label)}
     titleLabel.font = .systemFont(ofSize:32,weight:.bold);titleLabel.lineBreakMode = .byTruncatingTail
     loadingLabel.font = .systemFont(ofSize:15,weight:.medium)
     errorLabel.font = .systemFont(ofSize:14);errorLabel.maximumNumberOfLines=4;errorLabel.isHidden=true
-    spinner.fillColor=NSColor.clear.cgColor;spinner.strokeColor=NSColor(srgbRed:0.64,green:0.94,blue:0.76,alpha:1).cgColor
+    spinner.fillColor=NSColor.clear.cgColor;spinner.strokeColor=NSColor.white.cgColor
     spinner.lineWidth=3;spinner.lineCap = .round;spinner.strokeStart=0.08;spinner.strokeEnd=0.78
     layer?.addSublayer(spinner)
     cancelButton=LaunchActionButton("Annulla"){[weak self]in self?.onCancel?()}

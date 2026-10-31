@@ -14,6 +14,7 @@ private final class LibraryGridDocument:NSView {
   var inputEnabled=true
   var cardRects=[CGRect]()
   override var isFlipped:Bool{true}
+  override func makeBackingLayer()->CALayer{let layer=CALayer();layer.isGeometryFlipped=true;return layer}
   override var acceptsFirstResponder:Bool{false}
   override func resetCursorRects(){super.resetCursorRects();if inputEnabled{for rect in cardRects{addCursorRect(rect,cursor:.pointingHand)}}}
   override func mouseDown(with event:NSEvent){if inputEnabled{canvas?.mouseDown(with:event)}}
@@ -37,10 +38,12 @@ final class LibraryGridSurface:NSScrollView {
   var feedbackGeometry:[CGRect]{[selection,hover,focus].filter{!$0.isHidden}.map{$0.frame.insetBy(dx:-$0.lineWidth/2,dy:-$0.lineWidth/2)}}
   var documentBounds:CGRect{grid.bounds}
   var offset:CGFloat{contentView.bounds.minY}
+  var visibleTileFrames:[CGRect]{layers.values.map{$0.frame.offsetBy(dx:frame.minX,dy:frame.minY-offset)}}
   init(canvas:MetalCanvas){
     super.init(frame:.zero);grid.canvas=canvas
     drawsBackground=false;hasVerticalScroller=true;autohidesScrollers=true;scrollerStyle = .overlay;borderType = .noBorder
-    grid.layer=CALayer();grid.wantsLayer=true;grid.layerContentsRedrawPolicy = .never
+    automaticallyAdjustsContentInsets=false;contentInsets=NSEdgeInsets(top:0,left:0,bottom:0,right:0);contentView.drawsBackground=false
+    grid.wantsLayer=true;grid.layerContentsRedrawPolicy = .never
     grid.layer?.isGeometryFlipped=true;grid.layer?.backgroundColor=NSColor.clear.cgColor
     for overlay in [selection,hover,focus]{overlay.fillColor=NSColor.clear.cgColor;overlay.isHidden=true;grid.layer?.addSublayer(overlay)}
     documentView=grid;contentView.postsBoundsChangedNotifications=true
@@ -54,7 +57,6 @@ final class LibraryGridSurface:NSScrollView {
   func configure(frame:NSRect,documentSize:NSSize,offset:CGFloat){
     CATransaction.begin();CATransaction.setDisableActions(true)
     self.frame=frame;grid.setFrameSize(NSSize(width:max(1,documentSize.width),height:max(frame.height,documentSize.height)))
-    grid.layer?.frame=grid.bounds
     setOffset(offset);CATransaction.commit()
   }
   func setOffset(_ offset:CGFloat){
@@ -71,18 +73,19 @@ final class LibraryGridSurface:NSScrollView {
       let layer:CALayer
       if let existing=layers[tile.id]{layer=existing}else{layer=pool.popLast() ?? CALayer();layer.contentsGravity = .resize;layer.minificationFilter = .linear;layer.magnificationFilter = .linear;grid.layer?.insertSublayer(layer,at:0);layers[tile.id]=layer}
       layer.frame=tile.frame;layer.contents=tile.image
-      layer.backgroundColor=NSColor(srgbRed:tile.installed ? 0.14:0.14,green:tile.installed ? 0.2:0.16,blue:0.17,alpha:1).cgColor
+      layer.backgroundColor=NSColor(white:tile.installed ? 0.19:0.16,alpha:1).cgColor
       layer.cornerRadius=11;layer.masksToBounds=true
     }
-    grid.cardRects=tiles.map(\.frame)
+    let safe=grid.canvas.map{grid.convert($0.libraryInteractionViewport,from:$0)} ?? grid.bounds
+    grid.cardRects=tiles.map{$0.frame.intersection(safe)}.filter{!$0.isEmpty}
     func overlay(_ layer:CAShapeLayer,_ id:String?,_ color:NSColor,_ width:CGFloat,_ inset:CGFloat,_ fill:NSColor?=nil){
       guard let id,let tile=tiles.first(where:{$0.id==id})else{layer.isHidden=true;return}
       layer.isHidden=false;layer.frame=tile.frame.insetBy(dx:inset,dy:inset);layer.path=CGPath(roundedRect:layer.bounds,cornerWidth:13,cornerHeight:13,transform:nil)
       layer.strokeColor=color.cgColor;layer.fillColor=(fill ?? .clear).cgColor;layer.lineWidth=width
     }
-    overlay(selection,selected,NSColor(srgbRed:0.71,green:1,blue:0.82,alpha:1),2,-3)
+    overlay(selection,selected,NSColor.white,2,-3)
     overlay(hover,hovered,.white.withAlphaComponent(pressed==hovered ? 0.5:0.28),1.5,0.75,.white.withAlphaComponent(pressed==hovered ? 0.02:0.065))
-    overlay(focus,showFocus ? focused:nil,NSColor(srgbRed:0.71,green:1,blue:0.82,alpha:1),2,-3)
+    overlay(focus,showFocus ? focused:nil,NSColor.white,2,-3)
     for overlay in [selection,hover,focus]{grid.layer?.addSublayer(overlay)}
     CATransaction.commit();window?.invalidateCursorRects(for:grid)
   }

@@ -2,7 +2,10 @@
 import AppKit
 import LauncherCore
 
-private func detailColor(_ hex:Int)->NSColor{NSColor(srgbRed:CGFloat((hex>>16)&255)/255,green:CGFloat((hex>>8)&255)/255,blue:CGFloat(hex&255)/255,alpha:1)}
+private func detailColor(_ hex:Int)->NSColor{
+  let gray=(0.2126*CGFloat((hex>>16)&255)+0.7152*CGFloat((hex>>8)&255)+0.0722*CGFloat(hex&255))/255
+  return NSColor(srgbRed:gray,green:gray,blue:gray,alpha:1)
+}
 private final class GameDetailButton:NSButton {
   var invoke:(()->Void)?
   var primary=false

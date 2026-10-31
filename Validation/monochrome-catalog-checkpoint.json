@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "dateUTC": "2026-10-31T09:09:25.039067+00:00",
+  "scope": "Monochrome Ready controls, dock and full-height library catalog.",
+  "sourceSHA256": {
+    "Sources/M1Launcher/CanvasDrawing.swift": "702d3cf917006c328a0e4982a53136aa3809b435fc6928080e6665302ef81d3a",
+    "Sources/M1Launcher/GameDetailView.swift": "dfa0e16e5dcc87ea740d32216587a4a2d5ea1cd1484700ad55d6ce8fad4a3a5d",
+    "Sources/M1Launcher/GameInstallationView.swift": "d145930995ce4361a3e1df1cb52c86573ceeaff3ae2b26e722edfde26ca24395",
+    "Sources/M1Launcher/GameLaunchSplash.swift": "e8656c1c7234e17ff25c88787e77fcd46c353d4fe45cdeebb4bf68f36b89ca9e",
+    "Sources/M1Launcher/LibraryGridSurface.swift": "ccb555c86799d942cec1be2e7d24db2029f84a10493c1e365c2b40e3561d0c21",
+    "Sources/M1Launcher/MetalCanvas.swift": "fe507b62f9309c81b0c22e9bdae09f9c18899b8f9692e394300230b7fdc1ba31",
+    "Sources/M1Launcher/ReadyDialogs.swift": "268fccb25b5c937bd8d3587d2e90298b28f2e1e4f71e8252a4f8fbab06f8a659",
+    "Sources/M1Launcher/ReadyPagePresenter.swift": "fdef7ee0858c7b7448aacee0267e548a35c78e4c50845ab54f6db0befdbbad76",
+    "Sources/M1Launcher/ReadyShellModel.swift": "cd2bffe73283d37011dfaf4b5fc6f14635b7af478acd31e6b99d5ef1da8559fd",
+    "Synthetic/ReadyCanvasSectionsProbe.swift": "c00f3c5ef13ff80d9a00dd2001e1ff1ecfe14f44aa48d21a74937802460bad76",
+    "Synthetic/ReadyOverlayArtworkProbe.swift": "5de383a051ac84753e46d88672b6c16aad22a663ee4fb29127c575d32448b3e5"
+  },
+  "behavior": [
+    "Controls, surfaces, text, focus and launch progress use neutral gray values; source artwork and game icons retain their colors.",
+    "Library starts at y20 in the dock; the separate controller brand and library count row are removed.",
+    "Cached running-game icons counter-flip CGImage drawing in the flipped canvas, preserving aspect ratio.",
+    "The native catalog viewport spans full window height. Top spacing scrolls with the document; cards pass behind persistent header and error text.",
+    "Layer-backed AppKit views own scrolling transforms; a transparent Metal chrome sublayer appears above card layers. No footer space is reserved when no error is displayed.",
+    "Card pointer targets exclude toolbar/error text areas; controller reveal returns the first row to scroll offset zero."
+  ],
+  "build": {
+    "releaseApp": true,
+    "strictBundleSignatureVerified": true
+  },
+  "tests": {
+    "sectionNavigation": {
+      "passed": true,
+      "checks": 24,
+      "reportSHA256": "5211169a70f84b8e24f2c5f9cdc4dbbd002a744ecda103f088aba52f6c66a1d6"
+    },
+    "catalogLayeringAndIconOrientation": {
+      "passed": true,
+      "checks": 42,
+      "reportSHA256": "a5e4959537c2bb161dba26d540723f5357cf8c54e21b59083dfa1b4c880ff466"
+    },
+    "libraryDetailAndController": {
+      "passed": true,
+      "checks": 52,
+      "reportSHA256": "04ad4bf851f29b10a56e663d49e10393c0712740206b25054a58de36d6030a1b"
+    }
+  },
+  "runtime": {
+    "normalLibraryVisuallyChecked": true,
+    "keyboardScrollBehindHeaderVerified": true,
+    "libraryLeftOpenAtTop": true,
+    "gameLaunched": false,
+    "gameBenchmarkRun": false
+  },
+  "limits": [
+    "The cached running-game icon branch was checked with an owned asymmetric test image; this turn did not relaunch a real game to inspect its overlay.",
+    "No new gameplay FPS, frame-time or generalized game-compatibility claim is made."
+  ]
+}

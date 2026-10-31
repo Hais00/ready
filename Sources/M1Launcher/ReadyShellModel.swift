@@ -75,7 +75,7 @@ enum ReadyShellStyle {
   static let dockWidth:Double=72
   static let dockButtonSize:Double=46
   static let dockButtonX:Double=13
-  static let dockFirstY:Double=72
+  static let dockFirstY:Double=20
   static let dockItemStride:Double=57
   static let contentLeft:Double=112
   static let headerHeight:Double=82
