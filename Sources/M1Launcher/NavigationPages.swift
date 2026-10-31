@@ -74,6 +74,7 @@ extension AppDelegate {
     canvas.filter = nil
     canvas.pageTitle=nil
     if !preservingSelection { canvas.selected = 0 }
+    if gameInterfaceVisible{canvas.restoreInterfaceLibraryArtwork()}
     window?.makeFirstResponder(canvas)
     canvas.refresh()
   }

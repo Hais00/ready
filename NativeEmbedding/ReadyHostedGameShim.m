@@ -24,6 +24,7 @@
 #import "ReadyHostedGameProtocol.h"
 #import "RHGScrollEvent.h"
 #import "RHGPerformance.h"
+#import "RHGOverlayTransition.h"
 
 typedef struct {
     uint32_t window,width,height;
@@ -48,6 +49,7 @@ static void rhgInstallRemoteLayer(void);
 static void rhgStopRenderActivity(void);
 static void rhgConfigureOverlayGPUBlur(BOOL enabled,uint64_t epoch);
 static void rhgReceiveOverlayState(RHGInput input);
+static void rhgReceiveOverlayAnimation(RHGInput input);
 static IMP rhgOriginal(id object,SEL selector);
 static void rhgHook(Class type,SEL selector,IMP hook);
 static void rhgNoGestureProvider(void) {
@@ -498,10 +500,23 @@ static char rhgInputKey;
 // physical cursor. Framework callers retain AppKit's original implementation.
 static os_unfair_lock rhgPointerLocationLock=OS_UNFAIR_LOCK_INIT;
 static NSPoint rhgPointerScreenLocation;
+static _Thread_local BOOL rhgRestoringOverlayFocus;
+static _Atomic unsigned rhgTraceMoveEvents,rhgTraceGameReads,rhgTraceFrameworkReads;
+static BOOL rhgPointerTraceEnabled(void){static BOOL enabled;static dispatch_once_t once;dispatch_once(&once,^{const char*v=getenv("RHG_INPUT_TRACE");enabled=v&&strcmp(v,"1")==0;});return enabled;}
+static BOOL rhgTakePointerTrace(_Atomic unsigned*budget){unsigned n=atomic_load(budget);while(n){if(atomic_compare_exchange_weak(budget,&n,n-1))return YES;}return NO;}
 static NSPoint rhgMouseLocation(id type,SEL selector) {
-    if(!RHG_MAIN_CALLER())return ((NSPoint(*)(id,SEL))rhgOriginal(type,selector))(type,selector);
-    rhgConnect();os_unfair_lock_lock(&rhgPointerLocationLock);
-    NSPoint point=rhgPointerScreenLocation;os_unfair_lock_unlock(&rhgPointerLocationLock);return point;
+    BOOL game=RHG_MAIN_CALLER();
+    BOOL trace=rhgPointerTraceEnabled()&&rhgTakePointerTrace(game?&rhgTraceGameReads:&rhgTraceFrameworkReads);
+    if(!game&&!trace)return ((NSPoint(*)(id,SEL))rhgOriginal(type,selector))(type,selector);
+    if(game)rhgConnect();os_unfair_lock_lock(&rhgPointerLocationLock);
+    NSPoint cached=rhgPointerScreenLocation;os_unfair_lock_unlock(&rhgPointerLocationLock);
+    NSPoint point=game?cached:((NSPoint(*)(id,SEL))rhgOriginal(type,selector))(type,selector);
+    if(trace){
+        Dl_info info={0};dladdr(__builtin_extract_return_addr(__builtin_return_address(0)),&info);
+        const char*base=info.dli_fname?strrchr(info.dli_fname,'/'):NULL;base=base?base+1:info.dli_fname;
+        NSDictionary*row=@{@"type":@"guest-pointer-read",@"caller":rhgSafeMetadata(base)?:@"unavailable",@"virtual":@(game),@"x":@(point.x),@"y":@(point.y),@"cachedX":@(cached.x),@"cachedY":@(cached.y)};
+        NSData*data=[NSJSONSerialization dataWithJSONObject:row options:0 error:nil];if(data){fwrite(data.bytes,1,data.length,stderr);fputc('\n',stderr);}
+    }return point;
 }
 
 static BOOL rhgFormat(uint64_t format) {
@@ -651,6 +666,7 @@ static id rhgEventWindow(id event,SEL selector){RHGInput input;if(rhgReadEventIn
 static NSInteger rhgEventWindowNumber(id event,SEL selector){RHGInput input;if(rhgReadEventInput(event,&input))return rhgMetadataSnapshot().window;return ((NSInteger(*)(id,SEL))rhgOriginal(event,selector))(event,selector);}
 static void rhgDeliverInput(RHGInput input) {
     if(input.type==RHG_OVERLAY_STATE){rhgReceiveOverlayState(input);return;}
+    if(input.type==RHG_OVERLAY_ANIMATE){rhgReceiveOverlayAnimation(input);return;}
     RHGLogicalWindow *window=rhgWindow;if(!window)return;
     if(input.type==RHG_FOCUS){
         if(!input.keyCode){
@@ -660,13 +676,22 @@ static void rhgDeliverInput(RHGInput input) {
             if(rhgScrollActive){RHGInput end=rhgLastScroll;end.scrollPhase=NSEventPhaseCancelled;end.scrollMomentumPhase=NSEventPhaseEnded;end.scrollCGPhase=kCGScrollPhaseCancelled;end.scrollCGMomentumPhase=kCGMomentumScrollPhaseEnd;end.deltaX=end.deltaY=end.scrollingDeltaX=end.scrollingDeltaY=end.scrollFixedX=end.scrollFixedY=0;end.scrollLineX=end.scrollLineY=end.scrollPointX=end.scrollPointY=0;end.timestamp=input.timestamp;rhgDeliverInput(end);rhgScrollActive=NO;}
         }
         if(!input.keyCode)rhgLatchedScrollTarget=nil;
-        rhgFocused=input.keyCode!=0;rhgSynchronizeLogicalFocus(window);return;
+        rhgFocused=input.keyCode!=0;
+        BOOL restore=input.keyCode==1&&input.button==1&&input.modifiers!=0;
+        BOOL previous=rhgRestoringOverlayFocus;rhgRestoringOverlayFocus=restore;
+        rhgSynchronizeLogicalFocus(window);rhgRestoringOverlayFocus=previous;
+        if(restore){(void)rhgExchange(RHG_POINTER_RESTORE,(RHGRequest){.frameID=input.modifiers});if(rhgPointerTraceEnabled()){atomic_store(&rhgTraceMoveEvents,8);atomic_store(&rhgTraceGameReads,2);atomic_store(&rhgTraceFrameworkReads,2);}}
+        return;
     }
     // Cocoa routes wheel events to the view under the pointer (latched for a
     // gesture), not the keyboard first responder. An inherited NSResponder
     // scrollWheel: can silently drop the event in our deliberately unbacked tree.
     NSResponder *target=input.type==RHG_SCROLL?rhgScrollResponder(window,input):(window.firstResponder ?: window.contentView);
     if(!target)return;
+    if(input.type==RHG_MOUSE_MOVE&&rhgPointerTraceEnabled()&&rhgTakePointerTrace(&rhgTraceMoveEvents)){
+        fprintf(stderr,"{\"type\":\"guest-pointer-event\",\"x\":%.9f,\"y\":%.9f,\"dx\":%.9f,\"dy\":%.9f}\n",input.x,input.y,input.deltaX,input.deltaY);
+        atomic_store(&rhgTraceGameReads,2);atomic_store(&rhgTraceFrameworkReads,2);
+    }
     if(!isfinite(input.x)||!isfinite(input.y)||!isfinite(input.deltaX)||!isfinite(input.deltaY))rhgFail(@"invalid-input-coordinates");
     if(input.type==RHG_KEY_DOWN||input.type==RHG_KEY_UP){if(input.keyCode>255)rhgFail(@"invalid-input-keycode");rhgHeldKeys[input.keyCode]=input;rhgKeyHeld[input.keyCode]=input.type==RHG_KEY_DOWN;}
     if(input.type==RHG_MOUSE_DOWN||input.type==RHG_MOUSE_UP){if(input.button>31)rhgFail(@"unsupported-mouse-button");rhgHeldButtons[input.button]=input;rhgButtonHeld[input.button]=input.type==RHG_MOUSE_DOWN;}
@@ -734,7 +759,8 @@ static void rhgConnect(void) {
                 // Apply the activity lease before dispatching input to Main:
                 // loading may block Main and the logical window may not exist.
                 for(unsigned i=0;i<reply.eventCount;i++){
-                    if(reply.events[i].type==RHG_OVERLAY_STATE){
+                    if(reply.events[i].type==RHG_OVERLAY_ANIMATE){rhgReceiveOverlayAnimation(reply.events[i]);reply.events[i].type=0;}
+                    else if(reply.events[i].type==RHG_OVERLAY_STATE){
                         rhgReceiveOverlayState(reply.events[i]);
                         // This control event is consumed here; it is never
                         // synthesized as guest keyboard or Cocoa input.
@@ -1051,6 +1077,9 @@ static CGError rhgPointerRequest(uint32_t operation,uint32_t action,double x,dou
 }
 static CGError rhgAssociateMouse(boolean_t connected){return rhgPointerRequest(RHG_POINTER_ASSOCIATE,connected?1:0,0,0);}
 static CGError rhgWarpMouse(CGPoint point){
+    // Native activation handlers often recenter the cursor. Ready keeps the
+    // same game window, so defer that transient warp to the saved-position ACK.
+    if(rhgRestoringOverlayFocus){if(rhgPointerTraceEnabled())fprintf(stderr,"{\"type\":\"guest-pointer-focus-warp-suppressed\",\"x\":%.6f,\"y\":%.6f}\n",point.x,point.y);return kCGErrorSuccess;}
     rhgConnect();RHGWindowMetadata metadata=rhgMetadataSnapshot();double x=(point.x-metadata.quartzX)/metadata.logicalWidth,y=(point.y-metadata.quartzY)/metadata.logicalHeight;
     if(!isfinite(x)||!isfinite(y)||x<0||x>1||y<0||y>1)return kCGErrorIllegalArgument;
     return rhgPointerRequest(RHG_POINTER_WARP,0,x,y); // Never move a physical cursor here.
@@ -1211,10 +1240,43 @@ static void rhgOverlayBlurPresent(id,SEL,id);
 static void rhgOverlayBlurPresentTimed(id,SEL,id,double);
 static void rhgOverlayBlurCommit(id,SEL);
 
-@interface RHGOverlayBlurRenderer:NSObject {
-@public _Atomic bool ackSent,ackHookArmed;
+@interface RHGOverlayBlurAcknowledgement:NSObject {
+@public _Atomic bool sent,armed;
 }
-@property(nonatomic)uint64_t overlayEpoch;
+@property uint64_t epoch;
+@end
+@implementation RHGOverlayBlurAcknowledgement @end
+
+static NSLock *rhgOverlayPipelineCacheLock;
+static NSMutableDictionary<NSString*,id<MTLRenderPipelineState>> *rhgOverlayPipelines;
+static unsigned rhgOverlayPipelineCompilations;
+static id<MTLRenderPipelineState> rhgCachedOverlayPipeline(id<MTLDevice> device,MTLPixelFormat format){
+    static dispatch_once_t once;dispatch_once(&once,^{rhgOverlayPipelineCacheLock=[NSLock new];rhgOverlayPipelines=[NSMutableDictionary new];});
+    NSString *key=[NSString stringWithFormat:@"%llu:%lu",(unsigned long long)device.registryID,(unsigned long)format];
+    [rhgOverlayPipelineCacheLock lock];id<MTLRenderPipelineState> cached=rhgOverlayPipelines[key];
+    if(cached){[rhgOverlayPipelineCacheLock unlock];return cached;}
+        NSString *source=@"#include <metal_stdlib>\nusing namespace metal;\n"
+        "struct O{float4 p [[position]];float2 uv;};\n"
+        "vertex O rhg_blur_vertex(uint i [[vertex_id]]){float2 p[3]={float2(-1,-1),float2(3,-1),float2(-1,3)};O o;o.p=float4(p[i],0,1);o.uv=float2((p[i].x+1)*.5,1-(p[i].y+1)*.5);return o;}\n"
+        "fragment float4 rhg_blur_fragment(O v [[stage_in]],texture2d<float> t [[texture(0)]],constant float &a [[buffer(0)]]){constexpr sampler s(filter::linear,address::clamp_to_edge);float3 c=t.sample(s,v.uv).rgb;return float4(c*.5*a,a);}";
+        NSError *error=nil;id<MTLLibrary> library=[device newLibraryWithSource:source options:nil error:&error];
+        MTLRenderPipelineDescriptor *descriptor=[MTLRenderPipelineDescriptor new];
+        descriptor.label=@"Ready opt-in hosted backdrop blur";descriptor.vertexFunction=[library newFunctionWithName:@"rhg_blur_vertex"];
+        descriptor.fragmentFunction=[library newFunctionWithName:@"rhg_blur_fragment"];descriptor.colorAttachments[0].pixelFormat=format;
+        descriptor.colorAttachments[0].blendingEnabled=YES;
+        descriptor.colorAttachments[0].sourceRGBBlendFactor=MTLBlendFactorOne;descriptor.colorAttachments[0].destinationRGBBlendFactor=MTLBlendFactorOneMinusSourceAlpha;
+        descriptor.colorAttachments[0].sourceAlphaBlendFactor=MTLBlendFactorOne;descriptor.colorAttachments[0].destinationAlphaBlendFactor=MTLBlendFactorOneMinusSourceAlpha;
+        id<MTLRenderPipelineState> pipeline=library?[device newRenderPipelineStateWithDescriptor:descriptor error:&error]:nil;
+    if(pipeline){rhgOverlayPipelines[key]=pipeline;rhgOverlayPipelineCompilations++;}
+    [rhgOverlayPipelineCacheLock unlock];return pipeline;
+}
+@interface RHGOverlayBlurRenderer:NSObject {
+@public RHGOverlayTransition transition;
+@public RHGOverlayTransition priorTransition;
+}
+@property(atomic)uint64_t overlayEpoch,minimumCommandEpoch;
+@property(atomic)BOOL fadingOut;
+@property(atomic,strong)RHGOverlayBlurAcknowledgement *acknowledgement;
 @property(nonatomic,strong)id<MTLDevice> device;
 @property(nonatomic,strong)MPSImageBilinearScale *scale;
 @property(nonatomic,strong)MPSImageGaussianBlur *blur;
@@ -1226,6 +1288,11 @@ static void rhgOverlayBlurCommit(id,SEL);
 @property(nonatomic,strong)NSLock *lock;
 -(instancetype)initWithDevice:(id<MTLDevice>)device format:(MTLPixelFormat)format;
 -(BOOL)encodeOn:(id<MTLCommandBuffer>)command drawable:(id<CAMetalDrawable>)drawable;
+-(void)retargetVisible:(BOOL)visible epoch:(uint64_t)epoch time:(double)time;
+-(double)opacityAt:(double)time;
+-(void)adoptEpoch:(uint64_t)epoch opening:(BOOL)opening;
+-(void)setTimeline:(RHGOverlayTransition)timeline epoch:(uint64_t)epoch;
+-(double)transitionEndTime;
 @end
 @implementation RHGOverlayBlurRenderer
 -(instancetype)initWithDevice:(id<MTLDevice>)device format:(MTLPixelFormat)format {
@@ -1234,18 +1301,25 @@ static void rhgOverlayBlurCommit(id,SEL);
         _scale=[[MPSImageBilinearScale alloc]initWithDevice:device];
         _blur=[[MPSImageGaussianBlur alloc]initWithDevice:device sigma:8.0];
         _blur.edgeMode=MPSImageEdgeModeClamp;
-        NSString *source=@"#include <metal_stdlib>\nusing namespace metal;\n"
-        "struct O{float4 p [[position]];float2 uv;};\n"
-        "vertex O rhg_blur_vertex(uint i [[vertex_id]]){float2 p[3]={float2(-1,-1),float2(3,-1),float2(-1,3)};O o;o.p=float4(p[i],0,1);o.uv=float2((p[i].x+1)*.5,1-(p[i].y+1)*.5);return o;}\n"
-        "fragment float4 rhg_blur_fragment(O v [[stage_in]],texture2d<float> t [[texture(0)]]){constexpr sampler s(filter::linear,address::clamp_to_edge);float3 c=t.sample(s,v.uv).rgb;return float4(c*.5,1);}";
-        NSError *error=nil;id<MTLLibrary> library=[device newLibraryWithSource:source options:nil error:&error];
-        MTLRenderPipelineDescriptor *descriptor=[MTLRenderPipelineDescriptor new];
-        descriptor.label=@"Ready opt-in hosted backdrop blur";descriptor.vertexFunction=[library newFunctionWithName:@"rhg_blur_vertex"];
-        descriptor.fragmentFunction=[library newFunctionWithName:@"rhg_blur_fragment"];descriptor.colorAttachments[0].pixelFormat=format;
-        _pipeline=library?[device newRenderPipelineStateWithDescriptor:descriptor error:&error]:nil;
+        _pipeline=rhgCachedOverlayPipeline(device,format);
         if(!_scale||!_blur||!_pipeline)return nil;
     }return self;
 }
+-(void)retargetVisible:(BOOL)visible epoch:(uint64_t)epoch time:(double)time {
+    [_lock lock];RHGOverlayTransitionRetarget(&transition,visible?1:0,time,0.20);
+    self.overlayEpoch=epoch;if(!self.minimumCommandEpoch)self.minimumCommandEpoch=epoch;self.fadingOut=!visible;
+    if(visible){RHGOverlayBlurAcknowledgement *ack=[RHGOverlayBlurAcknowledgement new];ack.epoch=epoch;self.acknowledgement=ack;}[_lock unlock];
+}
+-(double)opacityAt:(double)time{[_lock lock];double value=RHGOverlayTransitionTrackValue(transition,priorTransition,time);[_lock unlock];return value;}
+-(void)adoptEpoch:(uint64_t)epoch opening:(BOOL)opening{
+    [_lock lock];self.overlayEpoch=epoch;if(!self.minimumCommandEpoch)self.minimumCommandEpoch=epoch;self.fadingOut=!opening;
+    if(opening){RHGOverlayBlurAcknowledgement *ack=[RHGOverlayBlurAcknowledgement new];ack.epoch=epoch;self.acknowledgement=ack;}[_lock unlock];
+}
+-(void)setTimeline:(RHGOverlayTransition)timeline epoch:(uint64_t)epoch{
+    [_lock lock];if(CACurrentMediaTime()>=transition.began)priorTransition=transition;transition=timeline;self.overlayEpoch=epoch;if(!self.minimumCommandEpoch)self.minimumCommandEpoch=epoch;self.fadingOut=timeline.to==0;
+    if(timeline.to>0&&self.acknowledgement.epoch!=epoch){RHGOverlayBlurAcknowledgement *ack=[RHGOverlayBlurAcknowledgement new];ack.epoch=epoch;self.acknowledgement=ack;}[_lock unlock];
+}
+-(double)transitionEndTime{[_lock lock];double end=transition.began+transition.duration;[_lock unlock];return end;}
 -(BOOL)ensureTexturesFor:(id<MTLTexture>)source {
     CGFloat scale=MIN(1.0,MIN(640.0/source.width,640.0/source.height));
     MTLSize size=MTLSizeMake(MAX(1,(NSUInteger)ceil(source.width*scale)),MAX(1,(NSUInteger)ceil(source.height*scale)),1);
@@ -1260,6 +1334,8 @@ static void rhgOverlayBlurCommit(id,SEL);
     id<MTLTexture> source=drawable.texture;
     if(!source||!(source.usage&MTLTextureUsageShaderRead)||drawable.layer.framebufferOnly)return NO;
     [_lock lock];BOOL success=NO;
+    float opacity=(float)RHGOverlayTransitionTrackValue(transition,priorTransition,CACurrentMediaTime());
+    if(opacity<=0.00001){[_lock unlock];return YES;}
     if([self ensureTexturesFor:source]){
         MPSScaleTransform transform={.scaleX=(double)_reducedSize.width/source.width,.scaleY=(double)_reducedSize.height/source.height,.translateX=0,.translateY=0};
         _scale.scaleTransform=&transform;
@@ -1267,11 +1343,11 @@ static void rhgOverlayBlurCommit(id,SEL);
         _scale.scaleTransform=NULL;
         [_blur encodeToCommandBuffer:command sourceTexture:_reduced destinationTexture:_blurred];
         MTLRenderPassDescriptor *pass=[MTLRenderPassDescriptor renderPassDescriptor];
-        pass.colorAttachments[0].texture=source;pass.colorAttachments[0].loadAction=MTLLoadActionClear;
-        pass.colorAttachments[0].storeAction=MTLStoreActionStore;pass.colorAttachments[0].clearColor=MTLClearColorMake(0,0,0,1);
+        pass.colorAttachments[0].texture=source;pass.colorAttachments[0].loadAction=MTLLoadActionLoad;
+        pass.colorAttachments[0].storeAction=MTLStoreActionStore;
         id<MTLRenderCommandEncoder> encoder=[command renderCommandEncoderWithDescriptor:pass];
         if(encoder){encoder.label=@"Ready overlay-only GPU backdrop blur";[encoder setRenderPipelineState:_pipeline];
-            [encoder setFragmentTexture:_blurred atIndex:0];[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+            [encoder setFragmentTexture:_blurred atIndex:0];[encoder setFragmentBytes:&opacity length:sizeof(opacity) atIndex:0];[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
             [encoder endEncoding];RHGOverlayBlurRenderer *keep=self;id<MTLTexture> keepImage=_blurred;
             [command addCompletedHandler:^(id<MTLCommandBuffer> completed){(void)keep;(void)keepImage;(void)completed;}];success=YES;}
     }
@@ -1282,6 +1358,10 @@ static void rhgOverlayBlurCommit(id,SEL);
 static BOOL rhgOverlayBlurEpochIsCurrent(uint64_t epoch){
     return epoch&&atomic_load_explicit(&rhgOverlayEpoch,memory_order_acquire)==epoch
         &&atomic_load_explicit(&rhgOverlayGPUBlurRequested,memory_order_acquire);
+}
+static BOOL rhgOverlayBlurCanRender(RHGOverlayBlurRenderer *renderer){
+    return renderer&&renderer.overlayEpoch==atomic_load_explicit(&rhgOverlayEpoch,memory_order_acquire)
+        &&(atomic_load_explicit(&rhgOverlayGPUBlurRequested,memory_order_acquire)||renderer.fadingOut);
 }
 static void rhgOverlayBlurAcknowledge(uint32_t contextID,uint64_t epoch){
     dispatch_async(rhgGPUCompletionWorker(),^{
@@ -1295,7 +1375,8 @@ static NSMutableArray *rhgOverlayBlurDrawables(id<MTLCommandBuffer> command,BOOL
     if(!items&&create){items=[NSMutableArray array];objc_setAssociatedObject(command,&rhgOverlayBlurDrawablesKey,items,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}return items;
 }
 static void rhgOverlayBlurRecord(id<MTLCommandBuffer> command,id<CAMetalDrawable> drawable){
-    if(!atomic_load_explicit(&rhgOverlayGPUBlurRequested,memory_order_acquire)||!drawable)return;
+    [rhgHookLock lock];RHGOverlayBlurRenderer *renderer=rhgOverlayBlurRenderer;[rhgHookLock unlock];
+    if(!drawable||!rhgOverlayBlurCanRender(renderer))return;
     uint64_t epoch=atomic_load_explicit(&rhgOverlayEpoch,memory_order_acquire);
     if([objc_getAssociatedObject(command,&rhgOverlayBlurCommandEpochKey) unsignedLongLongValue]!=epoch){
         objc_setAssociatedObject(command,&rhgOverlayBlurDrawablesKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -1315,20 +1396,21 @@ static void rhgOverlayBlurCommit(id command,SEL selector){
     objc_setAssociatedObject(command,&rhgOverlayBlurCommandEpochKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     NSArray<id<CAMetalDrawable>> *items=[rhgOverlayBlurDrawables(command,NO) copy];objc_setAssociatedObject(command,&rhgOverlayBlurDrawablesKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [rhgHookLock lock];RHGOverlayBlurRenderer *renderer=rhgOverlayBlurRenderer;[rhgHookLock unlock];
-    if(renderer&&commandEpoch==renderer.overlayEpoch&&rhgOverlayBlurEpochIsCurrent(renderer.overlayEpoch)){
+    if(commandEpoch&&renderer&&commandEpoch>=renderer.minimumCommandEpoch&&commandEpoch<=renderer.overlayEpoch&&rhgOverlayBlurCanRender(renderer)){
         for(id<CAMetalDrawable> drawable in items){
             BOOL encoded=[renderer encodeOn:command drawable:drawable];
             if(encoded){
                 static _Atomic bool logged;
                 bool expected=false;if(atomic_compare_exchange_strong(&logged,&expected,true))fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"encoded\",\"kernel\":\"MPS-low-resolution\"}\n");
-                if(!atomic_exchange(&renderer->ackHookArmed,true)){
+                RHGOverlayBlurAcknowledgement *ack=renderer.acknowledgement;
+                if(ack&&commandEpoch==ack.epoch&&rhgOverlayBlurEpochIsCurrent(ack.epoch)&&!atomic_exchange(&ack->armed,true)){
                     uint32_t contextID=rhgRemoteContext.contextId;
-                    uint64_t epoch=renderer.overlayEpoch;
+                    uint64_t epoch=ack.epoch;
                     [drawable addPresentedHandler:^(id<MTLDrawable> presented){
                         if(!rhgOverlayBlurEpochIsCurrent(epoch))return;
                         double time=presented.presentedTime;
-                        if(!isfinite(time)||time<=0){atomic_store(&renderer->ackHookArmed,false);return;}
-                        if(!atomic_exchange(&renderer->ackSent,true))rhgOverlayBlurAcknowledge(contextID,epoch);
+                        if(!isfinite(time)||time<=0){atomic_store(&ack->armed,false);return;}
+                        if(!atomic_exchange(&ack->sent,true))rhgOverlayBlurAcknowledge(contextID,epoch);
                     }];
                 }
             }else{
@@ -1361,17 +1443,46 @@ static void rhgReceiveOverlayState(RHGInput input){
     if(input.keyCode>1||input.button>1||!input.modifiers)rhgFail(@"invalid-overlay-state");
     uint64_t epoch=input.modifiers;
     if(epoch<=atomic_load_explicit(&rhgOverlayEpoch,memory_order_acquire))return;
+    BOOL enabled=input.keyCode!=0&&input.button==1;
+    [rhgHookLock lock];
+    if(rhgOverlayBlurRenderer)[rhgOverlayBlurRenderer adoptEpoch:epoch opening:enabled];
     atomic_store_explicit(&rhgOverlayEpoch,epoch,memory_order_release);
     atomic_store_explicit(&rhgOverlayRequested,input.keyCode!=0,memory_order_release);
-    BOOL enabled=input.keyCode!=0&&input.button==1;
     atomic_store_explicit(&rhgOverlayGPUBlurRequested,enabled,memory_order_release);
+    [rhgHookLock unlock];
     dispatch_async(dispatch_get_main_queue(),^{rhgConfigureOverlayGPUBlur(enabled,epoch);});
+}
+static void rhgFinishOverlayBlurClose(uint64_t epoch,RHGOverlayBlurRenderer *renderer,double time){
+    if(epoch!=atomic_load(&rhgOverlayEpoch)||atomic_load(&rhgOverlayGPUBlurRequested)||atomic_load(&rhgOverlayRequested)||rhgOverlayBlurRenderer!=renderer||[renderer opacityAt:time]>0.00001)return;
+    rhgRestoreOverlayBlurHooks();
+    fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"disarmed\",\"epoch\":%llu}\n",(unsigned long long)epoch);
+}
+static void rhgReceiveOverlayAnimation(RHGInput input){
+    if(input.keyCode>1||!input.modifiers||!isfinite(input.timestamp)||input.timestamp<=0||!isfinite(input.x)||input.x<0||input.x>1||!isfinite(input.deltaX)||input.deltaX<=0||input.deltaX>2)rhgFail(@"invalid-overlay-animation");
+    uint64_t epoch=input.modifiers;if(epoch<atomic_load(&rhgOverlayEpoch))return;
+    RHGOverlayTransition timeline={input.x,input.keyCode?1:0,input.timestamp,input.deltaX};
+    [rhgHookLock lock];atomic_store(&rhgOverlayEpoch,epoch);atomic_store(&rhgOverlayGPUBlurRequested,input.keyCode!=0);
+    if(rhgOverlayBlurRenderer)[rhgOverlayBlurRenderer setTimeline:timeline epoch:epoch];[rhgHookLock unlock];
+    fprintf(stderr,"{\"type\":\"ready-gpu-blur-clock\",\"epoch\":%llu,\"start\":%.9f,\"duration\":%.9f,\"from\":%.9f,\"to\":%.0f}\n",(unsigned long long)epoch,timeline.began,timeline.duration,timeline.from,timeline.to);
+    dispatch_async(dispatch_get_main_queue(),^{
+        if(epoch!=atomic_load(&rhgOverlayEpoch))return;
+        rhgConfigureOverlayGPUBlur(input.keyCode!=0,epoch);
+        [rhgHookLock lock];if(rhgOverlayBlurRenderer&&rhgOverlayBlurRenderer.overlayEpoch==epoch)[rhgOverlayBlurRenderer setTimeline:timeline epoch:epoch];[rhgHookLock unlock];
+    });
 }
 static void rhgConfigureOverlayGPUBlur(BOOL enabled,uint64_t epoch){
     if(epoch!=atomic_load_explicit(&rhgOverlayEpoch,memory_order_acquire))return;
-    if(!enabled){BOOL wasArmed=rhgOverlayBlurCommandClass!=Nil;rhgRestoreOverlayBlurHooks();if(wasArmed)fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"disarmed\",\"epoch\":%llu}\n",(unsigned long long)epoch);return;}
+    if(!enabled){
+        RHGOverlayBlurRenderer *renderer=rhgOverlayBlurRenderer;
+        if(!renderer||!rhgOverlayBlurCommandClass){rhgRestoreOverlayBlurHooks();return;}
+        if(!atomic_load(&rhgOverlayRequested)&&[renderer opacityAt:CACurrentMediaTime()]<=0.00001){rhgFinishOverlayBlurClose(epoch,renderer,CACurrentMediaTime());return;}
+        if(renderer.overlayEpoch!=epoch||!renderer.fadingOut)[renderer retargetVisible:NO epoch:epoch time:CACurrentMediaTime()];
+        double wait=fmax(.01,[renderer transitionEndTime]-CACurrentMediaTime()+.02);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(wait*NSEC_PER_SEC)),dispatch_get_main_queue(),^{rhgFinishOverlayBlurClose(epoch,renderer,CACurrentMediaTime());});
+        return;
+    }
     if(!rhgOverlayBlurEpochIsCurrent(epoch)||!rhgRemoteLayerMode()||!rhgGameLayer)return;
-    if(rhgOverlayBlurRenderer&&rhgOverlayBlurRenderer.overlayEpoch==epoch)return;
+    if(rhgOverlayBlurRenderer&&rhgOverlayBlurRenderer.overlayEpoch==epoch){fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"armed\",\"epoch\":%llu,\"transition\":true}\n",(unsigned long long)epoch);return;}
     rhgRestoreOverlayBlurHooks();
     CAMetalLayer *layer=rhgGameLayer;id<MTLDevice> device=layer.device;
     if(!device||layer.framebufferOnly){fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"framebuffer-only\"}\n");return;}
@@ -1379,10 +1490,15 @@ static void rhgConfigureOverlayGPUBlur(BOOL enabled,uint64_t epoch){
     id<MTLCommandQueue> queue=[device newCommandQueue];id<MTLCommandBuffer> probe=[queue commandBuffer];Class type=probe?object_getClass(probe):Nil;
     if(!renderer||!type){fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"renderer-unavailable\"}\n");return;}
     if(!rhgOverlayBlurEpochIsCurrent(epoch))return;
-    renderer.overlayEpoch=epoch;
+    [renderer adoptEpoch:epoch opening:YES];
     [rhgHookLock lock];rhgOverlayBlurRenderer=renderer;rhgOverlayBlurProbeQueue=queue;[rhgHookLock unlock];
     if(!rhgArmOverlayBlurHooks(type)){fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"hooks-unavailable\"}\n");return;}
     fprintf(stderr,"{\"type\":\"ready-gpu-blur\",\"state\":\"armed\",\"epoch\":%llu,\"sampleSize\":\"at-most-640px\"}\n",(unsigned long long)epoch);
+    uint32_t contextID=rhgRemoteContext.contextId;
+    dispatch_async(rhgGPUCompletionWorker(),^{
+        if(!rhgOverlayBlurEpochIsCurrent(epoch))return;
+        (void)rhgExchange(RHG_REMOTE_BLUR_PREPARED,(RHGRequest){.surfaceID=contextID,.frameID=epoch});
+    });
 }
 enum {RHG_REMOTE_STARTUP_LIMIT=128,RHG_REMOTE_STARTUP_SECONDS=15,RHG_REMOTE_TRACE_LIMIT=8};
 static _Atomic unsigned rhgRemoteObserved,rhgRemoteCallbacks;
@@ -1468,6 +1584,14 @@ static void rhgRemoteObserveDrawable(id<CAMetalDrawable>drawable){
     });
     id<MTLTexture> texture=drawable.texture;
     if(!texture||!texture.width||!texture.height||texture.width>8192||texture.height>8192||!rhgFormat(texture.pixelFormat)||!texture.device.registryID)rhgFail(@"remote-layer-invalid-native-drawable");
+    // Compile immutable shader state while the game is still loading. No
+    // drawable/texture working set or per-frame observer is retained by this.
+    static dispatch_once_t warmPipeline;
+    if((texture.usage&MTLTextureUsageShaderRead)&&!rhgGameLayer.framebufferOnly){
+        dispatch_once(&warmPipeline,^{id<MTLDevice> device=texture.device;MTLPixelFormat format=texture.pixelFormat;
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{@autoreleasepool{(void)rhgCachedOverlayPipeline(device,format);}});
+        });
+    }
     uint32_t textureFlags=0;
     if(texture.usage&MTLTextureUsageShaderRead)textureFlags|=RHG_REMOTE_TEXTURE_SHADER_READABLE;
     if(rhgGameLayer.framebufferOnly)textureFlags|=RHG_REMOTE_TEXTURE_FRAMEBUFFER_ONLY;

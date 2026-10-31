@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 1,
+  "dateUTC": "2026-10-31T08:27:26.566575+00:00",
+  "scope": "Native Cyberpunk overlay response, animation, artwork and pointer-resume fixes.",
+  "sourceSHA256": {
+    "NativeEmbedding/ReadyHostedGameShim.m": "645cdc561b01e6a3469c159a0ad9c61c92f87866e153ba025906227edd6414e0",
+    "Sources/ReadyHostedView/ReadyHostedView.m": "e792938cf9a57b6deab1779dca7a7d81a143cfac5b695bac2de4fe638afda8b8",
+    "Sources/ReadyHostedView/RHGPointerState.h": "6181b21fd3a9fd69f80ce655f7b5f789592ae1528559676ea5de7af931ea47d6",
+    "Sources/ReadyHostedView/include/ReadyHostedGameProtocol.h": "82ee3b8b1a6b43cdb3fd1ce0ca2c4bdcd51b7f29edb1057018431012beb5c583",
+    "Sources/ReadyHostedView/include/ReadyHostedView.h": "20769e17f0149d170c8877a21da7fd6d179b76b4c008c7f16fc745a41671a194",
+    "Sources/ReadyHostedView/include/RHGOverlayTransition.h": "b6e6853c48bab19871be69515ed39d153ed55bc25ee740c7e52e8f7d148f12dd",
+    "Sources/M1Launcher/HostedGamePresentation.swift": "940aa2e3d78f16e3f5d35e9003f7d4b32ccee87fb27dfa2b5e945465b2a67136",
+    "Sources/M1Launcher/MetalCanvas.swift": "aeecd8b4be182606b7bf98a6f162819e7a0ed17413e65e481373a157dfcf9ae2",
+    "Sources/M1Launcher/CanvasShellRenderer.swift": "66d39dcb927617871d0fc1aa856b5ec768bf484b04bdfa0eb6b048d5f7bbdb84",
+    "Sources/M1Launcher/CanvasDrawing.swift": "3cbcb7b4bcb42daa557bfe60998802051596fdc862cb7abe9a71e306b11c4144",
+    "Sources/M1Launcher/ArtworkCache.swift": "180a50029b3c349b25c16c9fc082f2191796a09943f07a77470e246e76dcb4a8",
+    "Sources/M1Launcher/NavigationPages.swift": "54a308ac72d541d052a30db315842a786639749903f98087b19047ef27523ba1"
+  },
+  "behavior": [
+    "Dock enters from left, header from above; actual Ready UI and GPU blur use one 240 ms smoothstep timeline.",
+    "Opening waits for prepared shaders/hooks and cached UI frame, without waiting for a new native presentation. Immutable pipelines are warmed/reused; image textures and artwork are released on close.",
+    "Library entry restores only indexed visible cards; redundant software blur of transparent hosted chrome is skipped.",
+    "Resume uses saved virtual coordinates and current game association. Physical capture preserves an already in-window point, eliminating the recenter-induced first mouse delta."
+  ],
+  "build": "Release app and universal shim built; strict bundle signature verified.",
+  "tests": {
+    "chromeGPU": {
+      "passed": true,
+      "reportSHA256": "087f666c9f28d0ae7076d1f46192c892403e50615c25faf4176e2421ea275d77",
+      "checks": 10
+    },
+    "blurGPU": {
+      "passed": true,
+      "reportSHA256": "610692738409b364a6b109947bc11f8191ce45bd3c4123fb2a33e615ecd9a9b2",
+      "checks": 39
+    },
+    "hookTimelineAndInput": {
+      "passed": true,
+      "reportSHA256": "07d9ada1bf2f7ae36e5d66d8169f0449a01322ac42a40f8ddedfbd1b384963b0",
+      "checks": {
+        "guest": 200,
+        "host": 181
+      },
+      "originalDefectNegativeControl": true
+    },
+    "interfaceLifecycle": {
+      "passed": true,
+      "reportSHA256": "bf4138e07e83b8dad00f232f39cdfadd59cfdeeba92146f3adc81d4da0c5a17c",
+      "checks": 133
+    },
+    "overlayArtwork": {
+      "passed": true,
+      "reportSHA256": "0cdbc42b3da675ab3d0db77db5d4aaf7408578840fe83acd68badc48c528d8ce",
+      "checks": 24
+    },
+    "artworkIndex": {
+      "passed": true,
+      "reportSHA256": "f223981198a06cd93ad4c64411a797491a4abea0c900ef85290f989c96ff43e7",
+      "checks": 45
+    },
+    "pointerPolicy": {
+      "passed": true,
+      "reportSHA256": "956131731b929188f00b562f44e319374fdca04fcbbde016495e9c764000adc0",
+      "checks": 24
+    }
+  },
+  "runtime": {
+    "anchorChoices": [
+      "kept-current-position",
+      "kept-current-position",
+      "kept-current-position",
+      "kept-current-position"
+    ],
+    "resumes": [
+      {
+        "epoch": 3,
+        "firstMoves": [
+          {
+            "dx": 0,
+            "dy": 0,
+            "captured": true
+          },
+          {
+            "dx": 0,
+            "dy": -2,
+            "captured": true
+          },
+          {
+            "dx": 1,
+            "dy": -3,
+            "captured": true
+          }
+        ]
+      },
+      {
+        "epoch": 6,
+        "firstMoves": [
+          {
+            "dx": -1,
+            "dy": 0,
+            "captured": true
+          },
+          {
+            "dx": -1,
+            "dy": -1,
+            "captured": true
+          },
+          {
+            "dx": -3,
+            "dy": -2,
+            "captured": true
+          }
+        ]
+      }
+    ],
+    "openToTimelinePublicationMs": [
+      81.8,
+      109.06,
+      114.75
+    ],
+    "sharedClockComparisons": [
+      {
+        "epoch": 1,
+        "startDifferenceSeconds": 2.9103830456733704e-10,
+        "sameDuration": true
+      },
+      {
+        "epoch": 2,
+        "startDifferenceSeconds": 2.3283064365386963e-10,
+        "sameDuration": true
+      },
+      {
+        "epoch": 4,
+        "startDifferenceSeconds": 4.0745362639427185e-10,
+        "sameDuration": true
+      },
+      {
+        "epoch": 5,
+        "startDifferenceSeconds": 5.820766091346741e-11,
+        "sameDuration": true
+      },
+      {
+        "epoch": 7,
+        "startDifferenceSeconds": 5.820766091346741e-11,
+        "sameDuration": true
+      }
+    ]
+  },
+  "userFeedback": {
+    "openingStartsPromptly": true,
+    "cursorNoLongerJumpsOnFirstMovement": true
+  },
+  "measurementScope": "Open-to-timeline-publication timings are host diagnostic events, not full keyboard-to-glass latency. No FPS/frame-time benchmark or screen recording was used for these runtime checks.",
+  "limits": [
+    "Native Metal 3 experiment verified only with the installed Cyberpunk build.",
+    "Other games, Metal 4, physical controllers and multi-display fallback recentering remain unverified.",
+    "The optional bounded input trace was enabled for cursor diagnosis; normal launches leave it disabled."
+  ]
+}

@@ -8,6 +8,12 @@
 #include "ReadyHostedGameProtocol.h"
 typedef struct {int32_t(*associate)(bool,void*);int32_t(*hide)(void*);int32_t(*show)(void*);int32_t(*anchor)(void*);void*context;} RHGPointerOps;
 typedef struct {bool detached,hidden,captured,anchored;int32_t error;} RHGPointerState;
+typedef struct {bool valid,warp;double x,y;} RHGPointerAnchorPlan;
+static inline RHGPointerAnchorPlan RHGPlanPointerAnchor(double x,double y,double left,double bottom,double width,double height){
+ if(!isfinite(x)||!isfinite(y)||!isfinite(left)||!isfinite(bottom)||!isfinite(width)||!isfinite(height)||width<=0||height<=0)return(RHGPointerAnchorPlan){0};
+ bool inside=x>=left&&x<left+width&&y>=bottom&&y<bottom+height;
+ return(RHGPointerAnchorPlan){true,!inside,inside?x:left+width*.5,inside?y:bottom+height*.5};
+}
 static inline void RHGPointerRelease(RHGPointerState*s,RHGPointerOps ops){
  s->captured=false;s->anchored=false;s->error=0;
  if(s->detached){int32_t e=ops.associate(true,ops.context);if(!e)s->detached=false;else s->error=e;}

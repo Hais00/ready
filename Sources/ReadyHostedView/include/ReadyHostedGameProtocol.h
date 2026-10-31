@@ -9,7 +9,7 @@
 #define RHG_MAX_EVENTS 8
 #define RHG_NONCE_BYTES 32
 #define RHG_SERVICE_PREFIX "local.ready.hostedgame."
-enum {RHG_HELLO=1,RHG_CONFIGURE=2,RHG_ACQUIRE=3,RHG_PRESENT=4,RHG_POLL=5,RHG_DONE=6,RHG_POINTER_ASSOCIATE=7,RHG_POINTER_WARP=8,RHG_POINTER_CURSOR=9,RHG_REMOTE_ATTACH=10,RHG_REMOTE_FIRST_FRAME=11,RHG_REMOTE_BLUR_READY=12};
+enum {RHG_HELLO=1,RHG_CONFIGURE=2,RHG_ACQUIRE=3,RHG_PRESENT=4,RHG_POLL=5,RHG_DONE=6,RHG_POINTER_ASSOCIATE=7,RHG_POINTER_WARP=8,RHG_POINTER_CURSOR=9,RHG_REMOTE_ATTACH=10,RHG_REMOTE_FIRST_FRAME=11,RHG_REMOTE_BLUR_READY=12,RHG_POINTER_RESTORE=13,RHG_REMOTE_BLUR_PREPARED=14};
 /* HELLO reserved selects the transport; request/reply layout remains wire V6. */
 enum {RHG_TRANSPORT_SURFACE=0,RHG_TRANSPORT_REMOTE_LAYER=1};
 enum {RHG_CURSOR_HIDE=1,RHG_CURSOR_SHOW=2,RHG_CURSOR_HIDE_UNTIL_MOVE=3,RHG_CURSOR_CANCEL_UNTIL_MOVE=4};
@@ -17,9 +17,13 @@ enum {RHG_OK=0,RHG_REJECTED=1,RHG_STOPPED=2,RHG_BUSY=3,RHG_UNSUPPORTED=4};
 enum {RHG_PRESENT_NORMAL=0,RHG_PRESENT_AT_TIME=1,RHG_PRESENT_MIN_DURATION=2};
 /* REMOTE_FIRST_FRAME-only bits returned by the guest for the source drawable. */
 enum {RHG_REMOTE_TEXTURE_SHADER_READABLE=1u<<0,RHG_REMOTE_TEXTURE_FRAMEBUFFER_ONLY=1u<<1};
-enum {RHG_KEY_DOWN=1,RHG_KEY_UP=2,RHG_MOUSE_MOVE=3,RHG_MOUSE_DOWN=4,RHG_MOUSE_UP=5,RHG_SCROLL=6,RHG_FLAGS=7,RHG_FOCUS=8,RHG_OVERLAY_STATE=9};
+enum {RHG_KEY_DOWN=1,RHG_KEY_UP=2,RHG_MOUSE_MOVE=3,RHG_MOUSE_DOWN=4,RHG_MOUSE_UP=5,RHG_SCROLL=6,RHG_FLAGS=7,RHG_FOCUS=8,RHG_OVERLAY_STATE=9,RHG_OVERLAY_ANIMATE=10};
 /* OVERLAY_STATE: keyCode=visible, button=GPU blur requested, modifiers=epoch.
  * REMOTE_BLUR_READY echoes that epoch in request.frameID. Wire layout is V6. */
+/* OVERLAY_ANIMATE: modifiers=epoch, keyCode=target, timestamp=common monotonic
+ * start, x=initial opacity, deltaX=duration. Consumed as control, never input. */
+/* FOCUS gain with button=1 carries a post-overlay pointer restore token in
+ * modifiers. The guest acknowledges POINTER_RESTORE after its focus callbacks. */
 typedef struct {
  uint32_t type,keyCode,button,clickCount;uint64_t modifiers;
  double x,y,deltaX,deltaY,timestamp;uint32_t repeat,charactersLength;char characters[32];

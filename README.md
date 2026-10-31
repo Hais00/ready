@@ -42,6 +42,8 @@ An optional `--host-game-gpu-blur` experiment now applies a low-resolution MPS b
 
 The [reopen regression checkpoint](Validation/gpu-blur-reopen-checkpoint.json) fixes hook reinstallation after closing the overlay and scopes presented-frame acknowledgements to each opening. Twenty-cycle CPU fixtures detect the original defect, and three consecutive openings in Cyberpunk received separate presented-frame acknowledgements. No new FPS result is claimed.
 
+The [overlay response checkpoint](Validation/overlay-response-checkpoint.json) adds a shared 240 ms timeline for the dock, header and game blur, immutable shader caching, and visible-card restoration during play. User checks confirmed prompt opening and removal of the post-overlay cursor jump after unnecessary physical recentering was removed. These are scoped functional checks, without a new FPS benchmark or a general-game compatibility claim.
+
 ## Build and test
 
 The frontend build targets macOS 14+ and Swift 5.10+; current runtime validation is on macOS 27.0.1. The currently built Wine/Vulkan payload declares macOS 27 as its minimum OS. Metal4/GPTK4 testing requires a compatible newer SDK/OS and Apple Silicon. The native group-lifetime checks have not been run on macOS 14/15.

@@ -146,17 +146,33 @@ authenticated overlay state edge arms the Metal 3 drawable hooks on open and
 restores the original command-buffer methods on close. With a shader-readable
 drawable, the guest downsamples to at most 640 pixels per dimension, applies
 `MPSImageGaussianBlur` (sigma 8), then draws the dimmed result back into that
-same drawable before commit. Ready removes its dark placeholder after the first
-blurred frame is actually presented. There is no screenshot, CPU pixel readback
+same drawable before commit. A 240 ms smooth transition blends the sharp game
+frame with the blurred, dimmed image. Closing fades the effect out before retiring
+the hooks; a quick reversal continues from the current opacity. Ready keeps the
+handoff view transparent, and removes it after the first transition frame is
+presented. There is no screenshot, CPU pixel readback
 or extra presentation window in this path.
+
+The host waits for prepared game shaders/hooks and Ready's first cached UI frame
+before publishing a shared monotonic start time, opacity and duration. Preparation
+has its own acknowledgement and does not wait for another native presented frame.
+Immutable Metal pipelines are cached by device/format; the game pipeline is warmed
+while loading. Closing still drops image textures, card layers and decoded artwork.
+The guest
+and UI consume that same timeline. The dock slides in from the left and the
+header from above, using the existing UI texture and GPU uniforms; animation
+does not repeatedly rasterize/upload the full UI. Native content fades with the
+same progress. Closing keeps input gated until the outgoing UI frame completes,
+then restores the game and releases its UI graphics. Reversing direction cancels
+pending removal and continues the timeline without rebuilding the interface.
 
 This experiment has been run on the installed native Cyberpunk 2077 build: its
 first drawable reported `shader-readable`; the overlay logged `MPS-low-resolution`
 encoding and Ready received the first-presented-frame acknowledgement. This
 proves the path ran, not its FPS cost. The pass adds GPU work while the overlay
 is visible, and this trial has not measured frame time or validated other games
-or Metal presentation APIs. Unsupported/non-readable drawables keep the dark
-placeholder and skip the GPU pass. The default path remains the one-shot static
+or Metal presentation APIs. Unsupported/non-readable drawables keep the live
+game visible and skip the GPU pass. The default path remains the one-shot static
 backdrop.
 
 Repeated openings reinstall restored command-buffer hooks while retaining the
@@ -168,6 +184,29 @@ allows another frame to provide the acknowledgement. The CPU regression in
 `Scripts/test_gpu_blur_reopen.py` exercises twenty open/close cycles through
 actual Objective-C method dispatch and detects the original install-once defect
 with a negative control; its renderer and Mach sender are fakes.
+
+The transition's actual MPS/Metal shader is checked offscreen using owned
+procedural pixels (`Scripts/test_gpu_blur_transition.py`): opacity 0 retains the
+sharp image, intermediate samples blend progressively, and opacity 1 applies the
+complete blur/dim. It reads back only its own synthetic texture, never a game.
+
+On return from the interface, Ready restores the saved virtual cursor position
+after the game's focus callbacks. Cursor recentering inside those callbacks is
+deferred to the restore acknowledgement. Input arriving during that handoff is
+held briefly and replayed using the game's current association mode; mouse events
+queued before the interface closed are excluded by their timestamps. Physical
+cursor capture remains owned by Ready. The opening/closing view-tree changes are
+published in Core Animation transactions, without an opaque black handoff view.
+
+A real pointer trace exposed a large first delta after capture resumed (one
+observed packet was -97/+315, followed by ordinary small deltas). The unconditional
+physical warp to the window center caused that jump. Capture now keeps the current
+physical point whenever it is already inside the game view; disassociation still
+freezes it and the game uses its separate virtual position. Recentring is reserved
+for a point outside the game view. The user confirmed the first-movement jump was
+gone in the tested Cyberpunk session. Multi-display fallback recentering remains
+unverified. `RHG_INPUT_TRACE=1` enables bounded transition/input diagnostics, never
+screen recording; it is disabled by default.
 
 ### Games using the injected overlay
 

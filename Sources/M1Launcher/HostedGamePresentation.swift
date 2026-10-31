@@ -154,6 +154,7 @@ import QuartzCore
   private let liveGPUBlur:Bool
   private var stopping=false
   private(set) var interfaceVisible=false
+  private var interfaceTargetVisible=false,interfaceMotionGeneration=UUID()
   private let onShowInterface:(()->Void)?
   private let onHideInterface:(()->Void)?
   private let onInterfaceMove:((Int)->Void)?
@@ -310,8 +311,12 @@ import QuartzCore
     placement.restore()
   }
   private func showInterface()->Bool {
-    guard !isLoading,!interfaceVisible,let window,let game=hostView,let canvas,let handle else{return false}
-    interfaceVisible=true
+    guard !isLoading,let window,let game=hostView,let canvas,let handle else{return false}
+    if interfaceVisible {
+      guard liveGPUBlur,!interfaceTargetVisible else{return false}
+      interfaceTargetVisible=true;RHGHostRequestOverlayTransition(handle,true);return true
+    }
+    interfaceVisible=true;interfaceTargetVisible=true
     RHGHostSetOverlayVisible(handle,true)
     let generation=UUID();backdropGeneration=generation;backdropResolved=false
     let finish:@MainActor(CGImage?)->Void = { [weak self,weak window,weak game,weak canvas] image in
@@ -327,33 +332,56 @@ import QuartzCore
     return true
   }
   private func mountInterface(window:NSWindow,game:NSView,canvas:MetalCanvas,image:CGImage?){
+    CATransaction.begin();CATransaction.setDisableActions(true)
+    defer{CATransaction.commit()}
     let bounds=game.bounds
     let container=NSView(frame:bounds);container.autoresizingMask=[.width,.height]
     game.removeFromSuperview();window.contentView=container
     game.frame=container.bounds;game.autoresizingMask=[.width,.height];container.addSubview(game)
     let backdrop=NSView(frame:container.bounds)
     backdrop.autoresizingMask=[.width,.height];backdrop.wantsLayer=true
-    backdrop.layer?.backgroundColor=NSColor.black.withAlphaComponent(image==nil ? 0.55:1).cgColor
+    // The injected blur already dims the game drawable. Its first frame may
+    // arrive later than the UI; keep the live game visible during that handoff.
+    backdrop.layer?.backgroundColor=NSColor.black.withAlphaComponent(liveGPUBlur ? 0:(image==nil ? 0.55:1)).cgColor
     backdrop.layer?.contents=image;backdrop.layer?.contentsGravity = .resizeAspectFill
     backdrop.layer?.minificationFilter = .linear;backdrop.layer?.magnificationFilter = .linear
     backdrop.alphaValue=0
     container.addSubview(backdrop)
     canvas.frame=container.bounds;canvas.autoresizingMask=[.width,.height]
-    canvas.alphaValue=0;container.addSubview(canvas)
+    canvas.alphaValue=liveGPUBlur ? 1:0;container.addSubview(canvas)
     interfaceContainer=container;interfaceBackdrop=backdrop
     if liveGPUBlur,let handle{RHGHostSetOverlayBlurPlaceholderView(handle,Unmanaged.passUnretained(backdrop).toOpaque())}
+    if liveGPUBlur {
+      canvas.prepareOverlayChrome{[weak self]in
+        guard let self,self.interfaceVisible,self.interfaceTargetVisible,let handle=self.handle else{return}
+        RHGHostSetOverlayUIReady(handle,true)
+      }
+    }
     onShowInterface?()
     guard interfaceVisible,self.handle != nil,hostView===game else{return}
+    if liveGPUBlur{canvas.interactionEnabled=false}
     window.makeFirstResponder(canvas)
     container.layoutSubtreeIfNeeded()
-    NSAnimationContext.runAnimationGroup{context in
+    canvas.renderDisplayTick()
+    if !liveGPUBlur{NSAnimationContext.runAnimationGroup{context in
       context.duration=0.18
       canvas.animator().alphaValue=1
       backdrop.animator().alphaValue=1
-    }
+    }}
   }
   private func hideInterface(){
+    if interfaceVisible,liveGPUBlur,!stopping {
+      guard interfaceTargetVisible,let handle else{return}
+      interfaceTargetVisible=false;canvas?.interactionEnabled=false
+      RHGHostRequestOverlayTransition(handle,false);return
+    }
+    finishInterfaceHide()
+  }
+  private func finishInterfaceHide(){
     guard interfaceVisible else{return};interfaceVisible=false
+    interfaceTargetVisible=false;interfaceMotionGeneration=UUID();canvas?.cancelOverlayChromeMotion()
+    CATransaction.begin();CATransaction.setDisableActions(true)
+    defer{CATransaction.commit()}
     backdropGeneration=UUID();backdropResolved=true
     if let handle{RHGHostSetOverlayBlurPlaceholderView(handle,nil)}
     canvas?.layer?.removeAllAnimations();canvas?.alphaValue=1
@@ -371,8 +399,22 @@ import QuartzCore
     updatePointer()
   }
   private func gpuBackdropReady(){
-    guard liveGPUBlur,interfaceVisible else{return}
+    guard liveGPUBlur,interfaceVisible,let handle,let canvas else{return}
+    var curve=RHGOverlayTransition();var epoch:UInt64=0
+    guard RHGHostGetOverlayTransition(handle,&curve,&epoch),(curve.to>0)==interfaceTargetVisible else{return}
     interfaceBackdrop?.layer?.contents=nil;interfaceBackdrop=nil
+    let motion=UUID();interfaceMotionGeneration=motion
+    canvas.animateOverlayChrome(start:curve.began,from:curve.from,to:curve.to,duration:curve.duration){[weak self]in
+      guard let self,self.interfaceVisible,self.interfaceMotionGeneration==motion else{return}
+      if curve.to==0{self.finishInterfaceHide()}else{self.canvas?.interactionEnabled=true;self.canvas?.refresh()}
+    }
+    if curve.to==0 {
+      let remaining=max(0,curve.began+curve.duration-CACurrentMediaTime())
+      DispatchQueue.main.asyncAfter(deadline:.now()+remaining+0.25){[weak self]in
+        guard let self,self.interfaceVisible,!self.interfaceTargetVisible,self.interfaceMotionGeneration==motion else{return}
+        self.finishInterfaceHide()
+      }
+    }
   }
   func fullscreenTransitionFailed(){
     fullscreenTransitioning=false
@@ -385,6 +427,7 @@ import QuartzCore
     placement.cancelPending(placementRequest);placementRequest=nil
     removePointerObservers()
     overlay?.stop();overlay=nil
+    if interfaceVisible{finishInterfaceHide()}
     if let handle{RHGHostSetOverlayBlurPlaceholderView(handle,nil);RHGHostSetOverlayBlurReadyCallback(handle,nil,nil)}
     restoreCanvasInteraction()
     if let canvas,canvas.superview === hostView{canvas.removeFromSuperview()}

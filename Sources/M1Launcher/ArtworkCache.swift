@@ -42,7 +42,9 @@ final class ArtworkCache {
   /// Resume the exact Ready interface on demand during a game. This does not
   /// prefetch a catalog or restore any old thumbnail working set by itself.
   func resumeForGameInterface(){
-    maintenanceLock.lock();gameplayPaused=false;maintenancePaused=false;workGeneration=UUID();maintenanceLock.unlock()
+    maintenanceLock.lock()
+    if gameplayPaused || maintenancePaused{gameplayPaused=false;maintenancePaused=false;workGeneration=UUID()}
+    maintenanceLock.unlock()
   }
   /// Reload only the first viewport's indexed cards from disk after gameplay.
   /// Background artwork waits for these reads; missing blobs do not hold UI

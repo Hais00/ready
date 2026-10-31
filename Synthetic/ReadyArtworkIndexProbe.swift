@@ -192,6 +192,16 @@ private final class ImageProtocol:URLProtocol {
     timings["returnViewportIndexedDiskMilliseconds"]=Date().timeIntervalSince(coldStart)*1000
     try check(ImageProtocol.calls.isEmpty,"returnWithoutRAMSnapshotUsesOnlyIndexedCardDiskRead")
     returning.purge()
+    for cycle in 0..<3 {
+      returning.beginGameplay();returning.setMaintenanceSuspended(true);returning.resumeForGameInterface()
+      _=returning.image(for:first,role:.card,refresh:{})
+      // Navigating to Library can resume an already open interface while its
+      // first disk read is pending. It must not obsolete that read's epoch.
+      returning.resumeForGameInterface()
+      try spin{returning.hasResidentImage(gameID:first.id,role:.card)}
+      try check(!returning.gameplaySuspended && !returning.maintenanceSuspended,"overlayReopenLoadsIndexedArtwork-\(cycle)")
+      returning.beginGameplay();try check(!returning.hasResidentImage(gameID:first.id,role:.card),"overlayCloseReleasesDecodedArtwork-\(cycle)")
+    }
     let unsafe=root.appendingPathComponent("unsafe"),outside=root.appendingPathComponent("outside");try FileManager.default.createDirectory(at:outside,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700]);try FileManager.default.createSymbolicLink(at:unsafe,withDestinationURL:outside)
     let store=ArtworkIndexStore(unsafe);store.save(ArtworkDiskIndex())
     try check(!FileManager.default.fileExists(atPath:outside.appendingPathComponent("index.json").path),"aliasedCacheDirectoryCannotReceiveIndexWrites")

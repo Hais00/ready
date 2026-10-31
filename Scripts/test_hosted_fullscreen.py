@@ -15,6 +15,7 @@ public enum NativeBinaryProbe {public static func applicationExecutable(_ url:UR
 public enum AtomicFile {public static func writePrivate(_ data:Data,to url:URL)throws{try data.write(to:url);try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:url.path)}}
 '''
 FRONTEND=r'''import AppKit
+import QuartzCore
 import LauncherCore
 // Scalar fixture identity only: never creates a Metal device or GPU resource.
 struct FixtureCanvasDevice {let registryID:UInt64=42}
@@ -25,6 +26,15 @@ final class MetalCanvas:NSView {
  required init?(coder:NSCoder){fatalError("Unused fixture coder")}
  func releaseGraphics(){releases+=1;renderResourcesActive=false}
  func resumeGraphics(){resumes+=1;renderResourcesActive=true}
+ func renderDisplayTick(){}
+ func refresh(){}
+ var motionToken=UUID(),motionStart:Double=0,motionTarget:Double=0
+ func prepareOverlayChrome(completion:@escaping()->Void){completion()}
+ func animateOverlayChrome(start:Double,from:Double,to:Double,duration:Double,completion:@escaping()->Void){
+  motionToken=UUID();let token=motionToken;motionStart=start;motionTarget=to
+  DispatchQueue.main.asyncAfter(deadline:.now()+max(0,start+duration-CACurrentMediaTime())){[weak self]in guard self?.motionToken==token else{return};completion()}
+ }
+ func cancelOverlayChromeMotion(){motionToken=UUID()}
 }
 // The production helper is deliberately not compiled into this CPU fixture.
 // Default capture resolves nil synchronously and never calls ScreenCaptureKit.
@@ -50,6 +60,9 @@ HOST=r'''#import <AppKit/AppKit.h>
 @property(assign)void *blurContext;
 @property(assign)RHGHostOverlayBlurReadyCallback blurCallback;
 @property(weak)NSView *blurPlaceholder;
+@property BOOL uiReady,blurReady;
+@property uint64_t motionEpoch;
+@property RHGOverlayTransition motion;
 @end
 @implementation FixtureHost @end
 static FixtureHost *current;static int created,stops,pointerEnabled,transportMode,hudRequested,failCreate;static uint64_t remoteRegistryID;
@@ -63,6 +76,9 @@ uint64_t RHGFixtureDeviceRegistryID(void){return remoteRegistryID;}
 int RHGFixtureHUDRequested(void){return hudRequested;}
 void RHGFixtureSetFailCreate(int fail){failCreate=fail;}
 void RHGFixturePresent(void){if(current.callback)current.callback(current.context);}
+static void fixtureMotion(FixtureHost*h,bool visible){RHGOverlayTransition old=h.motion;uint64_t epoch=h.motionEpoch+1;double start=CACurrentMediaTime()+.035;h.motion=(RHGOverlayTransition){RHGOverlayTransitionValue(old,start),visible?1:0,start,.24};h.motionEpoch=epoch;[h.blurPlaceholder removeFromSuperview];h.blurPlaceholder=nil;if(h.blurCallback)h.blurCallback(h.blurContext);}
+void RHGFixtureBlurReady(void){current.blurReady=YES;if(current.uiReady)fixtureMotion(current,true);}
+double RHGFixtureTransitionStart(void){return current.motion.began;}
 static RHGHostRef fixtureCreate(void*w){created++;if(failCreate)return NULL;FixtureHost*h=[FixtureHost new];h.view=[[FixtureGameView alloc]initWithFrame:((__bridge NSWindow*)w).contentView.bounds];current=h;return (__bridge_retained RHGHostRef)h;}
 RHGHostRef RHGHostCreate(void*w,bool hud,const char*e,const char*d){(void)e;(void)d;transportMode=0;hudRequested=hud?1:0;remoteRegistryID=0;return fixtureCreate(w);}
 RHGHostRef RHGHostCreateRemote(void*w,uint64_t registryID,const char*e,const char*d){(void)e;(void)d;transportMode=1;remoteRegistryID=registryID;hudRequested=0;return fixtureCreate(w);}
@@ -71,10 +87,13 @@ const char *RHGHostService(RHGHostRef h){(void)h;return "app.ready.owned-fixture
 const char *RHGHostNonce(RHGHostRef h){(void)h;return "0000000000000000000000000000000000000000000000000000000000000000";}
 void RHGHostSetFirstFrameCallback(RHGHostRef h,void*c,RHGHostFirstFrameCallback f){FixtureHost*x=(__bridge FixtureHost*)h;x.context=c;x.callback=f;}
 void RHGHostSetPointerEnabled(RHGHostRef h,bool e){(void)h;pointerEnabled=e?1:0;}
-void RHGHostSetOverlayVisible(RHGHostRef h,bool e){((__bridge FixtureHost*)h).overlayVisible=e;}
+void RHGHostSetOverlayVisible(RHGHostRef h,bool e){FixtureHost*x=(__bridge FixtureHost*)h;if(x.overlayVisible!=e){x.uiReady=NO;x.blurReady=NO;}x.overlayVisible=e;}
 void RHGHostSetOverlayGPUBlurEnabled(RHGHostRef h,bool e){((__bridge FixtureHost*)h).gpuBlurEnabled=e;}
 void RHGHostSetOverlayBlurReadyCallback(RHGHostRef h,void*c,RHGHostOverlayBlurReadyCallback f){FixtureHost*x=(__bridge FixtureHost*)h;x.blurContext=c;x.blurCallback=f;}
 void RHGHostSetOverlayBlurPlaceholderView(RHGHostRef h,void*v){((__bridge FixtureHost*)h).blurPlaceholder=v?(__bridge NSView*)v:nil;}
+void RHGHostSetOverlayUIReady(RHGHostRef h,bool ready){FixtureHost*x=(__bridge FixtureHost*)h;x.uiReady=ready;if(ready&&x.blurReady)fixtureMotion(x,true);}
+void RHGHostRequestOverlayTransition(RHGHostRef h,bool visible){fixtureMotion((__bridge FixtureHost*)h,visible);}
+bool RHGHostGetOverlayTransition(RHGHostRef h,RHGOverlayTransition*t,uint64_t*epoch){FixtureHost*x=(__bridge FixtureHost*)h;if(!x.motionEpoch)return false;*t=x.motion;*epoch=x.motionEpoch;return true;}
 bool RHGHostPointerCaptured(RHGHostRef h){(void)h;return false;}
 void RHGHostStop(RHGHostRef h){FixtureHost*x=(__bridge FixtureHost*)h;if(!x.stopped){stops++;x.stopped=YES;}x.callback=NULL;x.context=NULL;}
 void RHGHostDestroy(RHGHostRef h){RHGHostStop(h);current=nil;CFRelease((CFTypeRef)h);}

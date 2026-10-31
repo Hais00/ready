@@ -7,6 +7,8 @@ import ReadyHostedView
 @_silgen_name("RHGFixtureCreateCount") func fixtureCreateCount()->Int32
 @_silgen_name("RHGFixtureStopCount") func fixtureStopCount()->Int32
 @_silgen_name("RHGFixturePresent") func fixturePresent()
+@_silgen_name("RHGFixtureBlurReady") func fixtureBlurReady()
+@_silgen_name("RHGFixtureTransitionStart") func fixtureTransitionStart()->Double
 @_silgen_name("RHGFixturePointerEnabled") func fixturePointerEnabled()->Int32
 @_silgen_name("RHGFixtureTransportMode") func fixtureTransportMode()->Int32
 @_silgen_name("RHGFixtureDeviceRegistryID") func fixtureDeviceRegistryID()->UInt64
@@ -388,6 +390,32 @@ final class OffscreenFixtureWindow:NSWindow {
       pending?(ownImage());pump();check("late-image-after-timeout-is-ignored",showed==1 && window.contentView===root && backdrop?.layer?.contents==nil)
       lease?.overlay?.resume();controller.stop();check("timeout-fallback-closes-without-persistent-ui-resources",!canvas.renderResourcesActive && canvas.superview==nil && window.contentView===game && fixtureStopCount()==1)
       _=window
+    }
+    do {
+      fixtureReset();let state=FullscreenDriverState(),placement=state.placement()
+      let window=OffscreenFixtureWindow(contentRect:NSRect(x:0,y:0,width:900,height:620),styleMask:[.titled],backing:.buffered,defer:false)
+      let canvas=MetalCanvas(frame:NSRect(x:0,y:0,width:900,height:620));window.contentView=canvas
+      var lease:SessionGamePresentation?,captures=0
+      let controller=HostedGamePresentationController(window:window,canvas:canvas,placement:placement,onShowInterface:{canvas.gameInterfaceMode=true;canvas.interactionEnabled=true;canvas.resumeGraphics()},onHideInterface:{canvas.releaseGraphics();canvas.gameInterfaceMode=false},captureBackdrop:{_,done in captures+=1;done(nil)},liveGPUBlur:true)
+      controller.prepare(executable:URL(fileURLWithPath:"/usr/bin/true"),shim:shim,diagnostics:directory.appendingPathComponent("gpu-handoff.jsonl"),metalHUD:false,remoteLayer:true){result in if case .success(let value)=result{lease=value}}
+      state.fullscreen=true;state.post(NSWindow.didEnterFullScreenNotification);pump();window.simulatedFullscreen=true;fixturePresent();pump();let game=window.contentView!
+      for cycle in 0..<3 {
+        lease?.overlay?.toggle();pump();let root=window.contentView!
+        let backdrop=root.subviews.first(where:{$0 !== game && $0 !== canvas})
+        check("gpu-handoff-keeps-live-game-visible-before-blur-\(cycle)",game.window===window && root.subviews.first===game && (backdrop?.layer?.backgroundColor?.alpha ?? 1)==0 && captures==0)
+        fixtureBlurReady();pump()
+        check("gpu-ready-removes-transparent-placeholder-\(cycle)",backdrop?.superview==nil && root.subviews.count==2 && canvas.window===window)
+        check("gpu-ready-shares-transition-clock-with-ui-\(cycle)",canvas.motionStart==fixtureTransitionStart() && canvas.motionTarget==1)
+        if cycle==0 {
+          lease?.overlay?.resume();pump(0.07)
+          check("gpu-closing-retains-input-gate-until-animation-end",controller.interfaceVisible && fixtureOverlayGate()==1 && canvas.superview===root)
+          lease?.overlay?.toggle();pump(0.34)
+          check("gpu-reopen-cancels-pending-removal",controller.interfaceVisible && window.contentView===root && canvas.superview===root && canvas.renderResourcesActive && canvas.motionTarget==1)
+        }
+        lease?.overlay?.resume();pump(0.34)
+        check("gpu-handoff-close-restores-game-and-releases-ui-\(cycle)",window.contentView===game && canvas.superview==nil && !canvas.renderResourcesActive)
+      }
+      controller.stop();_=window
     }
     let report:[String:Any]=["passed":checks.values.allSatisfy{$0},"count":checks.count,"checks":checks,
       "fixtureOnly":true,"realSpaceTransitionPerformed":false,"displayCaptureUsed":false,"accountOrGameOrSDKUsed":false,

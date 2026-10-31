@@ -51,6 +51,14 @@ final class CanvasRaster {
   }
 }
 
+struct CanvasOverlayMotion {
+  var from:Double,to:Double,began:Double,duration:Double
+  func value(at time:Double)->Double{
+    guard duration>0 else{return to}
+    let t=max(0,min(1,(time-began)/duration)),p=t*t*(3-2*t)
+    return from+(to-from)*p
+  }
+}
 enum CanvasShader {
   static let source = """
       #include <metal_stdlib>
@@ -60,8 +68,13 @@ enum CanvasShader {
         float2 p[3]={float2(-1,-1),float2(3,-1),float2(-1,3)};
         V o;o.position=float4(p[i],0,1);o.uv=float2((p[i].x+1)*0.5,1-(p[i].y+1)*0.5);return o;
       }
-      fragment float4 fragmentMain(V v [[stage_in]],texture2d<float> image [[texture(0)]]) {
-        constexpr sampler s(filter::linear,address::clamp_to_edge);return image.sample(s,v.uv);
+      fragment float4 fragmentMain(V v [[stage_in]],texture2d<float> image [[texture(0)]],constant float4 &motion [[buffer(0)]]) {
+        constexpr sampler s(filter::linear,address::clamp_to_edge);float2 uv=v.uv;
+        if(motion.w>.5){
+          if(uv.x<motion.x){if(uv.x>=motion.x*motion.z)return float4(0);uv.x+=motion.x*(1-motion.z);}
+          else if(uv.y<motion.y){if(uv.y>=motion.y*motion.z)return float4(0);uv.y+=motion.y*(1-motion.z);}
+        }
+        float4 color=image.sample(s,uv);return motion.w>.5?color*motion.z:color;
       }
       """
 }

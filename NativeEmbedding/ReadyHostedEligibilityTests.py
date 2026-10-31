@@ -9,10 +9,12 @@ SOURCE=r'''
 #include <assert.h>
 @interface EligibilityHost:RHGHost
 @property BOOL testEligible;
+@property BOOL testWindowEligible;
 @property unsigned eligibilityCalls,releases;
 @end
 @implementation EligibilityHost
 -(BOOL)foregroundEligible{self.eligibilityCalls++;return self.testEligible;}
+-(BOOL)foregroundWindowEligible{return self.testWindowEligible;}
 -(void)releasePointer{self.releases++;self->pointer.captured=false;self->pointer.detached=false;self->pointer.hidden=false;}
 @end
 @interface LocalKey:NSObject
@@ -27,7 +29,7 @@ static void arm(EligibilityHost*h){h.pointerEnabled=YES;h.firstFrameAnnounced=YE
 int main(void){@autoreleasepool{setenv("RHG_PERF_PROFILE","1",1);unsigned count=0;EligibilityHost*h=[EligibilityHost new];arm(h);
  uint32_t operations[]={RHG_HELLO,RHG_CONFIGURE,RHG_ACQUIRE,RHG_PRESENT,RHG_DONE,RHG_POINTER_WARP,RHG_POINTER_ASSOCIATE,RHG_POINTER_CURSOR};
  for(unsigned i=0;i<sizeof operations/sizeof*operations;i++){RHGReply reply={.op=operations[i]};RHGFill(h,&reply);assert(!h.eligibilityCalls&&!h.releases&&h->pointer.captured);}count++;
- RHGReply reply={.op=RHG_POLL};RHGFill(h,&reply);assert(h.eligibilityCalls==1&&!h.releases&&reply.pointerCaptured&&reply.eventCount==1&&reply.events[0].type==RHG_FOCUS&&reply.events[0].keyCode==1);count++;
+ RHGReply reply={.op=RHG_POLL};RHGFill(h,&reply);assert(h.eligibilityCalls==1&&!h.releases&&reply.pointerCaptured&&reply.eventCount==2&&reply.events[0].type==RHG_FOCUS&&reply.events[0].keyCode==1&&reply.events[1].type==RHG_MOUSE_MOVE&&!reply.events[1].deltaX&&!reply.events[1].deltaY);count++;
  reply=(RHGReply){.op=RHG_POLL};RHGFill(h,&reply);assert(h.eligibilityCalls==2&&!h.releases&&!reply.eventCount);count++;
  arm(h);LocalKey*event=[LocalKey new];[h input:(NSEvent*)event type:RHG_KEY_UP];assert(h.eligibilityCalls==1&&!h.releases&&h->inputQueue.count==1&&h->inputQueue.events[0].type==RHG_KEY_UP);count++;
  h.testEligible=NO;[h input:(NSEvent*)event type:RHG_KEY_UP];assert(h.eligibilityCalls==2&&h.releases==1&&!h->pointer.captured&&h->inputQueue.count==1);count++;
@@ -40,6 +42,10 @@ int main(void){@autoreleasepool{setenv("RHG_PERF_PROFILE","1",1);unsigned count=
  assert(![measured foregroundEligible]&&measured->performance.eligibility.count==1);count++;
  atomic_store(&measured->stopped,false);measured.pointerSuspended=YES;
  assert(![measured foregroundEligible]&&measured->performance.eligibility.count==2);count++;
+ h.testEligible=NO;h.testWindowEligible=YES;h.overlayVisible=NO;
+ assert(RHGVirtualPointerPolicyAllowed(h));count++;
+ h.testWindowEligible=NO;assert(!RHGVirtualPointerPolicyAllowed(h));count++;
+ h.overlayVisible=YES;assert(RHGVirtualPointerPolicyAllowed(h));count++;
  printf("{\"passed\":true,\"count\":%u,\"physicalCGCalls\":0,\"accountOrGameUsed\":false}\n",count);return 0;
 }}
 '''

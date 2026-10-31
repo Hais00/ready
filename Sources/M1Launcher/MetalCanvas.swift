@@ -38,6 +38,8 @@ final class MetalCanvas: NSView {
   private var rendererBuild:CanvasRendererBuildTicket?,graphicsGeneration=UUID()
   private var chromePreview:CALayer?
   private var returnViewportCompletion:(()->Void)?
+  private var overlayMotion:CanvasOverlayMotion?,priorOverlayMotion:CanvasOverlayMotion?,overlayMotionGeneration=UUID()
+  private var overlayPreparedCompletion:(()->Void)?,overlayMotionCompletion:(()->Void)?
   var graphicsRestoreSnapshot:(suspended:Bool,rendererReady:Bool,cpuChromeVisible:Bool){(suspended,shellRenderer != nil,chromePreview?.contents != nil)}
   private var gridSurface:LibraryGridSurface?
   private let tileCache=LibraryTileCache()
@@ -61,7 +63,7 @@ final class MetalCanvas: NSView {
   private var tileRasterMilliseconds=[Double](),largestTileBatch=0
   private var artworkObserver:NSObjectProtocol?
   private var shellHover=CAShapeLayer(),shellFocus=CAShapeLayer()
-  private(set) var renderTicks=0,tileBuildTicks=0,chromeRasters=0
+  private(set) var renderTicks=0,tileBuildTicks=0,chromeRasters=0,chromeBlurPasses=0
   private var cpuFrameTimes=[Double]()
   private let offscreenShellTarget:MTLTexture?
   private var canvasLayer: CAMetalLayer?
@@ -174,6 +176,7 @@ final class MetalCanvas: NSView {
       // Rebuild visible UI immediately after confirmed producer exit. Compiling
       // a new Metal library/pipeline must not block its first grid or disk reads.
       let preview=CALayer();preview.contentsGravity = .resize;preview.frame=bounds
+      preview.opacity=Float(overlayMotionValue(at:CACurrentMediaTime()))
       l.insertSublayer(preview,at:0);chromePreview=preview
       // This pipeline has no profile/game data. Only a new graphics lifecycle
       // can obsolete it; a profile change simply redraws current chrome.
@@ -279,13 +282,55 @@ final class MetalCanvas: NSView {
   }
   deinit{displayLink?.invalidate();if let artworkObserver{NotificationCenter.default.removeObserver(artworkObserver)}}
   func releaseGraphics(){
+    cancelOverlayChromeMotion()
     rendererBuild?.cancel();rendererBuild=nil;graphicsGeneration=UUID();returnViewportCompletion=nil
     suspended=true;renderDirty=false;displayLink?.invalidate();displayLink=nil;linkTarget=nil
     gridSurface?.clear();gridSurface=nil;tileCache.clear();previousTiles.removeAll();tileArtwork.removeAll();tileVersions.removeAll();pendingArtInvalidations.removeAll();artworkEntries.removeAll()
     shellRenderer?.stop();shellRenderer=nil;chromePreview?.contents=nil;chromePreview?.removeFromSuperlayer();chromePreview=nil;canvasLayer?.device=nil;canvasLayer?.removeFromSuperlayer();canvasLayer=nil;layer=nil
     lastChromeKey="";cachedShellHits=[];art.purge();hits=[];hoverID=nil;pressedID=nil;window?.invalidateCursorRects(for:self)
+    preparedCatalog=nil;lastViewportCatalog=nil;lastViewportIDs=[];lastAheadIDs=[]
   }
   func resumeGraphics(){if suspended{suspended=false;try?configure(asyncRenderer:true)};redraw()}
+  func prepareOverlayChrome(completion:@escaping()->Void){
+    overlayMotion=CanvasOverlayMotion(from:0,to:0,began:0,duration:0);priorOverlayMotion=nil;overlayMotionGeneration=UUID()
+    overlayPreparedCompletion=completion;overlayMotionCompletion=nil;interactionEnabled=false
+    chromePreview?.opacity=0;for child in subviews{child.alphaValue=0};redraw()
+  }
+  func animateOverlayChrome(start:Double,from:Double,to:Double,duration:Double,completion:@escaping()->Void){
+    if let current=overlayMotion,CACurrentMediaTime()>=current.began{priorOverlayMotion=current}
+    overlayMotion=CanvasOverlayMotion(from:from,to:to,began:start,duration:duration);overlayMotionGeneration=UUID()
+    overlayMotionCompletion=completion;interactionEnabled=false;redraw()
+  }
+  func cancelOverlayChromeMotion(){
+    overlayMotion=nil;priorOverlayMotion=nil;overlayMotionGeneration=UUID();overlayPreparedCompletion=nil;overlayMotionCompletion=nil
+    chromePreview?.opacity=1;for child in subviews{child.alphaValue=1}
+  }
+  private func motionNeedsFrames(at time:Double)->Bool{
+    guard let motion=overlayMotion else{return false}
+    return time<motion.began+motion.duration || overlayMotionCompletion != nil
+  }
+  private func overlayMotionValue(at time:Double)->Double{
+    guard let motion=overlayMotion else{return 1}
+    if time<motion.began,let prior=priorOverlayMotion{return prior.value(at:time)}
+    return motion.value(at:time)
+  }
+  private func overlayChromePresented(generation:UUID,endpoint:Bool){
+    if let ready=overlayPreparedCompletion{overlayPreparedCompletion=nil;ready()}
+    guard overlayMotionGeneration==generation,endpoint,let done=overlayMotionCompletion else{return}
+    overlayMotionCompletion=nil;done()
+  }
+  /// Opening the real library during play restores only the visible indexed
+  /// cards. Do not let an earlier gameplay purge leave viewport demand stale.
+  func restoreInterfaceLibraryArtwork(){
+    guard gameInterfaceMode,!suspended,section == .library else{return}
+    art.resumeForGameInterface();updateGridGeometry()
+    let games=indexRange(prefetch:false).map{visibleGames[$0]},epoch=graphicsGeneration
+    lastViewportCatalog=nil;lastViewportIDs=[];lastAheadIDs=[]
+    art.restoreFirstViewport(games:games){[weak self]in
+      guard let self,!self.suspended,self.gameInterfaceMode,self.graphicsGeneration==epoch else{return}
+      self.redraw()
+    }
+  }
   /// Called after the return's priority disk reads. Only visible card stamps
   /// must commit before unrelated catalog/artwork maintenance can resume.
   func restoreVisibleLibrary(completion:@escaping()->Void){
@@ -361,8 +406,25 @@ final class MetalCanvas: NSView {
   }
   /// Called by CADisplayLink on Main. Hidden fixtures call this same entry point.
   func renderDisplayTick(){
-    guard !suspended,renderDirty,bounds.width>100,bounds.height>100 else{displayLink?.isPaused=true;return}
-    let began=ProcessInfo.processInfo.systemUptime;renderDirty=false;renderTicks+=1;updateGridGeometry()
+    let clock=CACurrentMediaTime(),contentDirty=renderDirty
+    guard !suspended,(contentDirty || motionNeedsFrames(at:clock)),bounds.width>100,bounds.height>100 else{displayLink?.isPaused=true;return}
+    let began=ProcessInfo.processInfo.systemUptime;renderDirty=false;renderTicks+=1
+    let progress=overlayMotionValue(at:clock),motionGeneration=overlayMotionGeneration
+    let endpoint=overlayMotion.map{clock >= $0.began+$0.duration} ?? false
+    let uniforms=SIMD4<Float>(Float(72/bounds.width),Float(84/bounds.height),Float(progress),overlayMotion==nil ? 0:1)
+    if overlayMotion != nil{CATransaction.begin();CATransaction.setDisableActions(true);for child in subviews{child.alphaValue=progress};chromePreview?.opacity=Float(progress);CATransaction.commit()}
+    let graphics=graphicsGeneration
+    let motionDone:((Bool)->Void) = {[weak self] success in
+      guard let self,!self.suspended,self.graphicsGeneration==graphics else{return}
+      if success{self.overlayChromePresented(generation:motionGeneration,endpoint:endpoint)}else{self.lastChromeKey="";self.redraw()}
+    }
+    if !contentDirty {
+      if let renderer=shellRenderer,let layer=canvasLayer{
+        if !renderer.presentCurrent(layer:layer,target:offscreenShellTarget,motion:uniforms,completion:motionDone){renderDirty=true}
+      }else{renderDirty=true}
+      displayLink?.isPaused = !renderDirty && !motionNeedsFrames(at:clock);return
+    }
+    updateGridGeometry();var submittedChrome=false
     let key=chromeKey(),scale=window?.backingScaleFactor ?? 2
     if key != lastChromeKey,let renderer=shellRenderer,renderer.canSubmit,let canvasLayer{
       let w=max(1,Int(bounds.width*scale)),h=max(1,Int(bounds.height*scale))
@@ -373,9 +435,10 @@ final class MetalCanvas: NSView {
         let completion:((Bool)->Void) = {[weak self] success in
           guard let self,!self.suspended,self.graphicsGeneration==epoch else{return}
           if !success{self.lastChromeKey="";self.redraw()}
-          else{self.chromePreview?.contents=nil;self.chromePreview?.removeFromSuperlayer();self.chromePreview=nil}
+          else{self.chromePreview?.contents=nil;self.chromePreview?.removeFromSuperlayer();self.chromePreview=nil;self.overlayChromePresented(generation:motionGeneration,endpoint:endpoint)}
         }
-        let accepted=offscreenShellTarget.map{renderer.submit(bitmap,target:$0,completion:completion)} ?? renderer.submit(bitmap,layer:canvasLayer,completion:completion)
+        let accepted=offscreenShellTarget.map{renderer.submit(bitmap,target:$0,motion:uniforms,completion:completion)} ?? renderer.submit(bitmap,layer:canvasLayer,motion:uniforms,completion:completion)
+        submittedChrome=accepted
         if accepted{lastChromeKey=key;chromeRasters+=1}else{renderDirty=true}
       }
     }else if key != lastChromeKey,shellRenderer==nil,let preview=chromePreview{
@@ -394,7 +457,7 @@ final class MetalCanvas: NSView {
       let visibleRange=indexRange(prefetch:false),visibleIDs=visibleRange.map{visibleGames[$0].id}
       let aheadRange=lookAheadRange(),aheadIDs=aheadRange.filter{!visibleRange.contains($0)}.map{visibleGames[$0].id}
       recordViewportEntries()
-      if preparedCatalog != catalogRevision{art.prepare(games:state.games.filter{$0.profileIDs==nil || $0.profileIDs!.contains(state.activeProfile)}.map{state.configured($0)});preparedCatalog=catalogRevision}
+      if !gameInterfaceMode,preparedCatalog != catalogRevision{art.prepare(games:state.games.filter{$0.profileIDs==nil || $0.profileIDs!.contains(state.activeProfile)}.map{state.configured($0)});preparedCatalog=catalogRevision}
       if lastViewportCatalog != catalogRevision || lastViewportIDs != visibleIDs || lastAheadIDs != aheadIDs{
         art.prepareViewport(games:aheadRange.map{visibleGames[$0]},visibleGameIDs:visibleIDs,lookAheadGameIDs:aheadIDs)
         lastViewportIDs=visibleIDs;lastAheadIDs=aheadIDs;lastViewportCatalog=catalogRevision
@@ -433,7 +496,10 @@ final class MetalCanvas: NSView {
     }else{gridSurface?.isHidden=true;visibleLibraryRestored()}
     updateShellFeedback()
     cpuFrameTimes.append((ProcessInfo.processInfo.systemUptime-began)*1000);if cpuFrameTimes.count>4096{cpuFrameTimes.removeFirst(cpuFrameTimes.count-4096)}
-    displayLink?.isPaused = !renderDirty
+    if !submittedChrome,overlayMotion != nil,let renderer=shellRenderer,let layer=canvasLayer{
+      if !renderer.presentCurrent(layer:layer,target:offscreenShellTarget,motion:uniforms,completion:motionDone){renderDirty=true}
+    }
+    displayLink?.isPaused = !renderDirty && !motionNeedsFrames(at:clock)
   }
   private func updateShellFeedback(){
     CATransaction.begin();CATransaction.setDisableActions(true)
@@ -616,7 +682,11 @@ final class MetalCanvas: NSView {
     // Blur only our existing UI raster on rare chrome updates. This is not a
     // screenshot or game-frame readback; the suspended canvas never runs it.
     let scale=max(1,abs(cg.ctm.a)),deviceRect=CGRect(x:rect.minX*scale,y:rect.minY*scale,width:rect.width*scale,height:rect.height*scale).integral
-    if let ownRaster=cg.makeImage(),let crop=ownRaster.cropping(to:deviceRect){
+    // In hosted mode this raster is transparent behind the chrome; the game
+    // already supplies its GPU blur. Filtering transparent pixels changes
+    // nothing and used to delay the first overlay frame on the CPU.
+    if !gameInterfaceMode,let ownRaster=cg.makeImage(),let crop=ownRaster.cropping(to:deviceRect){
+      chromeBlurPasses+=1
       let input=CIImage(cgImage:crop),blurred=input.clampedToExtent().applyingFilter("CIGaussianBlur",parameters:[kCIInputRadiusKey:12*scale]).cropped(to:input.extent)
       let mask=CIFilter(name:"CILinearGradient",parameters:["inputPoint0":CIVector(x:0,y:0),"inputPoint1":CIVector(x:0,y:input.extent.height),"inputColor0":CIColor(red:top ? 0:0.5,green:top ? 0:0.5,blue:top ? 0:0.5),"inputColor1":CIColor(red:top ? 0.5:0,green:top ? 0.5:0,blue:top ? 0.5:0)])?.outputImage?.cropped(to:input.extent)
       let softened=mask.map{blurred.applyingFilter("CIBlendWithMask",parameters:[kCIInputBackgroundImageKey:input,kCIInputMaskImageKey:$0])} ?? input

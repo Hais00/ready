@@ -20,6 +20,14 @@ Runtime/profile/storage/authentication changes are guarded while playing. See
 [hosted overlay behavior](OVERLAY.md#hosted-native-games) for the static blurred
 background, fallback and resource cleanup.
 
+Entering Library while a hosted game remains open explicitly restores the
+visible viewport's indexed card images from disk. Repeated entry does not
+invalidate pending reads. The interface skips whole-catalog artwork preparation
+during play, and clears decoded artwork and card layers when returning to the
+game. The owned cache/canvas fixture checks three repeated open/load/close cycles.
+Hosted chrome also skips software filtering of its transparent background; the
+game supplies the actual GPU blur. This avoids redundant first-frame CPU work.
+
 Symbols fit their intrinsic aspect ratio. Artwork fills its card while retaining
 its ratio and clipping the overflow. The CPU bitmap and Metal texture now share
 an explicit sRGB BGRA8 contract. The prior NSBitmapImageRep path returned ARGB

@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "ReadyHostedGameProtocol.h"
 #include "RHGPerformance.h"
+#include "RHGOverlayTransition.h"
 typedef struct RHGHostOpaque *RHGHostRef;
 typedef void (*RHGHostFirstFrameCallback)(void *context);
 typedef void (*RHGHostOverlayBlurReadyCallback)(void *context);
@@ -26,6 +27,9 @@ void RHGHostSetOverlayVisible(RHGHostRef host, bool visible);
 void RHGHostSetOverlayGPUBlurEnabled(RHGHostRef host, bool enabled);
 void RHGHostSetOverlayBlurReadyCallback(RHGHostRef host, void *context, RHGHostOverlayBlurReadyCallback callback);
 void RHGHostSetOverlayBlurPlaceholderView(RHGHostRef host, void *view);
+void RHGHostSetOverlayUIReady(RHGHostRef host, bool ready);
+void RHGHostRequestOverlayTransition(RHGHostRef host, bool visible);
+bool RHGHostGetOverlayTransition(RHGHostRef host, RHGOverlayTransition *transition, uint64_t *epoch);
 bool RHGHostPointerCaptured(RHGHostRef host);
 void RHGHostStop(RHGHostRef host);
 void RHGHostDestroy(RHGHostRef host);

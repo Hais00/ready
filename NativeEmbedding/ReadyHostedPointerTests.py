@@ -15,6 +15,12 @@ static int32_t hide(void*p){Fake*f=p;f->hide++;return f->failHide;}
 static int32_t show(void*p){Fake*f=p;f->show++;return f->failShow;}
 static int32_t anchor(void*p){Fake*f=p;f->anchors++;return f->failAnchor;}
 int main(void){unsigned count=0;Fake f={0};RHGPointerOps ops={assoc,hide,show,anchor,&f};RHGPointerState s={0};RHGVirtualPointer v={.associated=true,.x=.5,.y=.5};
+RHGPointerAnchorPlan plan=RHGPlanPointerAnchor(937,210,0,0,1680,1050);assert(plan.valid&&!plan.warp&&plan.x==937&&plan.y==210);count++;
+plan=RHGPlanPointerAnchor(887,562,0,0,1680,1050);assert(plan.valid&&!plan.warp&&plan.x==887&&plan.y==562);count++;
+plan=RHGPlanPointerAnchor(-10,20,0,0,1680,1050);assert(plan.valid&&plan.warp&&plan.x==840&&plan.y==525);count++;
+plan=RHGPlanPointerAnchor(-900,200,-1680,0,1680,1050);assert(plan.valid&&!plan.warp&&plan.x==-900);count++;
+plan=RHGPlanPointerAnchor(1680,20,0,0,1680,1050);assert(plan.valid&&plan.warp);count++;
+assert(!RHGPlanPointerAnchor(0,0,0,0,0,1050).valid&&!RHGPlanPointerAnchor(NAN,0,0,0,1680,1050).valid);count++;
 assert(!RHGVirtualPointerRequest(&v,RHG_POINTER_ASSOCIATE,0,0,0,true));assert(!v.associated);RHGPointerReconcile(&s,ops,false);assert(!f.detach&&!f.hide);count++;
 assert(!RHGVirtualPointerRequest(&v,RHG_POINTER_WARP,0,.8,.7,true));assert(v.x==.8&&v.y==.7&&!f.detach&&!f.hide);count++;
 RHGPointerReconcile(&s,ops,true);assert(s.captured&&s.anchored&&f.detach==1&&f.hide==1&&f.anchors==1);for(int i=0;i<100;i++)RHGPointerReconcile(&s,ops,true);assert(f.hide==1&&f.anchors==1);count++;
