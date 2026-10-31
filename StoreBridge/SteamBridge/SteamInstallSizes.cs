@@ -9,7 +9,7 @@ sealed record SteamSizeRequest(uint AppID,string Platform,string Branch="public"
 {
     internal static SteamSizeRequest Create(uint app,string platform,string branch,string language,string architecture)
     {
-        if(app==0||platform is not ("windows" or "macOS")||architecture!="64"||branch.Length is <1 or >64||!branch.All(c=>char.IsAsciiLetterOrDigit(c)||c is '_' or '-'))throw new ArgumentException();
+        if(app is 0 or uint.MaxValue||platform is not ("windows" or "macOS")||architecture is not ("32" or "64")||platform=="macOS"&&architecture!="64"||branch.Length is <1 or >64||!branch.All(c=>char.IsAsciiLetterOrDigit(c)||c is '_' or '-'))throw new ArgumentException();
         return new(app,platform,branch,SteamPublicCatalog.Language(language),architecture);
     }
 }
@@ -26,7 +26,8 @@ sealed class SteamSizeEntitlementCache
 sealed class SteamSizePlan
 {
     internal required SteamSizeRequest Request;
-    internal ulong? DownloadBytes,InstalledBytes,RequiredBytes;
+    internal ulong? DownloadBytes,InstalledBytes;
+    internal ulong? RequiredBytes=null; // Staging/peak requirements remain unknown.
     internal bool Verified;
     internal string Source="steam_pics",Status="unavailable",Reason="metadata_unavailable";
     internal List<SteamSelectedDepot> Depots=new();

@@ -2,6 +2,11 @@
 
 Free, open-source native macOS game launcher for Apple Silicon. **Work in progress**, not yet a finished replacement for Steam or a production-ready game compatibility package.
 
+A native **Windows C# / Vulkan port** is in progress in [`Windows/`](Windows/),
+without Wine, targeting x64, x86 and ARM64. Native GPU and process-session checks
+are separate from the still-open Steam, injection and full interface-parity work.
+See [Windows scope and build](Docs/WINDOWS_PORT.md).
+
 Repository: https://github.com/Hais00/ready (currently private). Our code is **GPL-3.0-only**; see [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Design

@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <ReadySteamKitRoot Condition="'$(ReadySteamKitRoot)' == ''">$(MSBuildThisFileDirectory)..\Build\Windows\steamkit</ReadySteamKitRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)../StoreBridge/SteamBridge/*.cs" Link="Shared/%(Filename)%(Extension)" />
+    <ProjectReference Include="$(ReadySteamKitRoot)/SteamKit2/SteamKit2/SteamKit2.csproj" />
+  </ItemGroup>
+</Project>

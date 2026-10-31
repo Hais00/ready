@@ -161,6 +161,9 @@ static class SteamCatalogMetadataChecks
         var macOnly=KeyValue.LoadFromString("\"appinfo\" {\"common\" {\"type\" \"game\" \"oslist\" \"macos\"} \"depots\" {"+Depot(10,100,50)+"}}")!;
         Check(SteamInstallSizes.Build(new(1,"windows"),new Dictionary<uint,KeyValue>{{1,macOnly}},storePlatforms:new HashSet<string>{"windows"}).Reason=="platform_unavailable","store-fallback-cannot-overrule-explicit-pics-platforms");
         Check(winPlan.InstalledBytes==300&&winPlan.DownloadBytes==130&&macPlan.InstalledBytes==400&&macPlan.DownloadBytes==140,"size-os-arch-language-and-lowviolence-match-engine-defaults");
+        var win32=SteamInstallSizes.Build(SteamSizeRequest.Create(1,"windows","public","english","32"),products);
+        Check(win32.InstalledBytes==600&&win32.DownloadBytes==250&&win32.Depots.Any(d=>d.DepotID==14)&&win32.Depots.All(d=>d.DepotID!=11),"windows-x86-plan-selects-32bit-depots-without-64bit-payloads");
+        bool invalid32=false;try{SteamSizeRequest.Create(1,"macOS","public","english","32");}catch(ArgumentException){invalid32=true;}Check(invalid32,"macOS-plan-remains-64bit-only");
         Check(!winPlan.Verified&&winPlan.Payload()["peakDiskBytes"]is null&&winPlan.Payload()["requiredBytes"]is null,"catalog-size-not-verified-or-invented-peak-space");
         var packageInfo=new KeyValue("package");var appSection=new KeyValue("appids");appSection.Children.Add(new KeyValue("0","10"));packageInfo.Children.Add(appSection);
         Check(SteamInstallSizes.PackageEntitlements(new uint[]{7,8},new Dictionary<uint,KeyValue>{{7,packageInfo}})is null,"size-missing-requested-package-cannot-certify-partial-entitlements");

@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Ready.Windows.Core/Ready.Windows.Core.csproj" />
+  <Project Path="Ready.Windows/Ready.Windows.csproj" />
+  <Project Path="Ready.Windows.Checks/Ready.Windows.Checks.csproj" />
+  <Project Path="Ready.SessionFixture/Ready.SessionFixture.csproj" />
+</Solution>

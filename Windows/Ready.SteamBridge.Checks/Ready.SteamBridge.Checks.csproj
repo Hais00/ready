@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <StartupObject>PersistentSteamServiceChecks</StartupObject>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <Import Project="../SteamBridge.Shared.props" />
+  <ItemGroup><Compile Include="../../Synthetic/PersistentSteamServiceChecks.cs" Link="Checks.cs" /></ItemGroup>
+</Project>
