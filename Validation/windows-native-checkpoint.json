@@ -1,0 +1,264 @@
+{
+  "schema": 1,
+  "date": "2026-10-31",
+  "status": "incomplete-native-windows-port",
+  "upstreamBase": "b748386547c76699862adb7d64bfb2f5046818ec",
+  "host": {
+    "os": "Windows 11 24H2 (10.0.26100)",
+    "architecture": "x64",
+    "gpu": "NVIDIA GeForce RTX 3090",
+    "sdk": "10.0.403",
+    "access": "authorized SSH to owned LAN PC"
+  },
+  "nativeExecution": {
+    "win-x64": {
+      "graphics": {
+        "schema": 1,
+        "passed": true,
+        "backend": "Vulkan",
+        "gpu": "NVIDIA GeForce RTX 3090",
+        "architecture": "X64",
+        "checks": [
+          "Vulkan shader: 4096 BGRA pixels, channel order and upright orientation",
+          "Vulkan overlay closed motion clears canvas",
+          "Vulkan overlay partial dock clipping and premultiplied alpha",
+          "Canvas texture teardown",
+          "Library scroll hit clipping below header and within window",
+          "Navigation removes library targets",
+          "Actual Vulkan render at 100%, 150%, 200% DPI",
+          "Win32 Vulkan swapchain present and resize"
+        ],
+        "submittedFrames": 8,
+        "canvasBytesAfterRelease": 0,
+        "scope": "Owned synthetic canvas and HWND only; no Steam authentication, game, injection or ARM hardware result."
+      },
+      "sessions": {
+        "schema": 1,
+        "passed": true,
+        "architecture": "X64",
+        "checks": [
+          "CreateProcess with atomic JOB_LIST attribute and suspended startup",
+          "Parent exit preserves owned child lifetime",
+          "Stop A leaves B running",
+          "KILL_ON_JOB_CLOSE terminates B",
+          "CreateProcess argument roundtrip including quotes, spaces, trailing slash"
+        ],
+        "scope": "Owned synthetic processes; no commercial game, Steam or injected overlay."
+      },
+      "window": {
+        "schema": 1,
+        "passed": true,
+        "checks": [
+          "Real form keypress editing and persistent profile creation",
+          "Internal file browser, explicit path editing, PE import and library return",
+          "Production native launch, UI suspension and library reconstruction after fixture exit",
+          "Game detail, Escape, Ctrl+F and clearing search through production handlers",
+          "All five Windows settings sections",
+          "Actual form Vulkan readback and idle window submits no frames"
+        ],
+        "architecture": "X64",
+        "scope": "Owned test form and synthetic fixture import; no Steam account, physical input or game injection."
+      },
+      "steamAdapter": {
+        "schema": 1,
+        "passed": true,
+        "checks": [
+          "Actual SteamKit adapter offline snapshot",
+          "No backend-ready claim",
+          "Private stdin profile/generation binding",
+          "Bounded process shutdown"
+        ],
+        "executableSHA256": "acea42b196c058dda4c9a7c6c2fe09e840670e2fed709da739a5e1acdfda796f",
+        "assemblySHA256": "7d632879b30688ba6455093d1d5ee7cfa2fa18b6e14524c9a8d209c3f8a5104e",
+        "scope": "Actual adapter without connect/authenticate requests or credentials. No game, headless login, account, ticket or network-denial claim."
+      }
+    },
+    "win-x86": {
+      "graphics": {
+        "schema": 1,
+        "passed": true,
+        "backend": "Vulkan",
+        "gpu": "NVIDIA GeForce RTX 3090",
+        "architecture": "X86",
+        "checks": [
+          "Vulkan shader: 4096 BGRA pixels, channel order and upright orientation",
+          "Vulkan overlay closed motion clears canvas",
+          "Vulkan overlay partial dock clipping and premultiplied alpha",
+          "Canvas texture teardown",
+          "Library scroll hit clipping below header and within window",
+          "Navigation removes library targets",
+          "Actual Vulkan render at 100%, 150%, 200% DPI",
+          "Win32 Vulkan swapchain present and resize"
+        ],
+        "submittedFrames": 8,
+        "canvasBytesAfterRelease": 0,
+        "scope": "Owned synthetic canvas and HWND only; no Steam authentication, game, injection or ARM hardware result."
+      },
+      "sessions": {
+        "schema": 1,
+        "passed": true,
+        "architecture": "X86",
+        "checks": [
+          "CreateProcess with atomic JOB_LIST attribute and suspended startup",
+          "Parent exit preserves owned child lifetime",
+          "Stop A leaves B running",
+          "KILL_ON_JOB_CLOSE terminates B",
+          "CreateProcess argument roundtrip including quotes, spaces, trailing slash"
+        ],
+        "scope": "Owned synthetic processes; no commercial game, Steam or injected overlay."
+      },
+      "window": {
+        "schema": 1,
+        "passed": true,
+        "checks": [
+          "Real form keypress editing and persistent profile creation",
+          "Internal file browser, explicit path editing, PE import and library return",
+          "Production native launch, UI suspension and library reconstruction after fixture exit",
+          "Game detail, Escape, Ctrl+F and clearing search through production handlers",
+          "All five Windows settings sections",
+          "Actual form Vulkan readback and idle window submits no frames"
+        ],
+        "architecture": "X86",
+        "scope": "Owned test form and synthetic fixture import; no Steam account, physical input or game injection."
+      },
+      "steamAdapter": {
+        "schema": 1,
+        "passed": true,
+        "checks": [
+          "Actual SteamKit adapter offline snapshot",
+          "No backend-ready claim",
+          "Private stdin profile/generation binding",
+          "Bounded process shutdown"
+        ],
+        "executableSHA256": "e62825d4cb42a8ea764897f236e688db8a9a2f2e9d6ccf37c9e1fb5824075111",
+        "assemblySHA256": "54f00df46c3d1dab4b5d058571d0aaf155ce63a1f87d9d7e4cc43bfa831d3136",
+        "scope": "Actual adapter without connect/authenticate requests or credentials. No game, headless login, account, ticket or network-denial claim."
+      }
+    }
+  },
+  "coreChecks": {
+    "passed": true,
+    "checkCount": 38,
+    "scope": "Pure C# layout/interaction, text VDF/ACF, PE machine detection and profile persistence; not account/game proof"
+  },
+  "steamService": {
+    "passed": true,
+    "checkCount": 214,
+    "fixtureOnly": true,
+    "realAccountUsed": false,
+    "pinnedSteamKitPatchOutputSHA256": "75310a0732b54b06a1acd3791f891645a921aacd1f171f51b24f997adb34491b"
+  },
+  "publishes": {
+    "win-x64": "native execution passed",
+    "win-x86": "native x86 process execution on x64 Windows passed",
+    "win-arm64": "cross-published frontend and Steam service only; physical ARM hardware not tested"
+  },
+  "macPythonRegression": {
+    "testsRun": 88,
+    "skipped": 4,
+    "passed": true,
+    "scope": "Python bridge tests only; four native/optional fixture skips. The original command had seven setup errors from its missing hardcoded Dati APFS root. Rerun used only a canonical owned temporary WORK directory override for test_size_plan, without editing the tests."
+  },
+  "sourceSHA256": {
+    ".gitattributes": "dd1415eda4a815d8f8b92d89d37d7b4ad62095d47b41fc3fd0ac1785502d83f8",
+    ".github/workflows/windows.yml": "0ef69e55d3afd623b07c66d66edb24de92bef193755939b9ec424d482a9dd3ef",
+    "Scripts/steamkit_websocket_close.lock.json": "5ea9a6d91fdb841bee20f923f9dce03f0b14751b590540bd3ae6160e6e79cb6b",
+    "Scripts/steamkit_websocket_close.patch": "b429f0d81aa2d4c5339d3081bf4754ddb765c658b87136ad25cae69f136cc926",
+    "Scripts/test_steam_ownership_preflight.py": "efaad84729bf68c3e8a4b36402d34024e8fe1defd89f180984a92fb4aeeac92d",
+    "StoreBridge/SteamBridge/PersistentSteamService.cs": "0a962f46de9ffdf67561e4dd7e9fe498fc6989e0501b20e102e274f9be5d9546",
+    "StoreBridge/SteamBridge/Program.cs": "79c6a0ec6e9961ca1f42bc6f6e9bf1709503a86076d8da47c18dbc82041a5298",
+    "StoreBridge/SteamBridge/SteamCatalogMetadata.cs": "b151b3dc04cce940a74eb054f05d7cfa5f5cc4d5e7d3aae26fce68c075ba2840",
+    "StoreBridge/SteamBridge/SteamInstallSizes.cs": "92f01ddd384b7247e5566f474d32fd5b786fe04df09b62d716614cea3ee6b51f",
+    "StoreBridge/SteamBridge/SteamOwnedGamesCatalog.cs": "f2980a52557c8774a539add3fdd75b128c5e727695627cec66dda7b827bf66d5",
+    "Synthetic/PersistentSteamServiceChecks.cs": "af0ca446cc137fca7a128731eecabcb29503045a71991357671e38c76cffbb8a",
+    "Windows/Directory.Build.props": "717a04f96f7049888466c29403e3443523ea7457e5f25b414273fa2e78941fb8",
+    "Windows/Ready.SessionFixture/Program.cs": "f07294a7cfb6e64abce7ff5e97fdf066f4d496d996b0b656fe2754b00403f990",
+    "Windows/Ready.SessionFixture/Ready.SessionFixture.csproj": "68e564d3988e81391affd33bd68ed9cc9e69408b57058cb8689707c293cf5a5e",
+    "Windows/Ready.SessionFixture/packages.lock.json": "1f90f92437bf35acf2e556cc14992bb482efe691d49c0d5370e97fed049c9bf5",
+    "Windows/Ready.SteamBridge/Ready.SteamBridge.csproj": "4ca79794d00d9ca99ddc19cba05f351fce478084a35e25b145a1b8b9dedcd3c9",
+    "Windows/Ready.SteamBridge/packages.lock.json": "8045e83ac9469eb6b061085e5c9888d11491225d8e90e28cdf1c9fa7711e61c0",
+    "Windows/Ready.SteamBridge.Checks/Ready.SteamBridge.Checks.csproj": "ff7420163bc5f3900f890f39c137061f22fc9f161e72037063daf72086df8600",
+    "Windows/Ready.SteamBridge.Checks/packages.lock.json": "8045e83ac9469eb6b061085e5c9888d11491225d8e90e28cdf1c9fa7711e61c0",
+    "Windows/Ready.Windows/CanvasPainter.cs": "9843881feac2c82c581e3afa57b03cd51a0fd82b33d774f9e5a0f89ff4105f71",
+    "Windows/Ready.Windows/NativeGameSession.cs": "6cf0c13882e675069dd894e81bbd08da00d449288b4ffb1ab2fef683639d7e54",
+    "Windows/Ready.Windows/Program.cs": "d33e7dd826ff860847c9b01586d55bc27db24c0b14816945e7076a27e50d2104",
+    "Windows/Ready.Windows/Ready.Windows.csproj": "1ae66868f576cdebaf16d4d90f0d64846360ec64c7ff34fce846ea1c1945e6fc",
+    "Windows/Ready.Windows/ReadyWindow.cs": "bf434183f1120a265377260eb8451ceaab6515e98f07f67783fedfaa2871d718",
+    "Windows/Ready.Windows/Shaders/canvas.frag": "f25b54fb97f33e37603a300a92523cdbc847219da85fd2252000b489c4294403",
+    "Windows/Ready.Windows/Shaders/canvas.frag.spv": "11041c8d7c1deb8ad74e4f53b8a46196b410d0e8e9d67ff8b2c8b93560869f11",
+    "Windows/Ready.Windows/Shaders/canvas.vert": "95ce41e2529ff2ab58fc3f943a790890578ed0cad305c8174ca239270320e239",
+    "Windows/Ready.Windows/Shaders/canvas.vert.spv": "fb091aca6567cd974072fe9c5cc84199f1e9417d91b79c2806088269cebce26a",
+    "Windows/Ready.Windows/Shaders/shaders.lock.json": "baddc2b7c94983c4152472b9fdfb36c2a9814f9eb394fabd34fec93601d834ff",
+    "Windows/Ready.Windows/VulkanCanvas.cs": "eec3abf4e8b50ec380e13faaafd94d4f5fe34cecc0740df92a08a745edacaeb0",
+    "Windows/Ready.Windows/WindowsChecks.cs": "67a0a9ddf41595187598b27e7ed1ee45439c43e757b04c12a3c12d70a3217da8",
+    "Windows/Ready.Windows/app.manifest": "d14d785da4a7af3dbe4fe544efb2db48e4a63d1a95e09043a57e9cfd4e251020",
+    "Windows/Ready.Windows/packages.lock.json": "583c72301eb7a898a31c82ca7d37c5f705317f6af6f2ad7de5663a0028698788",
+    "Windows/Ready.Windows.Checks/Program.cs": "50b5666ed5b5aaf49c5f72d0b1172d460d74059354991151965ddfad11448ed5",
+    "Windows/Ready.Windows.Checks/Ready.Windows.Checks.csproj": "5607ef50581d87e8a340b34da9ef96e101161c1e86e397103d845812098ceef7",
+    "Windows/Ready.Windows.Checks/packages.lock.json": "161e53738cdcdb5d89364de53ae6245330ad612772cb7eeb8b7de17a14966a76",
+    "Windows/Ready.Windows.Core/Catalog.cs": "976b7831d4201f45279a434b33789fc138975d81c38216814fced0749d2fa952",
+    "Windows/Ready.Windows.Core/Ready.Windows.Core.csproj": "8d654c44b7bebb6b31a9f2f606927f45b5072193adc4eef8cce3f3cf3b278df3",
+    "Windows/Ready.Windows.Core/Shell.cs": "91bb2f2ca9cf0d850d199e5d3ac359b26dc06d1b86819116afd26f231cdad86c",
+    "Windows/Ready.Windows.Core/ValveKeyValues.cs": "59ab92359cac28cb520b554a3e8374bb4fdd786eb8a8a8ba678f6d5b70505ed1",
+    "Windows/Ready.Windows.Core/packages.lock.json": "1f90f92437bf35acf2e556cc14992bb482efe691d49c0d5370e97fed049c9bf5",
+    "Windows/Ready.Windows.slnx": "5240028218b49b3ee627456071b7ded2a76a5879dd6a9d9bd5ffdb739e530254",
+    "Windows/Scripts/Build-Windows.ps1": "50e1586a4dce97eb0eeb3e888d62545e710e8f3b8f3e20d373bc2a9dfa16b60f",
+    "Windows/Scripts/Compile-Shaders.ps1": "44061a26feccdb18bbf725256916a9e6453c7155d589c829f81504bbe072201b",
+    "Windows/Scripts/Prepare-SteamKit.ps1": "dc2042bbda1f839ce67021f13bef968bbde9655c1d03248c03befe337adc57ef",
+    "Windows/Scripts/Test-SteamBridge.ps1": "bce5c4ad65316335df2b28ef47ac4644688f0b0d7eb8526807fcab095c1d6686",
+    "Windows/SteamBridge.Shared.props": "cb19efbb93f386a857fe981993d9c5205566d9552a23b6e2ededf965db524d01",
+    "Windows/global.json": "1c6737f7e65b0108778ab30ace593c3ec63382090718c2cbc3d6752486178a35",
+    "sources.lock.json": "43747c0fe126ad164e807eb903f908316e1232e5d7d3083ad8bac5ffdb3ff177"
+  },
+  "rawReportSHA256": {
+    "binaries.json": "8a1e65464ce93952f172d2faa43888c506a5da85e4cae9c95f565005d5edf760",
+    "win-x64/graphics.json": "06a607c0262e70455d5c9eedb314ea0da394397c5e68496e349bbd236ba3746b",
+    "win-x64/session.json": "10fdab29c83766ff88fa68380207f286dcecb336696ba38f3ee5173020e764e5",
+    "win-x64/steam-adapter.json": "e6462f55255c442ae2e2539d2c8fc2b1ad6c427a635aa340dc85ba55644be610",
+    "win-x64/window.json": "544bf641b801633fe8c7cb3aec0affdac45124ff96334f947a255223dbfad232",
+    "win-x86/graphics.json": "f5c24bf53f4ef26ca6a721fbe725c52a275ecedfa8ed0fc331f03d6b251c9ccd",
+    "win-x86/session.json": "5a09449e75a1a2b9625f834d8473a5c33738a2bc33c3a3ad0a3d8809eab3e35a",
+    "win-x86/steam-adapter.json": "6711faef75b8c1ce6791ea47c2352ef8e992af776b86ad74cc0155887f6d9f74",
+    "win-x86/steam-service.json": "2ad53b2a411843b6d65af2fb058a5296a18c5734f6f965f6ed84887fe02c60c2",
+    "win-x86/window.json": "1b8d82fafc5a646119504764063aca436985ed48a060563011ece1522e77da31"
+  },
+  "binarySHA256": {
+    "win-x64/Ready.exe": "fdda24f1a6b01a522c0c9c554365a2b8d2d2c5452061cdc7b6616055aadccf9f",
+    "win-x64/Ready.dll": "d2e5df041e621226bd341afc1fa44b1aff643f78957331f8e7a928d1e04d0e70",
+    "win-x64/Ready.Windows.Core.dll": "cf327f5d11b1f5e439514eb10c9e078087c14fa3ff3684b7f3e061a6787f1b97",
+    "win-x64/SteamBridge/ReadySteamBridge.exe": "acea42b196c058dda4c9a7c6c2fe09e840670e2fed709da739a5e1acdfda796f",
+    "win-x64/SteamBridge/ReadySteamBridge.dll": "7d632879b30688ba6455093d1d5ee7cfa2fa18b6e14524c9a8d209c3f8a5104e",
+    "win-x86/Ready.exe": "49672fa0e18b3d4d9e66891f9b0e01b63c77d0aba29cabca5c9e589253387301",
+    "win-x86/Ready.dll": "b14b74b47ea8b38aa10445d901dbfa257b614bf66d7d64d6a2b5be2192495bd0",
+    "win-x86/Ready.Windows.Core.dll": "baf64311dd163c0189ec1f46217e7fef54b54901cd8ebe75bb0a32a3d81c2051",
+    "win-x86/SteamBridge/ReadySteamBridge.exe": "e62825d4cb42a8ea764897f236e688db8a9a2f2e9d6ccf37c9e1fb5824075111",
+    "win-x86/SteamBridge/ReadySteamBridge.dll": "54f00df46c3d1dab4b5d058571d0aaf155ce63a1f87d9d7e4cc43bfa831d3136",
+    "win-arm64/Ready.exe": "6211f1191ca2f2deac00ea922c8f0c8dbb14fa9dc294ba4ac0a1908796cec89f",
+    "win-arm64/Ready.dll": "27166c1bb9002c9575c870b85b4a05310198ed53ee3a29e56ba472c0a5262bb7",
+    "win-arm64/Ready.Windows.Core.dll": "6117197bc8d5459404fe66637046c99f32da49efc29f499f0f687bd25e12c00d",
+    "win-arm64/SteamBridge/ReadySteamBridge.exe": "7948c98f1c1783c6962e2810a74f24cf957d62d9dbeffafd9788138dc1f493a5",
+    "win-arm64/SteamBridge/ReadySteamBridge.dll": "3d09b252126f24da46abc4a18ccd864b6cda3eb8bc22b2a8ac6b5ea68e8e98f3"
+  },
+  "remaining": [
+    "Exact visual parity and full page behavior",
+    "Secure Windows credential storage and Steam UI wiring",
+    "Authenticated owned library and download queue",
+    "Native genuine Steam headless host and real owned-game launch",
+    "Windows injection/embedding and actual in-game interface/input/fullscreen",
+    "Physical ARM64 Windows GPU and game/Steam worker validation",
+    "Other-store Windows adapters, save policy and distribution/installer closure",
+    "Physical input/controller and complete macOS regression acceptance"
+  ],
+  "claims": {
+    "finishedWindowsRelease": false,
+    "wineRequiredOnWindows": false,
+    "genuineWindowsGameHostVerified": false,
+    "realSteamAuthenticationAttempted": false,
+    "commercialGameStarted": false,
+    "inGameInjectionImplemented": false,
+    "fullVisualParityVerified": false,
+    "armHardwareVerified": false,
+    "zeroOverheadVerified": false,
+    "binaryDistributionApproved": false
+  }
+}

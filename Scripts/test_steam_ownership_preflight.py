@@ -48,8 +48,9 @@ static class OwnershipDecisionFixture
   Check(!GameOwnershipPreflight.Decide(123,EResult.OK,123,null,76561198000000001UL).Authorized,"missing-ticket-denied",checks);
   Check(!GameOwnershipPreflight.Decide(123,EResult.OK,123,ticket,null).Authorized,"missing-steamID-denied",checks);
   Check(!GameOwnershipPreflight.Decide(123,EResult.OK,123,ticket,0).Authorized,"zero-steamID-denied",checks);
-  Check(ID("123")==123&&ID("\"4294967295\"")==uint.MaxValue,"uint-input-boundaries",checks);
-  foreach(var value in new[]{"0","-1","4294967296","1.5","null","true","\"+123\"","\" 123\"","\"123suffix\""}){
+  Check(ID("123")==123&&ID("\"4294967294\"")==uint.MaxValue-1,"uint-input-boundaries",checks);
+  Check(!GameOwnershipPreflight.Decide(uint.MaxValue,EResult.OK,uint.MaxValue,ticket,76561198000000001UL).Authorized,"reserved-app-denied",checks);
+  foreach(var value in new[]{"0","-1","4294967295","\"4294967295\"","4294967296","1.5","null","true","\"+123\"","\" 123\"","\"123suffix\""}){
    bool rejected=false;try{ID(value);}catch(Exception e){rejected=e.Message=="invalid_game_id";}
    Check(rejected,"invalid-id-"+value,checks);
   }

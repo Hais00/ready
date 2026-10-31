@@ -26,7 +26,8 @@ sealed class SteamSizeEntitlementCache
 sealed class SteamSizePlan
 {
     internal required SteamSizeRequest Request;
-    internal ulong? DownloadBytes,InstalledBytes,RequiredBytes;
+    internal ulong? DownloadBytes,InstalledBytes;
+    internal ulong? RequiredBytes=null; // Staging/peak requirements remain unknown.
     internal bool Verified;
     internal string Source="steam_pics",Status="unavailable",Reason="metadata_unavailable";
     internal List<SteamSelectedDepot> Depots=new();

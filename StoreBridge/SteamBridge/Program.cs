@@ -58,7 +58,7 @@ static class Program
             if(op is "auth_begin" or "auth_start")
             {
                 stage=SteamOperationStage.QRAuthentication;observedResult=null;
-                var auth=await client.Authentication.BeginAuthSessionViaQRAsync(new AuthSessionDetails { IsPersistentSession=true, DeviceFriendlyName="Ready for macOS" });
+                var auth=await client.Authentication.BeginAuthSessionViaQRAsync(new AuthSessionDetails { IsPersistentSession=true, DeviceFriendlyName=SteamPlatform.DeviceFriendlyName });
                 void QR()=>Emit(new {type="qr",url=auth.ChallengeURL,instructions="Scan with the Steam mobile app and approve sign-in."});
                 auth.ChallengeURLChanged=QR;QR();
                 var result=await auth.PollingWaitForResultAsync(deadline.Token);
@@ -148,12 +148,12 @@ static class GameOwnershipPreflight
         bool valid=value.ValueKind==JsonValueKind.String
             ? uint.TryParse(value.GetString(),NumberStyles.None,CultureInfo.InvariantCulture,out id)
             : value.ValueKind==JsonValueKind.Number&&value.TryGetUInt32(out id);
-        if(!valid||id==0)throw new Exception("invalid_game_id");
+        if(!valid||id is 0 or uint.MaxValue)throw new Exception("invalid_game_id");
         return id;
     }
     internal static Decision Decide(uint requested,EResult result,uint returned,byte[]? ticket,ulong? steamID)
     {
-        if(requested==0||result!=EResult.OK||returned!=requested||ticket is not {Length:>0}||steamID is null or 0)
+        if(requested is 0 or uint.MaxValue||result!=EResult.OK||returned!=requested||ticket is not {Length:>0}||steamID is null or 0)
             return new(false,null,null);
         return new(true,steamID.Value.ToString(CultureInfo.InvariantCulture),Convert.ToHexString(SHA256.HashData(ticket)).ToLowerInvariant());
     }
@@ -166,6 +166,11 @@ static class SteamLoginPolicy
 {
     internal static SteamUser.LogOnDetails CreateLogOnDetails(string name,string token) =>
         new() { Username=name,AccessToken=token,ShouldRememberPassword=true };
+}
+
+static class SteamPlatform
+{
+    internal static string DeviceFriendlyName => OperatingSystem.IsWindows() ? "Ready for Windows" : OperatingSystem.IsMacOS() ? "Ready for macOS" : "Ready";
 }
 
 enum SteamOperationStage

@@ -2,6 +2,14 @@
 
 ready's original code is GPL-3.0-only. Copyright 2026 ready contributors.
 
+The Windows C# frontend uses Veldrid 4.9.0 (MIT), with its dependency resolution
+in `Windows/Ready.Windows/packages.lock.json` and its copyright/permission notice
+in `LICENSES/veldrid-MIT.txt`. Our GLSL/SPIR-V canvas shaders are GPL-3.0-only.
+glslang is a developer tool, not a runtime dependency. Windows Steam builds use
+the existing pinned SteamKit source and LGPL shutdown patch. Valve client files
+and GameNative's closed hosts are not included; complete Windows binary
+distribution closure remains unapproved.
+
 The full LGPL 2.1 text for Wine-derived patches and their LGPL-2.1-or-later notices is retained in `LICENSES/LGPL-2.1.txt`. It is copied unchanged from the pinned Wine source. Each patch/source header controls its license; ready's GPL does not replace that permission.
 
 GameNative, copyright its contributors, GPL-3.0: https://github.com/utkarshdalal/GameNative, revision `eaa715cf38fddfea6f8d1278c7dd89c0bb50e063`, is the architectural reference for store authentication, depots and launch coordination. The public source clone remains at `../GameNative`. Closed GameNative helpers are not included or reconstructed from binaries.

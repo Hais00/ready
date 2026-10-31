@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "compiler": "glslang 16.6.0 (macos universal official release)",
+  "files": {
+    "canvas.vert": "95ce41e2529ff2ab58fc3f943a790890578ed0cad305c8174ca239270320e239",
+    "canvas.vert.spv": "fb091aca6567cd974072fe9c5cc84199f1e9417d91b79c2806088269cebce26a",
+    "canvas.frag": "f25b54fb97f33e37603a300a92523cdbc847219da85fd2252000b489c4294403",
+    "canvas.frag.spv": "11041c8d7c1deb8ad74e4f53b8a46196b410d0e8e9d67ff8b2c8b93560869f11"
+  }
+}

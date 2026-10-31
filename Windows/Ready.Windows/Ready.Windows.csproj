@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>Ready</AssemblyName>
+    <RuntimeIdentifiers>win-x64;win-arm64;win-x86</RuntimeIdentifiers>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Ready.Windows.Core/Ready.Windows.Core.csproj" />
+    <PackageReference Include="Veldrid" Version="4.9.0" />
+    <!-- Override an old transitive dependency of the graphics package. -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <EmbeddedResource Include="Shaders/*.spv" />
+  </ItemGroup>
+</Project>

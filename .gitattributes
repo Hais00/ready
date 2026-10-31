@@ -2,3 +2,7 @@
 DXMTIntegration/UPSTREAM_* -whitespace
 Scripts/*.patch -whitespace
 LICENSES/LGPL-2.1.txt -whitespace
+# Windows checkouts must preserve hash-bound patch/shader input bytes.
+Scripts/steamkit_websocket_close.patch -text
+Windows/** text eol=lf
+Windows/**/*.spv -text

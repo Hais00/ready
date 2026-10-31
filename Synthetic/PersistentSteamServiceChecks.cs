@@ -119,6 +119,12 @@ static class PersistentSteamServiceChecks
     static bool B(JsonElement e,string key)=>e.TryGetProperty(key,out var value)&&value.ValueKind==JsonValueKind.True;
     static async Task<int> Main()
     {
+        using(var sentinel=JsonDocument.Parse("{\"options\":{\"gameID\":\"4294967295\"}}"))
+        {
+            bool rejected=false;try{GameOwnershipPreflight.AppID(sentinel.RootElement);}catch(Exception e){rejected=e.Message=="invalid_game_id";}
+            Check(rejected&&!GameOwnershipPreflight.Decide(uint.MaxValue,EResult.OK,uint.MaxValue,new byte[]{1},76561198000000001UL).Authorized,"reserved-AppID-rejected-before-transport-and-ownership-decision");
+        }
+        Check(SteamPlatform.DeviceFriendlyName==(OperatingSystem.IsWindows()?"Ready for Windows":OperatingSystem.IsMacOS()?"Ready for macOS":"Ready"),"authentication-device-name-matches-native-platform");
         await using(var s=new Session())
         {
             string snap=s.Send("snapshot");await s.Done(snap);
@@ -489,12 +495,15 @@ static class PersistentSteamServiceChecks
         {
             await s.Connect();s.Transport.FailStop=true;s.Transport.LogOff(EResult.Expired);
             await Until(()=>s.Output.Events.Any(e=>S(e,"reason")=="cleanup_failed"));
+            await Until(()=>s.Output.Events.Any(e=>S(e,"type")=="heartbeat"&&S(e,"state")=="logged_out"));
             string id=s.Send("snapshot");await s.Done(id);var snapshot=s.Terminal(id);
             Check(S(snapshot,"steamResult")=="Expired"&&S(snapshot,"connectionResultContext")=="logged_off"&&
                 S(snapshot,"state")=="logged_out"&&S(snapshot,"reason")=="cleanup_failed",
                 "snapshot-preserves-loggedoff-result-and-context-after-cleanup-failure");
-            Check(s.Output.Events.Where(e=>S(e,"state")=="logged_out").All(e=>S(e,"steamResult")=="Expired"&&
-                S(e,"connectionResultContext")=="logged_off"),"all-loggedoff-state-events-include-safe-connection-result");
+            var loggedOffEvents=s.Output.Events.Where(e=>S(e,"state")=="logged_out").ToArray();
+            Check(loggedOffEvents.All(e=>S(e,"steamResult")=="Expired"&&S(e,"connectionResultContext")=="logged_off"),
+                "all-loggedoff-state-events-include-safe-connection-result");
+            Check(loggedOffEvents.Any(e=>S(e,"type")=="heartbeat"),"heartbeat-preserves-loggedoff-result-and-context");
             Check(!snapshot.ToString().Contains(Secret)&&!snapshot.ToString().Contains("76561198000000001"),"offline-connection-snapshot-does-not-expose-identity-or-secret");
         }
         await using(var s=new Session())

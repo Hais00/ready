@@ -21,3 +21,7 @@ __pycache__/
 /InstallLocks/
 /Backups/
 /Migration/
+# C# Windows build products and local architecture graph.
+**/bin/
+**/obj/
+/graphify-out/

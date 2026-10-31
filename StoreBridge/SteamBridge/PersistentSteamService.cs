@@ -653,7 +653,8 @@ sealed class PersistentSteamService:IAsyncDisposable
     }
     async Task Heartbeat()
     {
-        try{while(true){await Task.Delay(heartbeatInterval,lifetime.Token);lock(sync){Emit("heartbeat",null,new(){["state"]=state});}}}
+        try{while(true){await Task.Delay(heartbeatInterval,lifetime.Token);lock(sync){Emit("heartbeat",null,new(){["state"]=state,
+            ["steamResult"]=SteamSafeFailure.ResultName(lastConnectionResult),["connectionResultContext"]=connectionResultContext});}}}
         catch(OperationCanceledException){}
     }
     sealed class ServiceFailure(string code,EResult? result=null):Exception
@@ -832,10 +833,10 @@ sealed class SteamKitServiceTransport:ISteamServiceTransport
         AuthSession session;
         if(method=="qr")
         {
-            var auth=await client.Authentication.BeginAuthSessionViaQRAsync(new AuthSessionDetails{IsPersistentSession=true,DeviceFriendlyName="Ready for macOS"}).WaitAsync(cancel);
+            var auth=await client.Authentication.BeginAuthSessionViaQRAsync(new AuthSessionDetails{IsPersistentSession=true,DeviceFriendlyName=SteamPlatform.DeviceFriendlyName}).WaitAsync(cancel);
             auth.ChallengeURLChanged=()=>qr(auth.ChallengeURL);qr(auth.ChallengeURL);session=auth;
         }
-        else session=await client.Authentication.BeginAuthSessionViaCredentialsAsync(new AuthSessionDetails{Username=username,Password=password,IsPersistentSession=true,DeviceFriendlyName="Ready for macOS",Authenticator=guard}).WaitAsync(cancel);
+        else session=await client.Authentication.BeginAuthSessionViaCredentialsAsync(new AuthSessionDetails{Username=username,Password=password,IsPersistentSession=true,DeviceFriendlyName=SteamPlatform.DeviceFriendlyName,Authenticator=guard}).WaitAsync(cancel);
         var result=await session.PollingWaitForResultAsync(cancel);
         return new(result.AccountName,result.RefreshToken);
     }
