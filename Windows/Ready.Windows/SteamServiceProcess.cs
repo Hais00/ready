@@ -20,7 +20,7 @@ internal sealed record SteamServiceEvent(string Type, string? RequestId, JsonEle
 internal sealed class SteamServiceProcess : IAsyncDisposable
 {
     private sealed record Pending(string Operation, TaskCompletionSource<JsonElement> Completion, Action<JsonElement>? Page);
-    private readonly Process process;
+    private readonly OwnedChild process;
     private readonly string profile, generation = Guid.NewGuid().ToString("D");
     private readonly ConcurrentDictionary<string, Pending> pending = new();
     private readonly SemaphoreSlim writer = new(1, 1);
@@ -30,17 +30,13 @@ internal sealed class SteamServiceProcess : IAsyncDisposable
     private bool disposed;
     public event Action<SteamServiceEvent>? Received;
     public event Action<SteamCredential>? CredentialReceived;
-    public int ProcessId => process.Id;
-    public bool IsAlive => !disposed && !lifetime.IsCancellationRequested && !process.HasExited && !reader.IsCompleted;
+    public int ProcessId => (int)process.Id;
+    public bool IsAlive => !disposed && !lifetime.IsCancellationRequested && !process.Exited && !reader.IsCompleted;
     public SteamServiceProcess(string executable, string profile)
     {
         this.profile = Guid.ParseExact(profile, "D").ToString("D");
         if (!Path.IsPathFullyQualified(executable) || !File.Exists(executable)) throw new SteamServiceException("service_missing");
-        var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = Path.GetDirectoryName(executable)! };
-        start.ArgumentList.Add("--service");
-        process = new Process { StartInfo = start };
-        if (!process.Start()) throw new SteamServiceException("service_start_failed");
+        process = OwnedChild.Start(executable, ["--service"], Path.GetDirectoryName(executable)!, new Dictionary<string, string>(), []);
         reader = Task.Run(Read); errors = Task.Run(DiscardErrors);
     }
     public async Task<JsonElement> RequestAsync(string operation, object? options = null, SteamCredential? credential = null,
@@ -84,9 +80,9 @@ internal sealed class SteamServiceProcess : IAsyncDisposable
             await writer.WaitAsync(cancellation);
             try
             {
-                await process.StandardInput.BaseStream.WriteAsync(frame, cancellation);
-                await process.StandardInput.BaseStream.WriteAsync(new byte[] { 10 }, cancellation);
-                await process.StandardInput.BaseStream.FlushAsync(cancellation);
+                await process.Input.WriteAsync(frame, cancellation);
+                await process.Input.WriteAsync(new byte[] { 10 }, cancellation);
+                await process.Input.FlushAsync(cancellation);
             }
             finally { writer.Release(); }
         }
@@ -95,7 +91,7 @@ internal sealed class SteamServiceProcess : IAsyncDisposable
     private async Task<string?> ReadLine()
     {
         var text = new System.Text.StringBuilder(); char[] value = new char[1];
-        while (await process.StandardOutput.ReadAsync(value.AsMemory(), lifetime.Token) > 0)
+        while (await process.Output.ReadAsync(value.AsMemory(), lifetime.Token) > 0)
         {
             if (value[0] == '\n') return text.ToString().TrimEnd('\r');
             if (text.Length >= 4 * 1024 * 1024) throw new SteamServiceException("response_too_large");
@@ -151,7 +147,7 @@ internal sealed class SteamServiceProcess : IAsyncDisposable
         return code is "authentication_required" or "authentication_failed" or "invalid_guard_response" or "not_online" or "network_error" or "timeout" or "cancelled" or "disconnected" or "busy" or "not_authorized" or "invalid_request" or "ownership_invalid_response" ? code : "steam_request_failed";
     }
     private async Task DiscardErrors()
-    { try { char[] buffer = new char[4096]; while (await process.StandardError.ReadAsync(buffer.AsMemory(), lifetime.Token) != 0) Array.Clear(buffer); } catch (Exception) when (disposed || lifetime.IsCancellationRequested) { } }
+    { try { char[] buffer = new char[4096]; while (await process.Error.ReadAsync(buffer.AsMemory(), lifetime.Token) != 0) Array.Clear(buffer); } catch (Exception) when (disposed || lifetime.IsCancellationRequested) { } }
     private void Fail(string code)
     { foreach (var pair in pending) if (pending.TryRemove(pair.Key, out var entry)) entry.Completion.TrySetException(new SteamServiceException(code)); }
     public async ValueTask DisposeAsync()
@@ -159,8 +155,8 @@ internal sealed class SteamServiceProcess : IAsyncDisposable
         if (disposed) return;
         try { using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(3)); await RequestAsync("shutdown", cancellation: budget.Token); } catch { }
         disposed = true;
-        try { process.StandardInput.Close(); using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(3)); await process.WaitForExitAsync(budget.Token); }
-        catch { try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { } }
+        try { process.Input.Close(); using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(3)); await process.WaitAsync(budget.Token); }
+        catch { try { if (!process.Exited) process.Stop(); } catch (InvalidOperationException) { } }
         lifetime.Cancel(); Fail("service_disposed");
         try { await Task.WhenAll(reader, errors).WaitAsync(TimeSpan.FromSeconds(2)); } catch { }
         process.Dispose(); lifetime.Dispose(); writer.Dispose();

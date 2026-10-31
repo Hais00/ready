@@ -45,7 +45,12 @@ try {
         New-Item -ItemType Directory -Force $evidence | Out-Null
         [IO.File]::WriteAllText((Join-Path $evidence 'steam-service.json'), $serviceLine, [Text.UTF8Encoding]::new($false))
         Write-Host "Steam service: $($serviceResult.checkCount) offline checks passed."
+        $catalogOutput = @(Dotnet -Arguments @('run','--project','Ready.SteamCatalog.Checks','-c','Release','-p:TargetFrameworks=net10.0'))
+        $catalogLine = $catalogOutput | Where-Object { $_ -like '{*"passed":true*' } | Select-Object -Last 1
+        if (-not $catalogLine) { throw 'Steam catalog checks did not produce a result.' }
+        [IO.File]::WriteAllText((Join-Path $evidence 'steam-catalog.json'), $catalogLine, [Text.UTF8Encoding]::new($false))
         Dotnet -Arguments @('publish','Ready.SteamBridge','-c','Release','-r',$Runtime,'--self-contained','-p:TargetFrameworks=net10.0','-o',(Join-Path $destination 'SteamBridge'),'--nologo')
+        & (Join-Path $PSScriptRoot 'Build-Downloader.ps1') -Runtime $Runtime -Destination (Join-Path $destination 'DepotDownloader')
         if ($Runtime -ne 'win-arm64' -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') {
             & (Join-Path $PSScriptRoot 'Test-SteamBridge.ps1') -Executable (Join-Path $destination 'SteamBridge/ReadySteamBridge.exe') -Report (Join-Path $evidence 'steam-adapter.json')
         }
@@ -59,17 +64,23 @@ try {
         $arguments = "--steam-client-self-test --fixture `"$(Join-Path $fixtureOutput 'Ready.SessionFixture.exe')`" --data-root `"$data`" --report `"$(Join-Path $evidence 'steam-client.json')`""
         $process = Start-Process (Join-Path $destination 'Ready.exe') -ArgumentList $arguments -Wait -PassThru
         if ($process.ExitCode -ne 0) { throw "Steam frontend checks failed; inspect $data" }
+        $arguments = "--downloads-self-test --fixture `"$(Join-Path $fixtureOutput 'Ready.SessionFixture.exe')`" --data-root `"$data`" --report `"$(Join-Path $evidence 'downloads.json')`""
+        $process = Start-Process (Join-Path $destination 'Ready.exe') -ArgumentList $arguments -Wait -PassThru
+        if ($process.ExitCode -ne 0) { throw "Download queue checks failed; inspect $data" }
         if (-not $SkipSteam) {
             $arguments = "--steam-service-client-self-test --service `"$(Join-Path $destination 'SteamBridge/ReadySteamBridge.exe')`" --data-root `"$data`" --report `"$(Join-Path $evidence 'steam-service-client.json')`""
             $process = Start-Process (Join-Path $destination 'Ready.exe') -ArgumentList $arguments -Wait -PassThru
             if ($process.ExitCode -ne 0) { throw "Actual Steam frontend supervisor check failed; inspect $data" }
+            $arguments = "--download-engine-self-test --engine `"$(Join-Path $destination 'DepotDownloader/DepotDownloader.exe')`" --data-root `"$data`" --report `"$(Join-Path $evidence 'download-engine.json')`""
+            $process = Start-Process (Join-Path $destination 'Ready.exe') -ArgumentList $arguments -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "Actual download engine startup check failed; inspect $data" }
         }
     }
     if ($GraphicsChecks -or $SessionChecks) {
         if ($Runtime -eq 'win-arm64' -and [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'Arm64') { throw 'ARM64 execution needs ARM64 Windows hardware.' }
         New-Item -ItemType Directory -Force $evidence | Out-Null
         $fixtureOutput = Join-Path $repo "Build/Windows/fixtures/$Runtime"
-        $checks = @(); if ($GraphicsChecks) { $checks += 'graphics' }; if ($SessionChecks) { $checks += @('session','window','steam-window') }
+        $checks = @(); if ($GraphicsChecks) { $checks += 'graphics' }; if ($SessionChecks) { $checks += @('session','window','steam-window','downloads-window') }
         foreach ($check in $checks) {
             $data = Join-Path $evidence ($check + '-' + [guid]::NewGuid().ToString('N'))
             $arguments = "--$check-self-test --data-root `"$data`" --report `"$(Join-Path $evidence ($check + '.json'))`""

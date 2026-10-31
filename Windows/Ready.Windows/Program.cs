@@ -20,8 +20,10 @@ internal static class Program
             if (args.Contains("--graphics-self-test")) return WindowsChecks.Run(Value("--report") ?? Path.Combine(dataRoot, "graphics-check.json"));
             if (args.Contains("--session-self-test")) return WindowsChecks.Sessions(Value("--fixture") ?? throw new ArgumentException("Specificare --fixture."), Value("--report") ?? Path.Combine(dataRoot, "session-check.json"));
             if (args.Contains("--steam-client-self-test")) return SteamClientChecks.Run(Value("--fixture") ?? throw new ArgumentException("Specificare --fixture."), Value("--report") ?? Path.Combine(dataRoot, "steam-client-check.json")).GetAwaiter().GetResult();
+            if (args.Contains("--downloads-self-test")) return DownloadChecks.Run(Value("--fixture") ?? throw new ArgumentException("Specificare --fixture."), Value("--report") ?? Path.Combine(dataRoot, "downloads-check.json")).GetAwaiter().GetResult();
+            if (args.Contains("--download-engine-self-test")) return DownloadChecks.Actual(Value("--engine") ?? throw new ArgumentException("Specificare --engine."), Value("--report") ?? Path.Combine(dataRoot, "download-engine-check.json")).GetAwaiter().GetResult();
             if (args.Contains("--steam-service-client-self-test")) return SteamClientChecks.Actual(Value("--service") ?? throw new ArgumentException("Specificare --service."), Value("--report") ?? Path.Combine(dataRoot, "steam-service-client-check.json")).GetAwaiter().GetResult();
-            if (args.Contains("--window-self-test") || args.Contains("--steam-window-self-test"))
+            if (args.Contains("--window-self-test") || args.Contains("--steam-window-self-test") || args.Contains("--downloads-window-self-test"))
             {
                 if (Value("--data-root") is null || !Path.IsPathFullyQualified(dataRoot)
                     || Directory.Exists(dataRoot) && Directory.EnumerateFileSystemEntries(dataRoot).Any())
@@ -35,7 +37,9 @@ internal static class Program
                     try
                     {
                         string fixture = Value("--fixture") ?? throw new ArgumentException("Specificare --fixture.");
-                        if (args.Contains("--steam-window-self-test")) await test.ExerciseSteamAsync(fixture, report); else await test.ExerciseAsync(fixture, report);
+                        if (args.Contains("--steam-window-self-test")) await test.ExerciseSteamAsync(fixture, report);
+                        else if (args.Contains("--downloads-window-self-test")) await test.ExerciseDownloadsAsync(fixture, report);
+                        else await test.ExerciseAsync(fixture, report);
                         result = 0;
                     }
                     catch (Exception e) { File.WriteAllText(report, JsonSerializer.Serialize(new { passed = false, error = e.GetType().Name, message = e.Message })); }

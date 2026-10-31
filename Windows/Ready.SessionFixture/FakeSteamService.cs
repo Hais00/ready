@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Owned process fixture. No SteamKit, network, genuine account or entitlement.
 using System.Text.Json;
+using System.Security.Cryptography;
+using Ready.Windows.Core;
 
 internal static class FakeSteamService
 {
@@ -54,6 +56,12 @@ internal static class FakeSteamService
                     if (options.TryGetProperty("paged", out var paged) && paged.GetBoolean())
                     { Emit("library_page", id, new() { ["games"] = games, ["pageIndex"] = 0 }); Emit("result", id, new() { ["recordCount"] = games.Length, ["pageCount"] = 1 }); }
                     else Emit("result", id, new() { ["games"] = games }); break;
+                case "install_size_plan":
+                    uint app = uint.Parse(options.GetProperty("gameID").GetString()!); string architecture = options.GetProperty("architecture").GetString()!;
+                    var selected = new[] { new SteamDepot(1, app, 42, 4, 8) };
+                    string fingerprint = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { AppID = app, Platform = "windows", Branch = "public", Language = "english", Architecture = architecture, depots = selected }))).ToLowerInvariant();
+                    Emit("result", id, new() { ["plan"] = new { platform = "windows", branch = "public", language = "english", architecture, verified = true, source = "steam_pics", status = "available", basis = "selected_depot_payload_totals", downloadBytes = 4, installedBytes = 8, selectedDepotCount = 1,
+                        selectedDepots = selected.Select(d => new { depotID = d.DepotID, sourceAppID = d.SourceAppID, manifestID = d.ManifestID, downloadBytes = d.DownloadBytes, installedBytes = d.InstalledBytes }), fingerprint, calculatedAt = DateTimeOffset.UtcNow.ToString("O") } }); break;
                 case "cancel":
                     if (auth == options.GetProperty("requestID").GetString())
                     {

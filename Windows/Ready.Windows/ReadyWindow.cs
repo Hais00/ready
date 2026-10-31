@@ -66,7 +66,7 @@ internal sealed partial class ReadyWindow : Form
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         base.OnMouseWheel(e);
-        if (shell.Page == Destination.Friends)
+        if (shell.Page == Destination.Friends || shell.Page == Destination.Downloads)
         { steamPageOffset = Math.Clamp(steamPageOffset - e.Delta / 120f * 72, 0, painter.MaximumPageOffset); UpdatePage(); Invalidate(); return; }
         if (shell.Page == Destination.Import)
         { browserOffset = Math.Clamp(browserOffset - Math.Sign(e.Delta) * 3, 0, Math.Max(0, browserEntries.Count - 1)); UpdateBrowserPage(); }
@@ -137,8 +137,9 @@ internal sealed partial class ReadyWindow : Form
             Destination.Search => new("Libreria", "Cerca nella libreria", "Cerca per titolo o ID.", input, "Titolo o ID", [new("search:apply", "Cerca"), new("nav:library", "Indietro")]),
             Destination.Profiles => new("Profili", "I tuoi profili", "Ogni profilo mantiene la propria libreria di giochi locali.", input, "Nome nuovo profilo", [new("profile:create", "Crea profilo")], library.Profiles.Select(p => new PageRow("profile:" + p.Id, p.Name, p.Id == library.ActiveProfile ? "Profilo attivo" : "Seleziona profilo")).ToArray()),
             Destination.Friends => SteamPage(),
-            Destination.Downloads => new("Download", "Nessun download in corso", "La coda del servizio Steam Windows non è ancora collegata."),
-            Destination.Game => new("Gioco", selectedGame?.Title ?? "Gioco", selectedGame is null ? "" : selectedGame.InstallDirectory + "\n" + (selectedGame.Source == GameSource.Local ? $"Windows · {selectedGame.Architecture}" : "Steam · Windows"), Actions: [new("game:play", "Gioca"), new("nav:library", "Indietro")]),
+            Destination.Downloads => DownloadsPage(),
+            Destination.Install => InstallPage(),
+            Destination.Game => new("Gioco", selectedGame?.Title ?? "Gioco", selectedGame is null ? "" : selectedGame.InstallDirectory + "\n" + (selectedGame.Source == GameSource.Local ? $"Windows · {selectedGame.Architecture}" : "Steam · Windows"), Actions: selectedGame is { Source: GameSource.Steam, Installed: false } ? [new("download:prepare", "Installa"), new("nav:library", "Indietro")] : [new("game:play", "Gioca"), new("nav:library", "Indietro")]),
             Destination.Settings => new("Impostazioni", settingsTab switch { "runtime" => "Motore Windows nativo", "account" => "Account", "storage" => "Archiviazione", "data" => "Dati e ripristino", _ => "Generali" },
                 settingsTab switch
                 {
@@ -147,7 +148,7 @@ internal sealed partial class ReadyWindow : Form
                     "storage" => "Dati di Ready: " + store.Root + "\nLe installazioni Steam rimangono nelle librerie Steam rilevate.",
                     "data" => "La libreria locale viene salvata con sostituzione atomica. I giochi importati e i loro salvataggi rimangono nelle cartelle originali.",
                     _ => "Ready per Windows\nF11: schermo intero · Ctrl+F: cerca · Tab e frecce: navigazione · Invio: apri"
-                }, Actions: settingsTab == "account" ? [new("nav:friends", "Steam")] : null, Tabs: tabs, SelectedTab: "settings:" + settingsTab),
+                }, Field: settingsTab == "storage" ? input : null, FieldLabel: "Cartella predefinita per i nuovi giochi", Actions: settingsTab == "account" ? [new("nav:friends", "Steam")] : settingsTab == "storage" ? [new("download:storage", "Salva cartella")] : null, Tabs: tabs, SelectedTab: "settings:" + settingsTab),
             Destination.Import => page,
             _ => null
         };
@@ -181,12 +182,13 @@ internal sealed partial class ReadyWindow : Form
             if (action == "empty:import") action = "nav:import";
             if (action == "field" || action.StartsWith("field:", StringComparison.Ordinal)) { shell.Focus = action; return; }
             shell.Error = null;
+            if (await DownloadAction(action)) { Invalidate(); return; }
             if (await SteamAction(action)) { Invalidate(); return; }
             if (action.StartsWith("nav:", StringComparison.Ordinal))
                 Navigate(action[4..] switch { "library" => Destination.Library, "friends" => Destination.Friends, "downloads" => Destination.Downloads, "settings" => Destination.Settings, "profiles" => Destination.Profiles, "import" => Destination.Import, _ => Destination.Library });
             else if (action.StartsWith("game:", StringComparison.Ordinal) && action != "game:play")
             { selectedGame = shell.Games.FirstOrDefault(g => g.Id == action[5..]); Navigate(Destination.Game); }
-            else if (action.StartsWith("settings:", StringComparison.Ordinal)) { settingsTab = action[9..]; shell.ClearInteraction(); UpdatePage(); }
+            else if (action.StartsWith("settings:", StringComparison.Ordinal)) { settingsTab = action[9..]; if (settingsTab == "storage") input = DownloadRoot; shell.ClearInteraction(); UpdatePage(); }
             else if (action == "profile:create") { var updated = library.AddProfile(input); store.Save(updated); library = updated; input = ""; await SwitchSteamProfile(); UpdateCatalog(); UpdatePage(); }
             else if (action.StartsWith("profile:", StringComparison.Ordinal))
             { var updated = library with { ActiveProfile = library.Profiles.First(p => p.Id == action[8..]).Id }; store.Save(updated); library = updated; await SwitchSteamProfile(); UpdateCatalog(); UpdatePage(); }
@@ -207,7 +209,7 @@ internal sealed partial class ReadyWindow : Form
     private async Task Play()
     {
         if (selectedGame is null || session is not null) return;
-        var ownedSession = NativeGameSession.Start(selectedGame); session = ownedSession;
+        var ownedSession = NativeGameSession.Start(selectedGame, dataRoot: store.Root); session = ownedSession;
         suspended = true; clock.Stop(); shell.ClearInteraction(); painter.ReleaseArtwork(); canvas?.ReleaseCanvas(); Hide();
         try { await ownedSession.WaitAsync(); }
         catch (ObjectDisposedException) when (closing) { }
@@ -218,7 +220,7 @@ internal sealed partial class ReadyWindow : Form
         }
     }
     protected override void OnFormClosing(FormClosingEventArgs e)
-    { closing = true; browserEpoch++; clock.Stop(); session?.Dispose(); steam?.CancelAuthentication(); _ = StopSteam(); ClearSteamInputs(); base.OnFormClosing(e); }
+    { closing = true; browserEpoch++; clock.Stop(); session?.Dispose(); steam?.CancelAuthentication(); _ = StopSteam(); if (downloads is not null) _ = downloads.DisposeAsync(); ClearSteamInputs(); base.OnFormClosing(e); }
     protected override void Dispose(bool disposing)
     {
         if (disposing) { clock.Dispose(); session?.Dispose(); painter.Dispose(); canvas?.Dispose(); canvas = null; }

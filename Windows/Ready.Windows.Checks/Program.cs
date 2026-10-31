@@ -66,6 +66,7 @@ try
     Reject(() => saved.AddProfile(" Secondo "), "Duplicate profiles"); Reject(() => saved.AddProfile("  "), "Empty profiles");
     File.WriteAllText(Path.Combine(store.Root, "library-windows.json"), "broken-json");
     Reject(() => store.Load(), "Damaged library is not reset"); Check(File.ReadAllText(Path.Combine(store.Root, "library-windows.json")) == "broken-json", "Damaged library preserved");
+    DownloadDomainChecks.Run(Check);
     Console.WriteLine($"{passed} checks passed."); return 0;
 }
 finally { Directory.Delete(temp, true); }

@@ -148,6 +148,11 @@ internal sealed class SteamAccountClient : IAsyncDisposable
         await service.RequestAsync("connect", credential: credential); await RefreshAsync();
     }
     public Task PresenceAsync(string presence) => service.RequestAsync("set_presence", new { presence });
+    public async Task<SteamInstallPlan> InstallPlanAsync(uint app)
+    {
+        var result = await service.RequestAsync("install_size_plan", new { gameID = app.ToString(System.Globalization.CultureInfo.InvariantCulture), platform = "windows", branch = "public", language = "english", architecture = Environment.Is64BitOperatingSystem ? "64" : "32" });
+        return SteamInstallPlan.Parse(app, result.GetProperty("plan"));
+    }
     public Task RenameAsync(string displayName) => service.RequestAsync("set_persona_name", new { displayName });
     public Task FriendActionAsync(string operation, string steamID) => service.RequestAsync(operation, new { steamID });
     public async Task OfflineAsync() { CancelAuthentication(); await service.RequestAsync("offline"); }

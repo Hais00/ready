@@ -69,8 +69,8 @@ changes close the old helper and isolate its catalog. The owned library is
 received in bounded pages and committed only after terminal counts match;
 non-game and Mac-only records are filtered, while uninstalled games remain
 uninstalled. An account connection never marks the genuine game host ready.
-Downloads and authenticated game-worker launch are still separate unfinished
-integrations.
+The download queue is connected separately as described below. Authenticated
+game-worker launch remains unfinished.
 
 The native checks cover actual DPAPI/DACLs and real child pipes with an owned
 synthetic protocol helper, plus the actual SteamKit adapter's offline snapshot
@@ -81,6 +81,48 @@ social operation, ownership authorization or game launch was performed. The
 Steam form fixture requires a new, empty data root so a substitute test helper
 cannot receive an existing saved login. The current evidence is in
 `Validation/windows-steam-client-checkpoint.json`.
+
+## Native Steam downloads
+
+Windows now builds the same separate GPL-2 DepotDownloader 3.4.0 source archive,
+private-stdin adaptation and numeric progress patch used by Ready's macOS recipe.
+`Prepare-Downloader.ps1` verifies archive, preimage, patch and output hashes;
+`Build-Downloader.ps1` targets .NET 10 and runs the five retained source fixtures
+in a separate build copy. The GPL-2 engine remains a child executable and is not
+linked into Ready's GPL-3 frontend.
+
+The game detail requests a verified PICS depot plan before offering installation.
+The selected IDs/manifests, platform, public branch, English language, architecture,
+payload totals and fingerprint are retained. Windows 32-bit planning is now
+supported separately from 64-bit planning; macOS planning retains its 64-bit rule.
+No anonymous download or broad all-platform fallback is introduced.
+
+`SteamDownloadQueue` stores per-profile jobs, desired state and numeric progress
+atomically without credentials or PIDs. Login IDs use the separate `0xD...` range.
+The worker reads only that profile's DPAPI credential and sends it through its
+anonymous stdin. The UI offers folder/size preview, pause/resume/cancel and
+completed-content registration. Partial files/cache are retained. Existing
+nonempty folders are not silently adopted; the local content-owner marker binds
+an AppID, not an account entitlement.
+
+`OwnedChild` uses an atomic Windows job assignment and an explicit inherited
+handle list for pipes and leases. The Steam account supervisor uses that same
+launcher. Shared installation coordination checks ancestor/child path overlap,
+read/write handle conflicts, canonical kernel paths and reparse/hardlink policy.
+The downloader inherits its writer/run handles; local game sessions inherit
+reader handles. Kernel handle availability, not metadata age or saved PIDs,
+decides whether a worker is still active. Completed records require an engine
+exit of zero, an exact selected manifest set, cache config agreement and SHA1
+validation of the retained manifest files. Download completion does not certify
+game execution or authenticated Steamworks startup.
+
+The size preview distinguishes compressed payload, installed payload and actual
+reported network bytes. The initial free-space check is not an exact staging/peak
+or cross-process volume-reservation proof. Whole-volume reservations, launch
+candidate selection and real-account/CDN acceptance remain to be finished and
+verified. Native tests cover owned synthetic files/processes and the actual
+downloader's source fixtures/version startup; they do not download a real game.
+See `Validation/windows-downloads-checkpoint.json` for the exact measured scope.
 
 ## Build
 
@@ -154,9 +196,9 @@ and [process attributes](https://learn.microsoft.com/en-us/windows/win32/api/pro
 
 - Complete visual parity, form/accessibility behavior, asynchronous sparse artwork
   and controller navigation across all pages.
-- Validate the connected Steam UI against a real account, including saved-login
-  restore, friends and full owned catalog; complete artwork/download queue and
-  genuine game-worker handoff.
+- Validate the connected Steam UI and download queue against a real account/CDN,
+  including saved-login restore, friends and full owned catalog; complete artwork,
+  volume reservation/launch selection and genuine game-worker handoff.
 - Repeat headless-host measurements natively and complete real owned-game
   authentication, launch and exit.
 - Implement Windows embedding/injection and the actual in-game UI, input gating,

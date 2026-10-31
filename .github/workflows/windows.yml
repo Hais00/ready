@@ -1,9 +1,9 @@
 name: Windows C# build
 on:
   push:
-    paths: ['Windows/**', 'StoreBridge/SteamBridge/**', 'Synthetic/PersistentSteamServiceChecks.cs', 'Scripts/steamkit_websocket_close*', 'sources.lock.json', '.github/workflows/windows.yml']
+    paths: ['Windows/**', 'StoreBridge/SteamBridge/**', 'StoreBridge/dependencies.lock.json', 'Synthetic/*Steam*Checks.cs', 'Scripts/steamkit_websocket_close*', 'Scripts/steam_depot_progress*', 'sources.lock.json', '.github/workflows/windows.yml']
   pull_request:
-    paths: ['Windows/**', 'StoreBridge/SteamBridge/**', 'Synthetic/PersistentSteamServiceChecks.cs', 'Scripts/steamkit_websocket_close*', 'sources.lock.json', '.github/workflows/windows.yml']
+    paths: ['Windows/**', 'StoreBridge/SteamBridge/**', 'StoreBridge/dependencies.lock.json', 'Synthetic/*Steam*Checks.cs', 'Scripts/steamkit_websocket_close*', 'Scripts/steam_depot_progress*', 'sources.lock.json', '.github/workflows/windows.yml']
 jobs:
   native-build:
     runs-on: windows-latest

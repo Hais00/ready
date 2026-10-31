@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 namespace Ready.Windows.Core;
 
-public enum Destination { Library, Game, Friends, Downloads, Settings, Profiles, Import, Search }
+public enum Destination { Library, Game, Friends, Downloads, Settings, Profiles, Import, Search, Install }
 public readonly record struct Rect(float X, float Y, float Width, float Height)
 {
     public float Right => X + Width;

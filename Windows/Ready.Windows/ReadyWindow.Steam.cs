@@ -20,9 +20,13 @@ internal sealed partial class ReadyWindow
     private IEnumerable<Game> CurrentSteamGames()
     {
         var owned = steam?.State.Games ?? [];
-        if (owned.Count == 0) return steamGames;
-        var installed = steamGames.ToDictionary(g => g.Id);
-        return owned.Select(g => installed.TryGetValue(g.Id, out var local) ? g with { InstallDirectory = local.InstallDirectory, Artwork = local.Artwork, Installed = true } : g);
+        var downloaded = downloads?.List(library.ActiveProfile).Where(j => j.State == DownloadState.Completed && Directory.Exists(j.Directory)).Select(j => new Game("steam:" + j.AppID, j.Title, GameSource.Steam, j.Directory, AppId: j.AppID)) ?? [];
+        var localGames = steamGames.Concat(downloaded).DistinctBy(g => g.Id).ToArray();
+        if (owned.Count == 0) return localGames;
+        var installed = localGames.ToDictionary(g => g.Id);
+        var shared = downloads?.Installed();
+        return owned.Select(g => installed.TryGetValue(g.Id, out var local) ? g with { InstallDirectory = local.InstallDirectory, Artwork = local.Artwork, Installed = true }
+            : g.AppId is { } app && shared?.TryGetValue(app, out var path) == true ? g with { InstallDirectory = path, Installed = true } : g);
     }
     private async Task InitializeSteam()
     {
@@ -157,7 +161,7 @@ internal sealed partial class ReadyWindow
                 case "steam:reconnect": await client.ReconnectAsync(); break;
                 case "steam:refresh": await client.RefreshAsync(); await DiscoverSteam(); break;
                 case "steam:offline": await client.OfflineAsync(); break;
-                case "steam:logout": await client.LogoutAsync(); ClearSteamInputs(); break;
+                case "steam:logout": if (downloads is not null) await downloads.PauseProfileAsync(library.ActiveProfile); await client.LogoutAsync(); ClearSteamInputs(); break;
                 case "steam:rename":
                     await client.RenameAsync(steamFields["display"].Length > 0 ? steamFields["display"] : client.State.DisplayName); steamNotice = "Richiesta inviata a Steam."; break;
                 default:
