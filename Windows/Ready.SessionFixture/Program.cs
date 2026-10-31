@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 
+if (args.SequenceEqual(new[] { "--service" })) return await FakeSteamService.Run();
 if (args.Length == 0) { Thread.Sleep(500); return 0; }
 if (args.Length < 2) return 2;
 if (args[0] == "arguments") { File.WriteAllText(args[1], JsonSerializer.Serialize(args[2..])); return 0; }

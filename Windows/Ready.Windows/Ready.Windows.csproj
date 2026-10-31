@@ -14,6 +14,7 @@
     <PackageReference Include="Veldrid" Version="4.9.0" />
     <!-- Override an old transitive dependency of the graphics package. -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="QRCoder" Version="1.8.1" />
     <EmbeddedResource Include="Shaders/*.spv" />
   </ItemGroup>
 </Project>

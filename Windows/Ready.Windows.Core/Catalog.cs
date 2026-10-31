@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Ready.Windows.Core;
 
 public enum GameSource { Local, Steam }
 public enum PeArchitecture { X86, X64, Arm64, Unknown }
 public sealed record Game(string Id, string Title, GameSource Source, string InstallDirectory,
-    string? Executable = null, uint? AppId = null, string? Artwork = null, PeArchitecture Architecture = PeArchitecture.Unknown);
+    string? Executable = null, uint? AppId = null, string? Artwork = null, PeArchitecture Architecture = PeArchitecture.Unknown, bool Installed = true);
 public sealed record Profile(string Id, string Name);
 public sealed record Library(int Schema, string ActiveProfile, List<Profile> Profiles, Dictionary<string, List<Game>> Games)
 {
@@ -15,7 +16,7 @@ public sealed record Library(int Schema, string ActiveProfile, List<Profile> Pro
         const string id = "00000000-0000-4000-8000-000000000001";
         return new(1, id, [new(id, "Giocatore")], new() { [id] = [] });
     }
-    public IEnumerable<Game> ActiveGames => Games.GetValueOrDefault(ActiveProfile) ?? [];
+    [JsonIgnore] public IEnumerable<Game> ActiveGames => Games.GetValueOrDefault(ActiveProfile) ?? [];
     public Library AddProfile(string name)
     {
         name = name.Trim();

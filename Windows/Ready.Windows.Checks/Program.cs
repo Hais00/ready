@@ -62,6 +62,7 @@ try
     var invalid = Path.Combine(temp, "invalid.exe"); File.WriteAllText(invalid, "Not a PE"); Reject(() => Library.Empty().Import(invalid), "Reject text disguised as executable");
     var store = new LibraryStore(Path.Combine(temp, "data")); var saved = store.Load().AddProfile("Secondo"); store.Save(saved);
     Check(store.Load().ActiveProfile == saved.ActiveProfile && store.Load().Profiles.Count == 2, "Durable profiles and active selection");
+    Check(!File.ReadAllText(Path.Combine(store.Root, "library-windows.json")).Contains("ActiveGames"), "Computed active catalog is not duplicated into profile state");
     Reject(() => saved.AddProfile(" Secondo "), "Duplicate profiles"); Reject(() => saved.AddProfile("  "), "Empty profiles");
     File.WriteAllText(Path.Combine(store.Root, "library-windows.json"), "broken-json");
     Reject(() => store.Load(), "Damaged library is not reset"); Check(File.ReadAllText(Path.Combine(store.Root, "library-windows.json")) == "broken-json", "Damaged library preserved");

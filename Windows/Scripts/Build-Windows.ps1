@@ -34,6 +34,7 @@ try {
     Copy-Item (Join-Path $repo 'LICENSE') (Join-Path $destination 'LICENSE.txt')
     Copy-Item (Join-Path $repo 'THIRD_PARTY_NOTICES.md') $destination
     Copy-Item (Join-Path $repo 'LICENSES/veldrid-MIT.txt') $destination
+    Copy-Item (Join-Path $repo 'LICENSES/qrcoder-MIT.txt') $destination
     if (-not $SkipSteam) {
         & (Join-Path $PSScriptRoot 'Prepare-SteamKit.ps1')
         $serviceOutput = @(Dotnet -Arguments @('run','--project','Ready.SteamBridge.Checks','-c','Release','-p:TargetFrameworks=net10.0'))
@@ -49,12 +50,26 @@ try {
             & (Join-Path $PSScriptRoot 'Test-SteamBridge.ps1') -Executable (Join-Path $destination 'SteamBridge/ReadySteamBridge.exe') -Report (Join-Path $evidence 'steam-adapter.json')
         }
     }
+    $canExecute = $Runtime -ne 'win-arm64' -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64'
+    if ($canExecute) {
+        New-Item -ItemType Directory -Force $evidence | Out-Null
+        $fixtureOutput = Join-Path $repo "Build/Windows/fixtures/$Runtime"
+        Dotnet -Arguments @('publish','Ready.SessionFixture','-c','Release','-r',$Runtime,'--self-contained','-o',$fixtureOutput,'--nologo')
+        $data = Join-Path $evidence ('steam-client-' + [guid]::NewGuid().ToString('N'))
+        $arguments = "--steam-client-self-test --fixture `"$(Join-Path $fixtureOutput 'Ready.SessionFixture.exe')`" --data-root `"$data`" --report `"$(Join-Path $evidence 'steam-client.json')`""
+        $process = Start-Process (Join-Path $destination 'Ready.exe') -ArgumentList $arguments -Wait -PassThru
+        if ($process.ExitCode -ne 0) { throw "Steam frontend checks failed; inspect $data" }
+        if (-not $SkipSteam) {
+            $arguments = "--steam-service-client-self-test --service `"$(Join-Path $destination 'SteamBridge/ReadySteamBridge.exe')`" --data-root `"$data`" --report `"$(Join-Path $evidence 'steam-service-client.json')`""
+            $process = Start-Process (Join-Path $destination 'Ready.exe') -ArgumentList $arguments -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "Actual Steam frontend supervisor check failed; inspect $data" }
+        }
+    }
     if ($GraphicsChecks -or $SessionChecks) {
         if ($Runtime -eq 'win-arm64' -and [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'Arm64') { throw 'ARM64 execution needs ARM64 Windows hardware.' }
         New-Item -ItemType Directory -Force $evidence | Out-Null
         $fixtureOutput = Join-Path $repo "Build/Windows/fixtures/$Runtime"
-        if ($SessionChecks) { Dotnet -Arguments @('publish','Ready.SessionFixture','-c','Release','-r',$Runtime,'--self-contained','-o',$fixtureOutput,'--nologo') }
-        $checks = @(); if ($GraphicsChecks) { $checks += 'graphics' }; if ($SessionChecks) { $checks += @('session','window') }
+        $checks = @(); if ($GraphicsChecks) { $checks += 'graphics' }; if ($SessionChecks) { $checks += @('session','window','steam-window') }
         foreach ($check in $checks) {
             $data = Join-Path $evidence ($check + '-' + [guid]::NewGuid().ToString('N'))
             $arguments = "--$check-self-test --data-root `"$data`" --report `"$(Join-Path $evidence ($check + '.json'))`""

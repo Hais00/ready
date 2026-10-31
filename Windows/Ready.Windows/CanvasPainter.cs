@@ -3,14 +3,19 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
 using Ready.Windows.Core;
+using QRCoder;
 
 namespace Ready.Windows;
 
-internal sealed record PageAction(string Id, string Title);
+internal sealed record PageAction(string Id, string Title, bool Enabled = true);
 internal sealed record PageRow(string Id, string Title, string Subtitle = "");
+internal sealed record CanvasField(string Id, string Label, string Value, bool Secret = false)
+{ public override string ToString() => "[private canvas field]"; }
 internal sealed record CanvasPage(string Title, string Heading, string Body,
     string? Field = null, string FieldLabel = "", IReadOnlyList<PageAction>? Actions = null,
-    IReadOnlyList<PageRow>? Rows = null, IReadOnlyList<PageAction>? Tabs = null, string? SelectedTab = null);
+    IReadOnlyList<PageRow>? Rows = null, IReadOnlyList<PageAction>? Tabs = null, string? SelectedTab = null,
+    IReadOnlyList<CanvasField>? Fields = null, string? QR = null, float Offset = 0)
+{ public override string ToString() => "[private canvas page]"; }
 
 // Mirrors the top-down CoreGraphics composition in MetalCanvas and LibraryCardContent.
 internal sealed class CanvasPainter : IDisposable
@@ -20,6 +25,10 @@ internal sealed class CanvasPainter : IDisposable
     public string ProfileName { get; set; } = "Giocatore";
     public string Clock { get; set; } = DateTime.Now.ToString("HH:mm");
     public string? RunningGame { get; set; }
+    public float MaximumPageOffset { get; private set; }
+    private QRCodeData? qr;
+    private string? qrUrl;
+    private float drawingScale;
     private Graphics graphics = null!;
     private Shell shell = null!;
     private Font Font(float size, bool bold) => fonts.TryGetValue((size, bold), out var font) ? font : fonts[(size, bold)] = new Font("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular, GraphicsUnit.Pixel);
@@ -52,12 +61,13 @@ internal sealed class CanvasPainter : IDisposable
         if (hover || focus)
         { using var path = Rounded(new(rect.X + 1, rect.Y + 1, rect.Width - 2, rect.Height - 2), 10); using var pen = new Pen(Color.FromArgb(focus ? 200 : 90, Color.White), 1.5f); graphics.DrawPath(pen, path); }
     }
-    private void Button(Rect rect, string id, string label, bool active = false, string? symbol = null)
+    private void Button(Rect rect, string id, string label, bool active = false, string? symbol = null, bool enabled = true)
     {
         Round(rect, Gray(active ? 0x2a443b : 0x24292b));
         if (symbol is not null) Icon(symbol, new(rect.X + 10, rect.Y + 10, rect.Width - 20, rect.Height - 20), active ? Gray(0x98f5b9) : Color.White);
         else Text(label, new(rect.X + 12, rect.Y + 9, rect.Width - 24, rect.Height - 12), 14, true);
-        shell.Hits.Add(new(id, rect, label)); Feedback(rect, id);
+        if (enabled) { shell.Hits.Add(new(id, rect, label)); Feedback(rect, id); }
+        else Round(rect, Color.FromArgb(100, 0, 0, 0));
     }
     // Independent line icons. Apple SF Symbols are proprietary and are not redistributed.
     private void Icon(string symbol, Rect r, Color color)
@@ -85,7 +95,8 @@ internal sealed class CanvasPainter : IDisposable
     }
     public Bitmap Draw(Shell model, CanvasPage? page, int pixelWidth, int pixelHeight, float scale)
     {
-        shell = model; shell.Hits.Clear();
+        shell = model; shell.Hits.Clear(); drawingScale = scale;
+        if (page?.QR is null) { qr?.Dispose(); qr = null; qrUrl = null; }
         var raster = new Bitmap(pixelWidth, pixelHeight, PixelFormat.Format32bppPArgb);
         using var g = Graphics.FromImage(raster); graphics = g;
         graphics.SmoothingMode = SmoothingMode.AntiAlias; graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
@@ -106,7 +117,7 @@ internal sealed class CanvasPainter : IDisposable
         var state = graphics.Save(); graphics.SetClip(new RectangleF(105, 0, width - 134, height));
         foreach (var (game, _, r) in shell.Visible(width, height))
         {
-            Round(r, Gray(0x24332f)); var cover = new Rect(r.X, r.Y, r.Width, r.Width * Shell.CoverRatio);
+            Round(r, Gray(game.Installed ? 0x24332f : 0x242a2d)); var cover = new Rect(r.X, r.Y, r.Width, r.Width * Shell.CoverRatio);
             var clipped = graphics.Save(); using var path = Rounded(cover, 10); graphics.SetClip(path, CombineMode.Intersect);
             Round(cover, Gray(0x20363a));
             var art = Artwork(game.Artwork);
@@ -117,6 +128,7 @@ internal sealed class CanvasPainter : IDisposable
                 graphics.DrawImage(art, cover.X + (cover.Width - art.Width * fit) / 2, cover.Y + (cover.Height - art.Height * fit) / 2, art.Width * fit, art.Height * fit);
             }
             else Icon("game", new(cover.X + cover.Width / 2 - 28, cover.Y + cover.Height / 2 - 28, 56, 56), Gray(0xc1d2ce, 180));
+            if (!game.Installed) { using var shade = new SolidBrush(Color.FromArgb(56, 20, 20, 20)); graphics.FillRectangle(shade, R(cover)); }
             graphics.Restore(clipped);
             Round(new(cover.Right - 35, cover.Y + 9, 25, 25), Gray(0x101819, 210), 7);
             using (var brush = new SolidBrush(Gray(0xf0f6f3)))
@@ -161,7 +173,7 @@ internal sealed class CanvasPainter : IDisposable
     private void Page(CanvasPage page, float width, float height)
     {
         var state = graphics.Save(); graphics.SetClip(new RectangleF(105, 90, width - 134, height - 145));
-        float y = 104;
+        float y = 104 - page.Offset;
         if (page.Tabs is { Count: > 0 })
         {
             float x = 112;
@@ -174,6 +186,19 @@ internal sealed class CanvasPainter : IDisposable
         }
         Text(page.Heading, new(112, y, width - 148, 42), 26, true); y += 54;
         if (page.Body.Length > 0) { Text(page.Body, new(112, y, width - 164, 92), 15, color: Gray(0xc2d1cf)); y += 106; }
+        if (page.QR is { } url)
+        {
+            if (qrUrl != url) { qr?.Dispose(); qr = QRCodeGenerator.GenerateQrCode(url, QRCodeGenerator.ECCLevel.Q); qrUrl = url; }
+            int count = qr!.ModuleMatrix.Count;
+            float step = Math.Max(1, MathF.Floor(250 * drawingScale / count)) / drawingScale, size = count * step;
+            float x = 112 + Math.Max(0, (width - 164 - size) / 2);
+            using var white = new SolidBrush(Color.White); using var black = new SolidBrush(Color.Black);
+            var mode = graphics.SmoothingMode; graphics.SmoothingMode = SmoothingMode.None;
+            graphics.FillRectangle(white, x, y, size, size);
+            for (int row = 0; row < count; row++) for (int col = 0; col < count; col++)
+                if (qr.ModuleMatrix[row][col]) graphics.FillRectangle(black, x + col * step, y + row * step, step, step);
+            graphics.SmoothingMode = mode; y += size + 20;
+        }
         if (page.Field is not null)
         {
             Text(page.FieldLabel, new(112, y, width - 148, 25), 13, true, Gray(0x9db7ad)); y += 27;
@@ -181,21 +206,34 @@ internal sealed class CanvasPainter : IDisposable
             Text(page.Field, new(124, y + 10, width - 210, 26), 15);
             shell.Hits.Add(new("field", rect, page.FieldLabel)); Feedback(rect, "field"); y += 60;
         }
+        foreach (var field in page.Fields ?? [])
+        {
+            Text(field.Label, new(112, y, width - 148, 25), 13, true, Gray(0x9db7ad)); y += 27;
+            var rect = new Rect(112, y, width - 184, 42); Round(rect, Gray(0x202a2c), 8);
+            string value = field.Secret ? new string('●', field.Value.Length) : field.Value;
+            Text(value, new(124, y + 10, width - 210, 26), 15);
+            shell.Hits.Add(new(field.Id, rect, field.Label)); Feedback(rect, field.Id); y += 60;
+        }
         float buttonX = 112;
         foreach (var action in page.Actions ?? [])
         {
             float w = Math.Max(120, graphics.MeasureString(action.Title, Font(14, true)).Width + 32);
-            Button(new(buttonX, y, w, 40), action.Id, action.Title); buttonX += w + 12;
+            if (buttonX > 112 && buttonX + w > width - 36) { buttonX = 112; y += 50; }
+            Button(new(buttonX, y, w, 40), action.Id, action.Title, enabled: action.Enabled); buttonX += w + 12;
         }
         if (page.Actions is { Count: > 0 }) y += 60;
         foreach (var row in page.Rows ?? [])
         {
-            if (y + 44 > height - 55) break;
             var rect = new Rect(112, y, width - 164, row.Subtitle.Length == 0 ? 44 : 62);
-            Round(rect, Gray(0x20282a), 8); Text(row.Title, new(126, y + 8, width - 196, 24), 15, true);
-            if (row.Subtitle.Length > 0) Text(row.Subtitle, new(126, y + 34, width - 196, 23), 12, color: Gray(0x9fb9af));
-            shell.Hits.Add(new(row.Id, rect, row.Title)); Feedback(rect, row.Id); y += rect.Height + 10;
+            if (rect.Bottom > 90 && rect.Y < height - 55)
+            {
+                Round(rect, Gray(0x20282a), 8); Text(row.Title, new(126, y + 8, width - 196, 24), 15, true);
+                if (row.Subtitle.Length > 0) Text(row.Subtitle, new(126, y + 34, width - 196, 23), 12, color: Gray(0x9fb9af));
+                shell.Hits.Add(new(row.Id, rect, row.Title)); Feedback(rect, row.Id);
+            }
+            y += rect.Height + 10;
         }
+        MaximumPageOffset = Math.Max(0, y + page.Offset + 24 - (height - 55));
         graphics.Restore(state);
         // Clipped page rows must not remain interactive under the header/footer.
         var viewport = new Rect(105, 90, width - 134, height - 145);
@@ -220,6 +258,6 @@ internal sealed class CanvasPainter : IDisposable
         }
         catch (Exception e) when (e is IOException or ArgumentException or OutOfMemoryException) { return null; }
     }
-    public void ReleaseArtwork() { foreach (var image in artwork.Values) image.Dispose(); artwork.Clear(); }
+    public void ReleaseArtwork() { foreach (var image in artwork.Values) image.Dispose(); artwork.Clear(); qr?.Dispose(); qr = null; qrUrl = null; }
     public void Dispose() { ReleaseArtwork(); foreach (var font in fonts.Values) font.Dispose(); }
 }

@@ -10,6 +10,10 @@ the existing pinned SteamKit source and LGPL shutdown patch. Valve client files
 and GameNative's closed hosts are not included; complete Windows binary
 distribution closure remains unapproved.
 
+The Windows login canvas generates QR codes in memory with QRCoder 1.8.1 (MIT),
+copyright Raffael Herrmann and Shane Krueger. The complete notice is retained in
+`LICENSES/qrcoder-MIT.txt`; its dependency hash is pinned in the Windows lock file.
+
 The full LGPL 2.1 text for Wine-derived patches and their LGPL-2.1-or-later notices is retained in `LICENSES/LGPL-2.1.txt`. It is copied unchanged from the pinned Wine source. Each patch/source header controls its license; ready's GPL does not replace that permission.
 
 GameNative, copyright its contributors, GPL-3.0: https://github.com/utkarshdalal/GameNative, revision `eaa715cf38fddfea6f8d1278c7dd89c0bb50e063`, is the architectural reference for store authentication, depots and launch coordination. The public source clone remains at `../GameNative`. Closed GameNative helpers are not included or reconstructed from binaries.

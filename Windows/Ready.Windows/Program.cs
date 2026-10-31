@@ -19,15 +19,25 @@ internal static class Program
         {
             if (args.Contains("--graphics-self-test")) return WindowsChecks.Run(Value("--report") ?? Path.Combine(dataRoot, "graphics-check.json"));
             if (args.Contains("--session-self-test")) return WindowsChecks.Sessions(Value("--fixture") ?? throw new ArgumentException("Specificare --fixture."), Value("--report") ?? Path.Combine(dataRoot, "session-check.json"));
-            if (args.Contains("--window-self-test"))
+            if (args.Contains("--steam-client-self-test")) return SteamClientChecks.Run(Value("--fixture") ?? throw new ArgumentException("Specificare --fixture."), Value("--report") ?? Path.Combine(dataRoot, "steam-client-check.json")).GetAwaiter().GetResult();
+            if (args.Contains("--steam-service-client-self-test")) return SteamClientChecks.Actual(Value("--service") ?? throw new ArgumentException("Specificare --service."), Value("--report") ?? Path.Combine(dataRoot, "steam-service-client-check.json")).GetAwaiter().GetResult();
+            if (args.Contains("--window-self-test") || args.Contains("--steam-window-self-test"))
             {
+                if (Value("--data-root") is null || !Path.IsPathFullyQualified(dataRoot)
+                    || Directory.Exists(dataRoot) && Directory.EnumerateFileSystemEntries(dataRoot).Any())
+                    throw new ArgumentException("La prova della finestra richiede --data-root con una cartella assoluta nuova e vuota.");
                 Directory.CreateDirectory(dataRoot);
                 var report = Value("--report") ?? Path.Combine(dataRoot, "window-check.json");
                 int result = 1;
                 using var test = new ReadyWindow(dataRoot, discoverSteam: false);
                 test.Shown += async (_, _) =>
                 {
-                    try { await test.ExerciseAsync(Value("--fixture") ?? throw new ArgumentException("Specificare --fixture."), report); result = 0; }
+                    try
+                    {
+                        string fixture = Value("--fixture") ?? throw new ArgumentException("Specificare --fixture.");
+                        if (args.Contains("--steam-window-self-test")) await test.ExerciseSteamAsync(fixture, report); else await test.ExerciseAsync(fixture, report);
+                        result = 0;
+                    }
                     catch (Exception e) { File.WriteAllText(report, JsonSerializer.Serialize(new { passed = false, error = e.GetType().Name, message = e.Message })); }
                     finally { test.Close(); }
                 };

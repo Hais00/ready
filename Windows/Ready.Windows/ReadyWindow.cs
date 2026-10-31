@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 
 namespace Ready.Windows;
 
-internal sealed class ReadyWindow : Form
+internal sealed partial class ReadyWindow : Form
 {
     private readonly Shell shell = new();
     private readonly CanvasPainter painter = new();
@@ -31,8 +31,9 @@ internal sealed class ReadyWindow : Form
         BackColor = Color.FromArgb(16, 16, 16); KeyPreview = true;
         SetStyle(ControlStyles.Opaque | ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint, true);
         store = new(dataRoot); library = store.Load(); UpdateCatalog();
+        steamEnabled = discoverSteam;
         clock.Tick += (_, _) => { var now = DateTime.Now.ToString("HH:mm"); if (painter.Clock != now) { painter.Clock = now; if (!suspended) Invalidate(); } };
-        if (discoverSteam) Shown += async (_, _) => await DiscoverSteam(); clock.Start();
+        if (discoverSteam) Shown += async (_, _) => { await DiscoverSteam(); await InitializeSteam(); }; clock.Start();
     }
     protected override void OnHandleCreated(EventArgs e)
     { base.OnHandleCreated(e); canvas = new VulkanCanvas(Handle, ClientSize.Width, ClientSize.Height); }
@@ -65,6 +66,8 @@ internal sealed class ReadyWindow : Form
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         base.OnMouseWheel(e);
+        if (shell.Page == Destination.Friends)
+        { steamPageOffset = Math.Clamp(steamPageOffset - e.Delta / 120f * 72, 0, painter.MaximumPageOffset); UpdatePage(); Invalidate(); return; }
         if (shell.Page == Destination.Import)
         { browserOffset = Math.Clamp(browserOffset - Math.Sign(e.Delta) * 3, 0, Math.Max(0, browserEntries.Count - 1)); UpdateBrowserPage(); }
         else shell.ScrollBy(-e.Delta / 120f * 72, LogicalWidth, LogicalHeight);
@@ -74,6 +77,7 @@ internal sealed class ReadyWindow : Form
     protected override async void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
+        if (HandleSteamEditing(e)) { Invalidate(); return; }
         if (e.KeyCode == Keys.F11)
         {
             if (FormBorderStyle == FormBorderStyle.None) { WindowState = FormWindowState.Normal; FormBorderStyle = FormBorderStyle.Sizable; }
@@ -98,12 +102,13 @@ internal sealed class ReadyWindow : Form
     protected override void OnKeyPress(KeyPressEventArgs e)
     {
         base.OnKeyPress(e);
+        if (HandleSteamCharacter(e)) { Invalidate(); return; }
         if (page?.Field is not null && shell.Focus == "field" && !char.IsControl(e.KeyChar) && input.Length < 4096)
         { input += e.KeyChar; UpdatePage(); e.Handled = true; Invalidate(); }
     }
     private void UpdateCatalog()
     {
-        shell.SetCatalog(library.ActiveGames.Concat(steamGames).DistinctBy(g => g.Id), shell.Query);
+        shell.SetCatalog(library.ActiveGames.Concat(CurrentSteamGames()).DistinctBy(g => g.Id), shell.Query);
         painter.ProfileName = library.Profiles.First(p => p.Id == library.ActiveProfile).Name;
     }
     private async Task DiscoverSteam()
@@ -115,6 +120,8 @@ internal sealed class ReadyWindow : Form
     }
     private void Navigate(Destination destination)
     {
+        if (shell.Page == Destination.Friends && destination != Destination.Friends) { steam?.CancelAuthentication(); ClearSteamInputs(); }
+        steamPageOffset = 0;
         browserEpoch++; shell.Navigate(destination); shell.Error = null; input = "";
         if (destination == Destination.Import) { _ = Browse(browserDirectory); return; }
         UpdatePage(); Invalidate();
@@ -129,7 +136,7 @@ internal sealed class ReadyWindow : Form
             Destination.Library => null,
             Destination.Search => new("Libreria", "Cerca nella libreria", "Cerca per titolo o ID.", input, "Titolo o ID", [new("search:apply", "Cerca"), new("nav:library", "Indietro")]),
             Destination.Profiles => new("Profili", "I tuoi profili", "Ogni profilo mantiene la propria libreria di giochi locali.", input, "Nome nuovo profilo", [new("profile:create", "Crea profilo")], library.Profiles.Select(p => new PageRow("profile:" + p.Id, p.Name, p.Id == library.ActiveProfile ? "Profilo attivo" : "Seleziona profilo")).ToArray()),
-            Destination.Friends => new("Amici", "Account Steam", "Il servizio Steam per Windows è in preparazione. Login, amici e avvio autenticato saranno disponibili dopo la verifica del motore Windows.", Actions: [new("steam:refresh", "Aggiorna giochi installati")]),
+            Destination.Friends => SteamPage(),
             Destination.Downloads => new("Download", "Nessun download in corso", "La coda del servizio Steam Windows non è ancora collegata."),
             Destination.Game => new("Gioco", selectedGame?.Title ?? "Gioco", selectedGame is null ? "" : selectedGame.InstallDirectory + "\n" + (selectedGame.Source == GameSource.Local ? $"Windows · {selectedGame.Architecture}" : "Steam · Windows"), Actions: [new("game:play", "Gioca"), new("nav:library", "Indietro")]),
             Destination.Settings => new("Impostazioni", settingsTab switch { "runtime" => "Motore Windows nativo", "account" => "Account", "storage" => "Archiviazione", "data" => "Dati e ripristino", _ => "Generali" },
@@ -172,18 +179,18 @@ internal sealed class ReadyWindow : Form
         {
             if (action == "toolbar:friends") action = "nav:friends";
             if (action == "empty:import") action = "nav:import";
-            if (action == "field") { shell.Focus = "field"; return; }
+            if (action == "field" || action.StartsWith("field:", StringComparison.Ordinal)) { shell.Focus = action; return; }
             shell.Error = null;
+            if (await SteamAction(action)) { Invalidate(); return; }
             if (action.StartsWith("nav:", StringComparison.Ordinal))
                 Navigate(action[4..] switch { "library" => Destination.Library, "friends" => Destination.Friends, "downloads" => Destination.Downloads, "settings" => Destination.Settings, "profiles" => Destination.Profiles, "import" => Destination.Import, _ => Destination.Library });
             else if (action.StartsWith("game:", StringComparison.Ordinal) && action != "game:play")
             { selectedGame = shell.Games.FirstOrDefault(g => g.Id == action[5..]); Navigate(Destination.Game); }
             else if (action.StartsWith("settings:", StringComparison.Ordinal)) { settingsTab = action[9..]; shell.ClearInteraction(); UpdatePage(); }
-            else if (action == "profile:create") { var updated = library.AddProfile(input); store.Save(updated); library = updated; input = ""; UpdateCatalog(); UpdatePage(); }
+            else if (action == "profile:create") { var updated = library.AddProfile(input); store.Save(updated); library = updated; input = ""; await SwitchSteamProfile(); UpdateCatalog(); UpdatePage(); }
             else if (action.StartsWith("profile:", StringComparison.Ordinal))
-            { var updated = library with { ActiveProfile = library.Profiles.First(p => p.Id == action[8..]).Id }; store.Save(updated); library = updated; UpdateCatalog(); UpdatePage(); }
-            else if (action == "search:apply") { shell.SetCatalog(library.ActiveGames.Concat(steamGames), input.Trim()); Navigate(Destination.Library); }
-            else if (action == "steam:refresh") await DiscoverSteam();
+            { var updated = library with { ActiveProfile = library.Profiles.First(p => p.Id == action[8..]).Id }; store.Save(updated); library = updated; await SwitchSteamProfile(); UpdateCatalog(); UpdatePage(); }
+            else if (action == "search:apply") { shell.SetCatalog(library.ActiveGames.Concat(CurrentSteamGames()), input.Trim()); Navigate(Destination.Library); }
             else if (action == "browser:open") { if (File.Exists(input)) Import(input); else await Browse(input); }
             else if (action == "browser:up") await Browse(Directory.GetParent(browserDirectory)?.FullName ?? browserDirectory);
             else if (action == "browser:drives") { browserEntries = DriveInfo.GetDrives().Select(d => d.RootDirectory.FullName).ToList(); browserOffset = 0; UpdateBrowserPage(); }
@@ -211,7 +218,7 @@ internal sealed class ReadyWindow : Form
         }
     }
     protected override void OnFormClosing(FormClosingEventArgs e)
-    { closing = true; browserEpoch++; clock.Stop(); session?.Dispose(); base.OnFormClosing(e); }
+    { closing = true; browserEpoch++; clock.Stop(); session?.Dispose(); steam?.CancelAuthentication(); _ = StopSteam(); ClearSteamInputs(); base.OnFormClosing(e); }
     protected override void Dispose(bool disposing)
     {
         if (disposing) { clock.Dispose(); session?.Dispose(); painter.Dispose(); canvas?.Dispose(); canvas = null; }

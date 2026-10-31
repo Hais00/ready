@@ -42,6 +42,46 @@ Steam discovery reads installed ACF manifests and current/legacy
 `libraryfolders.vdf`. It does not read saved Steam credentials, infer ownership
 from installation, or guess authenticated launch executables.
 
+## Windows Steam account integration
+
+The account canvas now runs the actual source-built Steam service through
+`SteamServiceProcess`, with anonymous stdin/stdout, immutable profile/generation
+binding, monotonically increasing event sequences, bounded JSONL, correlated
+requests, cancellation and owned-process shutdown. Stderr is discarded and
+unknown backend error text never enters UI diagnostics. Private credential
+events have a separate receiver; cancelled or old-profile requests cannot save
+a late credential. QR URLs remain in memory and are rendered directly into the
+Vulkan canvas using QRCoder. Password and Guard inputs are masked and cleared on
+submission/navigation; no password is persisted.
+
+`SteamCredentialStore` encrypts refresh credentials with Windows current-user
+DPAPI, separate purpose entropy for each profile, protected directory ACLs for
+the owner/SYSTEM and atomic replacement. It never selects machine-wide DPAPI.
+Offline mode and transient failures retain the login; explicit logout removes
+only that profile's credential. Managed string/buffer lifetimes are not a claim
+of forensic zeroization. See Microsoft's
+[DPAPI contract](https://learn.microsoft.com/en-us/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata).
+
+The account page exposes QR/password login, Guard, reconnect/offline/logout,
+public name, presence, friends and their explicit relationship actions.
+Remove/block require a second matching action within eight seconds. Profile
+changes close the old helper and isolate its catalog. The owned library is
+received in bounded pages and committed only after terminal counts match;
+non-game and Mac-only records are filtered, while uninstalled games remain
+uninstalled. An account connection never marks the genuine game host ready.
+Downloads and authenticated game-worker launch are still separate unfinished
+integrations.
+
+The native checks cover actual DPAPI/DACLs and real child pipes with an owned
+synthetic protocol helper, plus the actual SteamKit adapter's offline snapshot
+and shutdown. The form test renders QR/password states through Vulkan, checks
+masked GPU pixels against an unmasked negative control, cancels navigation,
+completes a synthetic Guard flow and switches profiles. No real Steam login,
+social operation, ownership authorization or game launch was performed. The
+Steam form fixture requires a new, empty data root so a substitute test helper
+cannot receive an existing saved login. The current evidence is in
+`Validation/windows-steam-client-checkpoint.json`.
+
 ## Build
 
 Use Windows 10/11, .NET 10 SDK and a matching Vulkan driver:
@@ -114,8 +154,9 @@ and [process attributes](https://learn.microsoft.com/en-us/windows/win32/api/pro
 
 - Complete visual parity, form/accessibility behavior, asynchronous sparse artwork
   and controller navigation across all pages.
-- Connect the actual Windows Steam service to the UI, secure credentials,
-  authenticated owned library, download queue and game-worker handoff.
+- Validate the connected Steam UI against a real account, including saved-login
+  restore, friends and full owned catalog; complete artwork/download queue and
+  genuine game-worker handoff.
 - Repeat headless-host measurements natively and complete real owned-game
   authentication, launch and exit.
 - Implement Windows embedding/injection and the actual in-game UI, input gating,
