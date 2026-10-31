@@ -46,6 +46,8 @@ The [overlay response checkpoint](Validation/overlay-response-checkpoint.json) a
 
 The [monochrome catalog checkpoint](Validation/monochrome-catalog-checkpoint.json) records the neutral UI palette, top-aligned dock, upright cached game icon and full-height catalog scrolling behind header/error text. Artwork keeps its source colors. Build, owned rendering/navigation fixtures and a normal-library visual check passed; this checkpoint does not add a gameplay benchmark.
 
+The [asynchronous artwork checkpoint](Validation/artwork-scroll-checkpoint.json) moves card composition off Main to two bounded workers and prebuilds directional rows. Actual indexed-cache fixtures measured cold viewport card assignment at 141–164 ms p95 (previously 532–555 ms), and predictive continuous-scroll assignment at about 5 ms p95. These are hidden UI timing checks; decoded artwork and tile jobs still clear for gameplay.
+
 ## Build and test
 
 The frontend build targets macOS 14+ and Swift 5.10+; current runtime validation is on macOS 27.0.1. The currently built Wine/Vulkan payload declares macOS 27 as its minimum OS. Metal4/GPTK4 testing requires a compatible newer SDK/OS and Apple Silicon. The native group-lifetime checks have not been run on macOS 14/15.

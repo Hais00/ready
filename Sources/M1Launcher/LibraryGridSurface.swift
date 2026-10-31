@@ -120,3 +120,53 @@ final class LibraryTileCache {
   func clear(){entries.removeAll();bytes=0}
   var count:Int{entries.count}
 }
+
+/// Bounded immutable card composition. Main only captures inputs and assigns the
+/// completed CGImage; event tracking never waits for text/image rasterization.
+final class LibraryTileRenderer {
+  struct Request {
+    let id:String,key:LibraryTileCache.Key,size:NSSize,scale:CGFloat,content:LibraryCardContent,visible:Bool
+  }
+  struct Statistics {var running=0,maximumRunning=0,rasters=0,mainThreadRasters=0,pending=0}
+  private final class Ticket {
+    let request:Request,operation=BlockOperation()
+    init(_ request:Request){self.request=request}
+  }
+  private let workers:OperationQueue = {let q=OperationQueue();q.name="app.ready.library.card-raster";q.qualityOfService = .userInitiated;q.maxConcurrentOperationCount=2;return q}()
+  private var tickets=[String:Ticket]()
+  private let lock=NSLock();private var counters=Statistics()
+  var statistics:Statistics{lock.lock();var value=counters;lock.unlock();value.pending=tickets.count;return value}
+  func cancel(){tickets.values.forEach{$0.operation.cancel()};tickets.removeAll();workers.cancelAllOperations()}
+  deinit{workers.cancelAllOperations()}
+  func prepare(_ requests:[Request],completion:@escaping(Request,CGImage,Double)->Void){
+    let wanted=Dictionary(requests.map{($0.id,$0)},uniquingKeysWith:{$1})
+    for (id,ticket) in tickets{
+      guard let next=wanted[id],next.key==ticket.request.key,(next.content.artwork != nil)==(ticket.request.content.artwork != nil)else{ticket.operation.cancel();tickets.removeValue(forKey:id);continue}
+      ticket.operation.queuePriority=next.visible ? .veryHigh:.low
+    }
+    for request in requests where tickets[request.id]==nil{
+      let ticket=Ticket(request);tickets[request.id]=ticket
+      ticket.operation.queuePriority=request.visible ? .veryHigh:.low
+      ticket.operation.addExecutionBlock{[weak self,weak ticket]in
+        guard let self,let ticket,!ticket.operation.isCancelled else{return}
+        self.lock.lock();self.counters.running+=1;self.counters.maximumRunning=max(self.counters.maximumRunning,self.counters.running);self.counters.rasters+=1;if Thread.isMainThread{self.counters.mainThreadRasters+=1};self.lock.unlock()
+        let began=ProcessInfo.processInfo.systemUptime
+        let image:CGImage?=autoreleasepool{
+          guard !ticket.operation.isCancelled,let bitmap=CanvasRaster(width:request.key.pixelWidth,height:request.key.pixelHeight)else{return nil}
+          bitmap.draw(logicalSize:request.size,scale:request.scale){request.content.draw(in:$0,rect:CGRect(origin:.zero,size:request.size))}
+          return bitmap.context.makeImage()
+        }
+        let elapsed=(ProcessInfo.processInfo.systemUptime-began)*1000
+        self.lock.lock();self.counters.running-=1;self.lock.unlock()
+        guard !ticket.operation.isCancelled else{return}
+        let modes=[RunLoop.Mode.common.rawValue,RunLoop.Mode.eventTracking.rawValue,RunLoop.Mode.modalPanel.rawValue]as CFArray
+        CFRunLoopPerformBlock(CFRunLoopGetMain(),modes){[weak self,weak ticket]in
+          guard let self,let ticket,!ticket.operation.isCancelled,self.tickets[request.id]===ticket else{return}
+          self.tickets.removeValue(forKey:request.id)
+          if let image{completion(request,image,elapsed)}
+        };CFRunLoopWakeUp(CFRunLoopGetMain())
+      }
+      workers.addOperation(ticket.operation)
+    }
+  }
+}

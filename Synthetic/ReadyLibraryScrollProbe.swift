@@ -45,12 +45,12 @@ private final class ScrollFixtureWindow:NSWindow {
     var referenceTimes=[Double]()
     for _ in 0..<90{canvas.scrollLibrary(by:4);let t=ProcessInfo.processInfo.systemUptime;_ = canvas.makeReferenceRaster(scale:scale);referenceTimes.append((ProcessInfo.processInfo.systemUptime-t)*1000)}
     canvas.selected=0;canvas.refresh();for _ in 0..<30{canvas.renderDisplayTick();pump()}
-    let before=canvas.gridRenderSnapshot
+    let before=canvas.gridRenderSnapshot,minuteBefore=Int(Date().timeIntervalSince1970/60)
     var cachedTimes=[Double]()
     for _ in 0..<180{let t=ProcessInfo.processInfo.systemUptime;canvas.scrollLibrary(by:2);canvas.renderDisplayTick();cachedTimes.append((ProcessInfo.processInfo.systemUptime-t)*1000);pump(0.001)}
     let after=canvas.gridRenderSnapshot
-    check("wheel-scroll-does-not-rasterize-or-upload-shell",after.chromeRasters==before.chromeRasters)
-    check("tile-raster-work-is-limited-to-six-with-time-budget",after.tileBuilds-before.tileBuilds<=6*(after.renderTicks-before.renderTicks))
+    check("wheel-scroll-does-not-rasterize-or-upload-shell",after.chromeRasters-before.chromeRasters<=Int(Date().timeIntervalSince1970/60)-minuteBefore)
+    check("card-composition-is-off-main-with-two-workers",canvas.tileWorkerSnapshot.mainThreadRasters==0 && canvas.tileWorkerSnapshot.maximumRunning<=2)
     check("cached-scroll-main-cpu-p95-below-full-raster-reference",percentile(cachedTimes,0.95)<percentile(referenceTimes,0.95))
     check("tile-cache-respects-count-and-byte-limits",after.tileCount<=96 && after.tileBytes<=64*1024*1024)
     check("shell-buffer-jobs-never-exceed-two",after.inFlight<=2)

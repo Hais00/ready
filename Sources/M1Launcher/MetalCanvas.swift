@@ -42,6 +42,8 @@ final class MetalCanvas: NSView {
   var graphicsRestoreSnapshot:(suspended:Bool,rendererReady:Bool,cpuChromeVisible:Bool){(suspended,shellRenderer != nil,chromePreview?.contents != nil)}
   private var gridSurface:LibraryGridSurface?
   private let tileCache=LibraryTileCache()
+  private let tileRenderer=LibraryTileRenderer()
+  private lazy var cardSymbols=LibraryCardSymbols()
   private var displayLink:CADisplayLink?,linkTarget:CanvasDisplayLinkTarget?
   private var renderDirty=false,drawingChrome=false
   private var lastChromeKey="",cachedShellHits=[CanvasHit]()
@@ -82,6 +84,7 @@ final class MetalCanvas: NSView {
       // before a page change. Keep navigation focus when it still applies.
       pageTitle=nil
       gridSurface?.isHidden = section != .library
+      if section != .library{tileRenderer.cancel()}
       hits.removeAll(); hoverID = nil; pressedID = nil
       if let id = focusID, !id.hasPrefix("nav.") && !id.hasPrefix("toolbar.") { focusID = nil }
       window?.invalidateCursorRects(for: self)
@@ -136,6 +139,7 @@ final class MetalCanvas: NSView {
   var libraryLayoutSnapshot:(columns:Int,offset:CGFloat,maximum:CGFloat,viewport:CGRect,visibleIDs:[String]){
     (libraryGridColumns,libraryScroll,libraryMaximumScroll,libraryViewport,hits.compactMap{if case .game(let id)=$0.action{return id};return nil})
   }
+  var tileWorkerSnapshot:LibraryTileRenderer.Statistics{tileRenderer.statistics}
   var tileRasterBudgetSnapshot:(largestBatch:Int,rasterMilliseconds:[Double]){(largestTileBatch,tileRasterMilliseconds)}
   var viewportArtworkSnapshot:(entries:Int,cachedEntries:Int,completed:Int,dropped:Int,pending:Int,pendingCached:Int,ramMilliseconds:[Double],tileMilliseconds:[Double],cachedTileMilliseconds:[Double],committedIDs:Set<String>,trackingInvalidations:Int){
     (entryCount,cachedEntryCount,entryTilems.count,droppedEntries,artworkEntries.values.filter{!$0.committed}.count,artworkEntries.values.filter{$0.cached && !$0.committed}.count,entryRAMms,entryTilems,cachedEntryTilems,Set(artworkEntries.filter{$0.value.committed}.keys),trackingArtworkInvalidations)
@@ -293,7 +297,7 @@ final class MetalCanvas: NSView {
     cancelOverlayChromeMotion()
     rendererBuild?.cancel();rendererBuild=nil;graphicsGeneration=UUID();returnViewportCompletion=nil
     suspended=true;renderDirty=false;displayLink?.invalidate();displayLink=nil;linkTarget=nil
-    gridSurface?.clear();gridSurface=nil;tileCache.clear();previousTiles.removeAll();tileArtwork.removeAll();tileVersions.removeAll();pendingArtInvalidations.removeAll();artworkEntries.removeAll()
+    tileRenderer.cancel();gridSurface?.clear();gridSurface=nil;tileCache.clear();previousTiles.removeAll();tileArtwork.removeAll();tileVersions.removeAll();pendingArtInvalidations.removeAll();artworkEntries.removeAll()
     shellRenderer?.stop();shellRenderer=nil;chromePreview?.contents=nil;chromePreview?.removeFromSuperlayer();chromePreview=nil;canvasLayer?.device=nil;canvasLayer?.removeFromSuperlayer();canvasLayer=nil;backgroundLayer=nil;wantsLayer=false
     lastChromeKey="";cachedShellHits=[];art.purge();hits=[];hoverID=nil;pressedID=nil;window?.invalidateCursorRects(for:self)
     preparedCatalog=nil;lastViewportCatalog=nil;lastViewportIDs=[];lastAheadIDs=[]
@@ -381,7 +385,8 @@ final class MetalCanvas: NSView {
   }
   private func lookAheadRange()->Range<Int>{
     guard !visibleGames.isEmpty else{return 0..<0}
-    let first=max(0,Int(floor(libraryScroll/libraryCardStride))),last=Int(ceil((libraryScroll+libraryViewport.height)/libraryCardStride))
+    let origin=libraryTopInset+LibraryCardMetrics.edgePadding
+    let first=max(0,Int(floor((libraryScroll-origin)/libraryCardStride))),last=Int(ceil((libraryScroll+libraryViewport.height-origin)/libraryCardStride))
     let lower=max(0,first-(scrollDirection<0 ? 4:1)),upper=max(lower,last+(scrollDirection>0 ? 4:1))
     return min(visibleGames.count,lower*libraryGridColumns)..<min(visibleGames.count,upper*libraryGridColumns)
   }
@@ -479,37 +484,45 @@ final class MetalCanvas: NSView {
         lastViewportIDs=visibleIDs;lastAheadIDs=aheadIDs;lastViewportCatalog=catalogRevision
       }
       for id in pendingArtInvalidations{tileVersions[id,default:0]&+=1};pendingArtInvalidations.removeAll()
-      // Probe every visible RAM binding independently of the two-tile raster
-      // budget, so measurements separate cache publication from tile commit.
-      var ramReadyIDs=Set<String>()
-      for i in indexRange(prefetch:true){let game=visibleGames[i],id=game.id;if art.image(for:game,role:.card,refresh:{[weak self]in self?.invalidateGame(id:id)}) != nil{ramReadyIDs.insert(id);if visibleRange.contains(i){recordArtworkRAM(id)}}}
-      var tiles=[LibraryGridSurface.Tile](),built=0
-      let tileRasterBegan=ProcessInfo.processInfo.systemUptime
-      let requested=Array(indexRange(prefetch:false))+indexRange(prefetch:true).filter{!indexRange(prefetch:false).contains($0)}
+      // Capture cache bindings on Main; immutable card pixels are composed on
+      // two workers. Cached rows no longer wait one display tick per card.
+      let bytesPerCard=max(1,Int(ceil(cardSize.width*scale))*Int(ceil(cardSize.height*scale))*4)
+      let workingSetCount=max(visibleRange.count,min(94,tileCache.byteLimit/bytesPerCard-2))
+      let predictive=aheadRange.filter{!visibleRange.contains($0)}
+      let orderedAhead=scrollDirection>=0 ? predictive:predictive.reversed().map{$0}
+      let requested=Array(visibleRange)+orderedAhead.prefix(max(0,workingSetCount-visibleRange.count))
+      var artwork=[String:CGImage](),ramReadyIDs=Set<String>()
+      for i in requested{let game=visibleGames[i],id=game.id;if let image=art.image(for:game,role:.card,refresh:{[weak self]in self?.invalidateGame(id:id)}){artwork[id]=image;ramReadyIDs.insert(id);if visibleRange.contains(i){recordArtworkRAM(id)}}}
+      var tiles=[LibraryGridSurface.Tile](),requests=[LibraryTileRenderer.Request]()
       var images=[Int:CGImage](),prepared=[String:PreparedTile](),realArtworkIDs=Set<String>()
       for i in requested{
         let game=visibleGames[i],size=cardSize,key=LibraryTileCache.Key(title:LibraryEntryPresentation.title(game),store:game.store.rawValue,platforms:Self.platformLabels(game).joined(separator:"|"),installed:game.variants.contains{$0.installed},revision:art.revision(gameID:game.id,role:.card) &+ (tileVersions[game.id] ?? 0),pixelWidth:Int(ceil(size.width*scale)),pixelHeight:Int(ceil(size.height*scale)))
         var image=tileCache.image(id:game.id,key:key),containsArtwork=tileArtwork[game.id].flatMap{$0.0==key ? $0.1:nil} ?? false
-        // A different binding can populate a shared content hash without this
-        // binding receiving a revision notification. Never keep a placeholder
-        // stamp merely because its key is unchanged once real RAM art exists.
-        if image != nil,!containsArtwork,ramReadyIDs.contains(game.id){image=nil;renderDirty=true}
-        if image==nil,built<6,(built==0 || ProcessInfo.processInfo.systemUptime-tileRasterBegan<0.004),let bitmap=CanvasRaster(width:key.pixelWidth,height:key.pixelHeight){
-          bitmap.draw(logicalSize:size,scale:scale){containsArtwork=drawCard($0,game:game,rect:CGRect(origin:.zero,size:size))}
-          if let cg=bitmap.context.makeImage(){tileCache.insert(id:game.id,key:key,image:cg);tileArtwork[game.id]=(key,containsArtwork);image=cg;built+=1}
+        // A shared hash can become resident without a revision for this game.
+        if image != nil,!containsArtwork,ramReadyIDs.contains(game.id){image=nil}
+        if image==nil{
+          requests.append(.init(id:game.id,key:key,size:size,scale:scale,content:cardContent(game,artwork:artwork[game.id]),visible:visibleRange.contains(i)))
+          if let previous=previousTiles[game.id],previous.key.title==key.title,previous.key.installed==key.installed,previous.key.pixelWidth==key.pixelWidth,previous.key.pixelHeight==key.pixelHeight{image=previous.image;containsArtwork=previous.hasArtwork}
         }
-        if image==nil{renderDirty=true;if let previous=previousTiles[game.id],previous.key.title==key.title,previous.key.installed==key.installed,previous.key.pixelWidth==key.pixelWidth,previous.key.pixelHeight==key.pixelHeight{image=previous.image;containsArtwork=previous.hasArtwork}}
         if let image{images[i]=image;prepared[game.id]=PreparedTile(key:key,image:image,hasArtwork:containsArtwork);if containsArtwork{realArtworkIDs.insert(game.id)}}
       }
+      let epoch=graphicsGeneration
+      tileRenderer.prepare(requests){[weak self]request,image,milliseconds in
+        guard let self,!self.suspended,self.graphicsGeneration==epoch else{return}
+        self.tileCache.insert(id:request.id,key:request.key,image:image)
+        self.tileArtwork[request.id]=(request.key,request.content.artwork != nil)
+        self.tileBuildTicks+=1;self.largestTileBatch=max(self.largestTileBatch,1)
+        self.tileRasterMilliseconds.append(milliseconds);if self.tileRasterMilliseconds.count>2048{self.tileRasterMilliseconds.removeFirst(self.tileRasterMilliseconds.count-2048)}
+        self.redraw()
+      }
       previousTiles=prepared
-      if built>0{tileBuildTicks+=1;largestTileBatch=max(largestTileBatch,built);tileRasterMilliseconds.append((ProcessInfo.processInfo.systemUptime-tileRasterBegan)*1000);if tileRasterMilliseconds.count>2048{tileRasterMilliseconds.removeFirst(tileRasterMilliseconds.count-2048)}}
       for i in indexRange(prefetch:true){var rect=cardFrame(i);rect.origin.x-=libraryViewport.minX;rect.origin.y+=libraryScroll-libraryViewport.minY;tiles.append(.init(id:visibleGames[i].id,frame:rect,image:images[i],installed:visibleGames[i].variants.contains{$0.installed}))}
       func gameID(_ id:String?)->String?{id.flatMap{$0.hasPrefix("game.") ? String($0.dropFirst(5)):nil}}
       surface.update(tiles,selected:visibleGames.indices.contains(selected) ? visibleGames[selected].id:nil,hovered:gameID(hoverID),focused:gameID(focusID),pressed:gameID(pressedID),showFocus:window?.isKeyWindow==true && window?.firstResponder===self)
       for id in visibleIDs where realArtworkIDs.contains(id){recordArtworkCommit(id)}
       let visibleStamped=visibleRange.allSatisfy{images[$0] != nil}
       if visibleStamped,Set(visibleIDs).intersection(ramReadyIDs).isSubset(of:realArtworkIDs){visibleLibraryRestored()}
-    }else{gridSurface?.isHidden=true;visibleLibraryRestored()}
+    }else{tileRenderer.cancel();gridSurface?.isHidden=true;visibleLibraryRestored()}
     updateShellFeedback()
     cpuFrameTimes.append((ProcessInfo.processInfo.systemUptime-began)*1000);if cpuFrameTimes.count>4096{cpuFrameTimes.removeFirst(cpuFrameTimes.count-4096)}
     if !submittedChrome,overlayMotion != nil,let renderer=shellRenderer,let layer=canvasLayer{
@@ -565,38 +578,12 @@ final class MetalCanvas: NSView {
     icon(symbol, rect.insetBy(dx: 10, dy: 10), tint: active ? color(0x98f5b9) : .white)
     registerHit(rect, hitRect: CanvasGeometry.minimumTarget(rect), id: id, action: action)
   }
-  @discardableResult private func drawCard(_ cg:CGContext,game:Game,rect r:CGRect)->Bool{
-      var hasArtwork=false
-      let coverHeight=r.width*LibraryCardMetrics.coverRatio
-      let installed=game.variants.contains{$0.installed}
-      round(r,color(installed ? 0x24332f:0x242a2d))
-      let cover=CGRect(x:r.minX,y:r.minY,width:r.width,height:coverHeight)
-      cg.saveGState();cg.addPath(CGPath(roundedRect:cover,cornerWidth:10,cornerHeight:10,transform:nil));cg.clip()
-      if let image=art.image(for:game,role:.card,refresh:{[weak self]in self?.invalidateGame(id:game.id)}){
-        hasArtwork=true
-        let maximum=max(image.width,image.height)<=128 ? CGFloat(1):CGFloat.greatestFiniteMagnitude
-        let scale=min(maximum,min(cover.width/CGFloat(image.width),cover.height/CGFloat(image.height)))
-        let size=CGSize(width:CGFloat(image.width)*scale,height:CGFloat(image.height)*scale)
-        cg.saveGState();cg.translateBy(x:cover.minX,y:cover.maxY);cg.scaleBy(x:1,y:-1)
-        cg.draw(image,in:CGRect(x:(cover.width-size.width)/2,y:(cover.height-size.height)/2,width:size.width,height:size.height));cg.restoreGState()
-      }else{
-        let hash=game.id.utf8.reduce(0){($0*31+Int($1))&0xffffff}
-        cg.setFillColor(color(0x20363a | (hash&0x0f0f0f)).cgColor);cg.fill(cover)
-        icon("gamecontroller",CGRect(x:cover.midX-28,y:cover.midY-28,width:56,height:56),tint:color(0xc1d2ce,0.7))
-      }
-      if !installed{cg.setBlendMode(.saturation);cg.setFillColor(NSColor.gray.cgColor);cg.fill(cover);cg.setBlendMode(.normal);cg.setFillColor(color(0x11171a,0.22).cgColor);cg.fill(cover)}
-      cg.restoreGState()
-      let mac=game.variants.contains{$0.platform == .macOS},windows=game.variants.contains{$0.platform == .windows}
-      let count=(mac ? 1:0)+(windows ? 1:0)
-      if count>0 {
-        let badge=CGRect(x:cover.maxX-CGFloat(count)*22-10,y:cover.minY+9,width:CGFloat(count)*22+3,height:25)
-        round(badge,color(0x101819,0.82),radius:7)
-        var x=badge.minX+4
-        if mac{icon("apple.logo",CGRect(x:x,y:badge.minY+4,width:17,height:17),tint:color(0xf0f6f3));x+=22}
-        if windows{let box=CGRect(x:x+1,y:badge.minY+5,width:15,height:15);color(0xf0f6f3).setFill();for row in 0..<2{for column in 0..<2{CGRect(x:box.minX+CGFloat(column)*8,y:box.minY+CGFloat(row)*8,width:6.5,height:6.5).fill()}}}
-      }
-      text(LibraryEntryPresentation.title(game),CGRect(x:r.minX+10,y:cover.maxY+10,width:r.width-20,height:23),size:13,bold:true,color:installed ? .white:color(0xc6cdcd))
-      return hasArtwork
+  private func cardContent(_ game:Game,artwork:CGImage?)->LibraryCardContent{
+    LibraryCardContent(title:LibraryEntryPresentation.title(game),installed:game.variants.contains{$0.installed},macOS:game.variants.contains{$0.platform == .macOS},windows:game.variants.contains{$0.platform == .windows},placeholderSeed:game.id.utf8.reduce(0){($0*31+Int($1))&0xffffff},artwork:artwork,symbols:cardSymbols)
+  }
+  @discardableResult private func drawCard(_ cg:CGContext,game:Game,rect:CGRect)->Bool{
+    let image=art.image(for:game,role:.card,refresh:{[weak self]in self?.invalidateGame(id:game.id)})
+    cardContent(game,artwork:image).draw(in:cg,rect:rect);return image != nil
   }
   private func drawBackground(_ cg:CGContext){
     guard !gameInterfaceMode else{return}

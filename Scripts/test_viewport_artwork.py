@@ -26,7 +26,7 @@ def main():
   base=pathlib.Path(base);dirs[:]=[d for d in dirs if not(base/d).is_symlink()]
   for name in files:
    path=base/name;info=path.lstat()
-   if stat.S_ISREG(info.st_mode)and info.st_uid==os.getuid()and info.st_size<=16*1024*1024:candidates.append((path,info.st_size))
+   if (name in priority or name.startswith('url-')and name.endswith('.json'))and stat.S_ISREG(info.st_mode)and info.st_uid==os.getuid()and info.st_size<=16*1024*1024:candidates.append((path,info.st_size))
  candidates.sort(key=lambda p:(p[0].name not in priority,str(p[0])))
  copyIntegrity=[]
  for number in range(2):
@@ -53,7 +53,7 @@ def main():
  for name,digest in json.loads(core_receipt.read_text())['sourceHashes'].items():
   if name.startswith('Sources/LauncherCore/'):assert sha(ROOT/name)==digest
  config={'output':str(run),'libraryCopy':str(COPY),'librarySHA256':COPY_SHA,'cacheCopies':caches,'baseline':bool(args.baseline_ref),'copyIntegrity':copyIntegrity};(run/'config.json').write_text(json.dumps(config)+'\n');(run/'config.json').chmod(0o600)
- names=['CanvasDrawing.swift','ControllerNavigation.swift','LibraryEntryPresentation.swift','GameArtwork.swift','ArtworkIndexStore.swift','ArtworkCache.swift','CanvasShellRenderer.swift','LibraryGridSurface.swift','MetalCanvas.swift']
+ names=['CanvasDrawing.swift','ControllerNavigation.swift','LibraryEntryPresentation.swift','GameArtwork.swift','ArtworkIndexStore.swift','ArtworkCache.swift','CanvasShellRenderer.swift','LibraryGridSurface.swift','ReadyShellModel.swift','MetalCanvas.swift']
  files=[*[ROOT/'Sources/M1Launcher'/n for n in names],ROOT/'Synthetic/ReadyViewportArtworkProbe.swift',pathlib.Path(__file__).resolve()];before={str(p.relative_to(ROOT)):sha(p)for p in files}
  env={k:v for k,v in os.environ.items()if k in ['PATH','HOME','USER','LOGNAME','LANG','LC_ALL','DEVELOPER_DIR']};env.update(TMPDIR=str(WORK/'tmp')+'/',CLANG_MODULE_CACHE_PATH=str(WORK/'cache/viewport-artwork-swift'))
  selected=[ROOT/'Sources/M1Launcher'/n for n in names];probe=ROOT/'Synthetic/ReadyViewportArtworkProbe.swift';baselineHashes={}

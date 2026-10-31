@@ -1,6 +1,6 @@
 # Steam library, metadata and artwork
 
-Updated 2026-10-30. Ready keeps the library on disk and opens a game detail page
+Updated 2026-10-31. Ready keeps the library on disk and opens a game detail page
 before Play. Remote metadata describes content and platform availability; it
 never grants ownership, invents executable paths or marks a game installed.
 Hosted-game input and benchmark testing remains suspended during this UI work.
@@ -34,14 +34,20 @@ records the current verification scope.
 ## Scrolling
 
 The library uses a native `NSScrollView` with a sparse Core Animation document.
-Only viewport cards and one preheat row have layers. Scrolling moves the clip
+Only viewport cards and adjacent preheat rows have layers. Scrolling moves the clip
 view rather than rasterizing/uploading the whole window for every wheel event.
 Configured/filter/sorted records are cached until the model or filter changes.
 Hover, selection and keyboard focus use separate layers. Immutable card tiles
 are cached by title, platform, installation state, dimensions and artwork
-revision, bounded to 96 tiles/64 MiB. A tick builds at most six missing tiles, with a soft 4 ms precheck between
-non-preemptible Core Graphics draws; the display link pauses when idle. Existing
-artwork remains visible until a replacement tile is ready.
+revision, bounded to 96 tiles/64 MiB. Main captures immutable card inputs; two
+user-initiated workers compose the artwork, labels and platform badges. Main only
+assigns completed images to card layers. Visible work has priority over directional
+look-ahead (up to four rows ahead and one behind, also limited by the tile byte
+budget). Obsolete jobs are cancelled when the viewport, dimensions or artwork
+binding changes; late completions cannot restore graphics after gameplay cleanup.
+Publication remains serviceable in AppKit event-tracking mode. The display link
+pauses while waiting for workers or when idle. Existing artwork remains visible
+until a replacement tile is ready.
 
 Rare shell updates use a bounded asynchronous Metal queue with immutable texture
 uploads. The main thread no longer waits for GPU command completion. Session
@@ -54,6 +60,15 @@ the previous full-raster reference and 0.52 ms for cached scroll ticks, with
 zero shell rasters during the sampled scrolling. It retained 468 Games and 27
 Other records, with no deletion. This is CPU fixture evidence, not an on-screen
 FPS or smoothness measurement; see [the sanitized validation summary](../Validation/steam-library-cache-checkpoint.json).
+
+The [asynchronous artwork checkpoint](../Validation/artwork-scroll-checkpoint.json)
+records a newer actual-cache copy comparison: jumping into a cold viewport fell
+from 532–555 ms to 141–164 ms at p95 for indexed card assignment. Directional
+continuous scroll at 48 points per simulated frame measured 4.6 ms at p95. These
+are cache-entry-to-card-layer timings in hidden UI fixtures, not on-glass latency.
+The new pipeline also passed the reference-image, controller, overlay reopening
+and resource-release checks. New network downloads remain outside that cache-hit
+latency guarantee.
 
 ## Persistent artwork
 

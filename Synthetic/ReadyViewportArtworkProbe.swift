@@ -55,8 +55,11 @@ private final class ArtworkLatencyWindow:NSWindow {
       checks["hidden-window-never-active-"+tag] = !NSApp.isActive && !window.isKeyWindow && !window.isVisible
       results.append(["mode":tag,"entries":snapshot.entries,"cachedEligibleEntries":snapshot.cachedEntries,"completedWithActualArtwork":snapshot.completed,"dropped":snapshot.dropped,"pending":snapshot.pending,"entryToRAMP95ms":p95(snapshot.ramMilliseconds),"entryToArtworkTileP95ms":p95(snapshot.tileMilliseconds),"cachedEntryToArtworkTileP95ms":p95(snapshot.cachedTileMilliseconds),"maxTileLatencyMs":snapshot.tileMilliseconds.max() ?? 0,"trackingPublicationCallbacks":snapshot.trackingInvalidations,"backgroundIndexWriterBlockedDuringMeasurement":writerBlocked,"tileCommitMeans":"actual CGImage artwork included in immutable card tile assigned to visible CALayer; not on-glass timestamp"])
       if !baseline {
+        let workers=canvas.tileWorkerSnapshot
+        checks["card-composition-never-blocks-main-"+tag]=workers.rasters>0 && workers.mainThreadRasters==0
+        checks["card-composition-workers-bounded-to-two-"+tag]=workers.maximumRunning<=2
         canvas.resetViewportArtworkMetrics()
-        for _ in 0..<60{canvas.scrollLibrary(by:8);canvas.renderDisplayTick();pump(mode,1.0/60)}
+        for _ in 0..<60{canvas.scrollLibrary(by:48);canvas.renderDisplayTick();pump(mode,1.0/60)}
         for _ in 0..<6 where canvas.viewportArtworkSnapshot.pendingCached>0{canvas.renderDisplayTick();pump(mode,1.0/60)}
         let predictive=canvas.viewportArtworkSnapshot
         checks["predictive-cached-row-artwork-p95-under100ms-"+tag]=predictive.entries>0 && predictive.cachedTileMilliseconds.count==predictive.cachedEntries && p95(predictive.cachedTileMilliseconds)<100
@@ -69,7 +72,7 @@ private final class ArtworkLatencyWindow:NSWindow {
           }
           results.append(["mode":tag+"-pending-diagnostics","count":diagnostics.count,"states":diagnostics])
         }
-        checks["adaptive-raster-batches-never-exceed-six-"+tag]=canvas.tileRasterBudgetSnapshot.largestBatch<=6
+        checks["card-composition-remains-off-main-during-fast-scroll-"+tag]=canvas.tileWorkerSnapshot.mainThreadRasters==0 && canvas.tileWorkerSnapshot.maximumRunning<=2
         results.append(["mode":tag+"-predictive-continuous-scroll","entries":predictive.entries,"cachedEligibleEntries":predictive.cachedEntries,"completedWithActualArtwork":predictive.completed,"ramSamples":predictive.ramMilliseconds.count,"pending":predictive.pending,"entryToRAMP95ms":p95(predictive.ramMilliseconds),"entryToArtworkTileP95ms":p95(predictive.tileMilliseconds),"maxTileLatencyMs":predictive.tileMilliseconds.max() ?? 0,"tileRasterP95ms":p95(canvas.tileRasterBudgetSnapshot.rasterMilliseconds),"largestTileBatch":canvas.tileRasterBudgetSnapshot.largestBatch,"backgroundIndexWriterBlockedDuringMeasurement":writerBlocked])
       }
       if baseline && number==1 {
@@ -79,7 +82,8 @@ private final class ArtworkLatencyWindow:NSWindow {
         checks["old-publication-resumes-after-default-mode-return"]=resumed.completed==resumed.entries && resumed.pending==0
         results.append(["mode":"tracking-after-default-resume","entries":resumed.entries,"completedWithActualArtwork":resumed.completed,"entryToArtworkTileP95ms":p95(resumed.tileMilliseconds),"trackingPublicationCallbacks":resumed.trackingInvalidations])
       }
-      gate.release.signal();canvas.releaseGraphics();window.close();pump(.default,0.03)
+      gate.release.signal();canvas.releaseGraphics();window.close();pump(.default,0.05)
+      if !baseline{checks["late-card-completions-cannot-repopulate-released-graphics-"+tag]=canvas.allocatedTextureBytes==0 && canvas.gridRenderSnapshot.tileCount==0 && canvas.tileWorkerSnapshot.pending==0}
     }
     if !baseline {
       let directory=root.appendingPathComponent("shared-hash-fixture",isDirectory:true);try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
@@ -98,12 +102,13 @@ private final class ArtworkLatencyWindow:NSWindow {
       let before=cache.revision(gameID:b.id,role:.card),ram=cache.image(for:b,role:.card,refresh:{}) != nil
       canvas.query="Shared B";canvas.refresh()
       let tiles=Mirror(reflecting:canvas).children.first{$0.label=="tileCache"}!.value as!LibraryTileCache
-      let columns=canvas.libraryLayoutSnapshot.columns,width=floor((1240-148-18*CGFloat(columns-1))/CGFloat(columns)),height=width*1.28+80
+      let columns=canvas.libraryLayoutSnapshot.columns,width=floor((1240-148-18*CGFloat(columns-1))/CGFloat(columns)),height=width*LibraryCardMetrics.coverRatio+LibraryCardMetrics.titleHeight
       let key=LibraryTileCache.Key(title:b.title,store:b.store.rawValue,platforms:"Windows",installed:false,revision:before,pixelWidth:Int(ceil(width*scale)),pixelHeight:Int(ceil(height*scale)))
       // Reproduce a cached placeholder left by an earlier cancelled binding.
       // The other binding populated the shared hash, without a B revision event.
       tiles.insert(id:b.id,key:key,image:bitmap.context.makeImage()!)
-      canvas.renderDisplayTick();pump(.default,0.02);canvas.renderDisplayTick()
+      let sharedEnd=ProcessInfo.processInfo.systemUptime+0.4
+      repeat{canvas.renderDisplayTick();pump(.default,0.005)}while !canvas.viewportArtworkSnapshot.committedIDs.contains(b.id) && ProcessInfo.processInfo.systemUptime<sharedEnd
       checks["shared-hash-RAM-hit-replaces-placeholder-without-binding-revision"]=ram && cache.revision(gameID:b.id,role:.card)==before && canvas.viewportArtworkSnapshot.committedIDs.contains(b.id)
       canvas.releaseGraphics();window.close()
     }

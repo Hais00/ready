@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "dateUTC": "2026-10-31T09:26:27.211349+00:00",
+  "scope": "Library artwork appearance while scrolling, without changes to game injection, Steam credentials or game renderers.",
+  "sourceSHA256": {
+    "Scripts/test_viewport_artwork.py": "2d29748808b148a0f008f1d87d429f7f390a5ba7279a4f4f0b409a9e23bbff2f",
+    "Sources/M1Launcher/CanvasDrawing.swift": "ace3f3dd285c0a66a544ee9c7afe06677bbd4013a374a81bb611b0fbe0b2acad",
+    "Sources/M1Launcher/LibraryGridSurface.swift": "96dfb14a933bb4d05c1a876afd99532ae1eb01d0b87e4d2d906c5e1d26b2ea0c",
+    "Sources/M1Launcher/MetalCanvas.swift": "a12dfa60b8aab512f649d4749201cfe52672decad286ef56a90e0810b95dbfdf",
+    "Synthetic/ReadyLibraryScrollProbe.swift": "6629f20ffd8fb45bd57f4fefd2926a47f0b0b6ab78d2ba86a6202987e40d7538",
+    "Synthetic/ReadyViewportArtworkProbe.swift": "5381b382159c684084a711904302fbb03289b7db20a05649b591891ad16709fa"
+  },
+  "cause": "Disk images were resident after about 50 ms, but composing full card bitmaps on Main with a per-display-tick budget delayed the last visible cards beyond 500 ms.",
+  "behavior": [
+    "Two bounded user-initiated workers compose immutable card snapshots. AppKit views, artwork bindings, catalog state and card-layer assignment remain on Main.",
+    "Prepared symbols are captured once on Main; workers own their bitmap and thread-local drawing context.",
+    "Visible cards take priority over up to four directional look-ahead rows and one trailing row, limited to the tile cache byte budget. Only visible/adjacent rows own card layers.",
+    "Viewport/key changes cancel stale work; completed cards publish in default, event-tracking and modal modes. The display link can sleep while workers are busy.",
+    "Gameplay/resource cleanup cancels tile requests and clears card layers, decoded artwork and composed tile images. Late completions cannot repopulate released graphics."
+  ],
+  "build": {
+    "releaseApp": true,
+    "strictBundleSignatureVerified": true
+  },
+  "tests": {
+    "viewportArtwork": {
+      "passed": true,
+      "checks": 25,
+      "reportSHA256": "06720378208dcb6a2e4d638988d8dce05ab17b20588a79266da3bd406ff8f5fb"
+    },
+    "nativeGridParityAndNavigation": {
+      "passed": true,
+      "checks": 16,
+      "reportSHA256": "9598fe520cebf9b88328399731a377ada6b04a620d1f68007f6567e43e7cb323"
+    },
+    "overlayReopeningAndResourceRelease": {
+      "passed": true,
+      "checks": 42,
+      "reportSHA256": "aa3a600fa0af668fbd32c6b00cde5e56df4b56c8058665f147b98d98a40776e4"
+    },
+    "libraryDetailAndController": {
+      "passed": true,
+      "checks": 52,
+      "reportSHA256": "9ab43dad69b27b23d0a06139a8ae90e5c5f456ec533dbe6eae0db0f0afa6d889"
+    }
+  },
+  "comparison": {
+    "baselineRef": "35de2f3",
+    "baselineReportSHA256": "b74d1926822830466fa6415813bffd4e5dd86e43415cfed9f335754ba75050da",
+    "before": [
+      {
+        "mode": "default",
+        "cachedEligibleEntries": 24,
+        "entryToRAMP95ms": 52.11879167472944,
+        "entryToArtworkTileP95ms": 555.1575416466221,
+        "maxTileLatencyMs": 580.5982916499488
+      },
+      {
+        "mode": "default-predictive-continuous-scroll",
+        "cachedEligibleEntries": 30,
+        "entryToRAMP95ms": 3.3714583260007203,
+        "entryToArtworkTileP95ms": 12.895916646812111,
+        "maxTileLatencyMs": 12.896916654426605
+      },
+      {
+        "mode": "tracking",
+        "cachedEligibleEntries": 24,
+        "entryToRAMP95ms": 53.39704162906855,
+        "entryToArtworkTileP95ms": 531.5594166168012,
+        "maxTileLatencyMs": 556.7894166451879
+      },
+      {
+        "mode": "tracking-predictive-continuous-scroll",
+        "cachedEligibleEntries": 29,
+        "entryToRAMP95ms": 3.086083335801959,
+        "entryToArtworkTileP95ms": 11.132250016089529,
+        "maxTileLatencyMs": 11.132874991744757
+      }
+    ],
+    "after": [
+      {
+        "mode": "default",
+        "cachedEligibleEntries": 24,
+        "entryToRAMP95ms": 71.04237499879673,
+        "entryToArtworkTileP95ms": 141.23170834500343,
+        "maxTileLatencyMs": 141.23208331875503
+      },
+      {
+        "mode": "default-predictive-continuous-scroll",
+        "cachedEligibleEntries": 72,
+        "entryToRAMP95ms": 2.819791669026017,
+        "entryToArtworkTileP95ms": 4.598625004291534,
+        "maxTileLatencyMs": 4.6021249727346
+      },
+      {
+        "mode": "tracking",
+        "cachedEligibleEntries": 24,
+        "entryToRAMP95ms": 70.1832499471493,
+        "entryToArtworkTileP95ms": 163.69804163696244,
+        "maxTileLatencyMs": 163.69845828739926
+      },
+      {
+        "mode": "tracking-predictive-continuous-scroll",
+        "cachedEligibleEntries": 77,
+        "entryToRAMP95ms": 2.8828333597630262,
+        "entryToArtworkTileP95ms": 4.557250009384006,
+        "maxTileLatencyMs": 4.559666675049812
+      }
+    ],
+    "conditions": "Matching actual library/cache copies, network disabled, hidden nonactivated UI, deliberately blocked background index writer, default and event-tracking modes. Cold viewport jump positions are unchanged. Final continuous-scroll test is faster (48 points per step versus baseline 8).",
+    "timestampMeaning": "Time from entry into the modeled viewport to actual artwork in an immutable tile assigned to a visible card layer; not an on-glass timestamp."
+  },
+  "live": {
+    "normalLibraryReopened": true,
+    "keyboardNavigationAndArtworkVisuallyChecked": true,
+    "leftAtLibraryTop": true,
+    "gameLaunched": false,
+    "gameBenchmarkRun": false
+  },
+  "limits": [
+    "No measured on-screen input-to-pixel latency or continuous-scroll frame pacing claim. Live normal-library checks are functional observations.",
+    "Uncached artwork still requires network transfer; unavailable publisher artwork retains the existing fallback.",
+    "No new native-game FPS, overlay GPU-performance or game compatibility measurement."
+  ]
+}
