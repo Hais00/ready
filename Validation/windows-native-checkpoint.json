@@ -157,7 +157,7 @@
     "testsRun": 88,
     "skipped": 4,
     "passed": true,
-    "scope": "Python bridge tests only; four native/optional fixture skips. The original command had seven setup errors from its missing hardcoded Dati APFS root. Rerun used only a canonical owned temporary WORK directory override for test_size_plan, without editing the tests."
+    "scope": "Standard Python bridge discovery command passes. Four native/optional fixture skips; canonical temporary fixture root replaces the historical hardcoded external volume, without changing assertions."
   },
   "sourceSHA256": {
     ".gitattributes": "dd1415eda4a815d8f8b92d89d37d7b4ad62095d47b41fc3fd0ac1785502d83f8",
@@ -208,7 +208,8 @@
     "Windows/Scripts/Test-SteamBridge.ps1": "bce5c4ad65316335df2b28ef47ac4644688f0b0d7eb8526807fcab095c1d6686",
     "Windows/SteamBridge.Shared.props": "cb19efbb93f386a857fe981993d9c5205566d9552a23b6e2ededf965db524d01",
     "Windows/global.json": "1c6737f7e65b0108778ab30ace593c3ec63382090718c2cbc3d6752486178a35",
-    "sources.lock.json": "43747c0fe126ad164e807eb903f908316e1232e5d7d3083ad8bac5ffdb3ff177"
+    "sources.lock.json": "43747c0fe126ad164e807eb903f908316e1232e5d7d3083ad8bac5ffdb3ff177",
+    "Tests/StoreBridgeTests/test_size_plan.py": "d60385fe6d4be8fb5ef60d332df0a79e252a96777688c828cb8bbb65d067ac7f"
   },
   "rawReportSHA256": {
     "binaries.json": "8a1e65464ce93952f172d2faa43888c506a5da85e4cae9c95f565005d5edf760",

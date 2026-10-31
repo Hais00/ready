@@ -4,7 +4,9 @@ from unittest.mock import patch
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'StoreBridge'))
 import bridge,size_plan
-WORK=pathlib.Path('/Volumes/Dati APFS/Codex-ready-01a17e79/tests')
+# state_root rejects symlink aliases (including macOS /var -> /private/var).
+# These small owned fixtures must also work without a developer's external disk.
+WORK=pathlib.Path(os.environ.get('READY_TEST_WORK_ROOT',tempfile.gettempdir())).resolve()
 PROFILE='00000000-0000-4000-8000-000000000001'
 def request(store='epic',platform='windows'):
     return dict(operation='install_size_plan',store=store,profileID=PROFILE,credentials={'access_token':'private-fixture-token'},options={'gameID':'123'if store=='gog'else'fixture-game','platform':platform,'language':'en'})
